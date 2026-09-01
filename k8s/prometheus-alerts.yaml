@@ -1,0 +1,73 @@
+groups:
+  - name: xiosync.api
+    rules:
+      - alert: HighErrorRate
+        expr: >
+          sum(rate(http_requests_total{job="xiosync-api",status=~"5.."}[5m]))
+          / sum(rate(http_requests_total{job="xiosync-api"}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "XIOSYNC API error rate above 5%"
+          description: "{{ $value | humanizePercentage }} of requests are failing."
+
+      - alert: HighLatencyP95
+        expr: >
+          histogram_quantile(0.95,
+            rate(http_request_duration_seconds_bucket{job="xiosync-api"}[5m])
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "XIOSYNC API p95 latency above 2s"
+
+      - alert: DBPoolExhausted
+        expr: sqlalchemy_pool_checked_out{job="xiosync-api"} >= sqlalchemy_pool_size{job="xiosync-api"} * 0.9
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DB connection pool >90% utilized"
+
+  - name: xiosync.worker
+    rules:
+      - alert: LeaseExpiryBacklog
+        expr: xiosync_expired_leases_total{job="xiosync-worker"} > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 10 expired leases awaiting reaping"
+          description: "Workers may be crashing or tasks are timing out."
+
+      - alert: WebhookDeliveryFailures
+        expr: rate(xiosync_webhook_delivery_failures_total{job="xiosync-worker"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Webhook delivery failure rate elevated"
+
+      - alert: QueuedTasksHigh
+        expr: xiosync_queued_tasks_total{job="xiosync-api"} > 500
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Task queue depth exceeds 500"
+          description: "Consider scaling workers or investigating stuck tasks."
+
+  - name: xiosync.quota
+    rules:
+      - alert: QuotaUtilizationHigh
+        expr: >
+          xiosync_quota_usage{job="xiosync-api"}
+          / xiosync_quota_limit{job="xiosync-api"} > 0.9
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "Organization nearing quota limit (>90%)"
+          description: "org={{ $labels.organization_id }} metric={{ $labels.metric }}"

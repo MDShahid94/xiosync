@@ -1,0 +1,76 @@
+# XIOSYNC CI smoke test stack (Gate 8)
+# Usage: docker compose -f docker-compose.smoke.yml up --build --abort-on-container-exit
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: xiosync
+      POSTGRES_PASSWORD: xiosync
+      POSTGRES_DB: xiosync
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xiosync"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      target: migration-job
+    environment:
+      DATABASE_URL: "postgresql+psycopg://xiosync:xiosync@postgres:5432/xiosync"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      DATABASE_URL: "postgresql+psycopg://xiosync:xiosync@postgres:5432/xiosync"
+      REDIS_URL: "redis://redis:6379/0"
+      XIOSYNC_AUTH_SECRET: "ci-smoke-test-secret"
+      XIOSYNC_ENVIRONMENT: "testing"
+      XIOSYNC_CORS_ALLOWED_ORIGINS: "http://localhost"
+      EVENT_BUS_BACKEND: "redis"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  smoke-test:
+    image: curlimages/curl:latest
+    depends_on:
+      api:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "=== XIOSYNC Smoke Test ==="
+        echo "Testing /live..."
+        curl -sf http://api:8000/live || exit 1
+        echo ""
+        echo "Testing /ready..."
+        curl -sf http://api:8000/ready || exit 1
+        echo ""
+        echo "Testing /openapi.json..."
+        curl -sf http://api:8000/openapi.json | head -c 200 || exit 1
+        echo ""
+        echo "=== All smoke tests passed ==="

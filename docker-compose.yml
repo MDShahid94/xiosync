@@ -1,0 +1,85 @@
+# XIOSYNC local development stack
+# Usage: docker compose up -d
+# Access: http://localhost:8000/docs
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: xiosync
+      POSTGRES_PASSWORD: xiosync
+      POSTGRES_DB: xiosync
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xiosync"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  migrate:
+    build:
+      context: .
+      target: migration-job
+    environment:
+      DATABASE_URL: "postgresql+psycopg://xiosync:xiosync@postgres:5432/xiosync"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      target: api
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "postgresql+psycopg://xiosync:xiosync@postgres:5432/xiosync"
+      REDIS_URL: "redis://redis:6379/0"
+      XIOSYNC_AUTH_SECRET: "dev-secret-change-in-production"
+      XIOSYNC_ENVIRONMENT: "development"
+      XIOSYNC_CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173"
+      EVENT_BUS_BACKEND: "redis"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  worker:
+    build:
+      context: .
+      target: worker
+    environment:
+      DATABASE_URL: "postgresql+psycopg://xiosync:xiosync@postgres:5432/xiosync"
+      REDIS_URL: "redis://redis:6379/0"
+      WORKER_TICKER_INTERVAL: "15"
+      WORKER_REAPER_INTERVAL: "30"
+      WORKER_DISPATCH_INTERVAL: "10"
+      WORKER_EVENT_INTERVAL: "5"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:

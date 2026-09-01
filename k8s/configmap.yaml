@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: xiosync-config
+  namespace: xiosync
+data:
+  XIOSYNC_ENVIRONMENT: "production"
+  XIOSYNC_LOG_LEVEL: "INFO"
+  DB_POOL_SIZE: "10"
+  DB_MAX_OVERFLOW: "20"
+  DB_POOL_TIMEOUT: "30"
+  DB_POOL_RECYCLE: "1800"
+  EVENT_BUS_BACKEND: "redis"
+  WORKER_TICKER_INTERVAL: "15"
+  WORKER_REAPER_INTERVAL: "30"
+  WORKER_DISPATCH_INTERVAL: "10"
+  WORKER_EVENT_INTERVAL: "5"

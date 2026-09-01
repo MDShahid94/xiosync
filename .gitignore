@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+.eggs/
+
+# Type checking / linting caches
+.mypy_cache/
+.ruff_cache/
+.import_linter_cache/
+.pytest_cache/
+
+# IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Secrets
+*.env
+.env.*
+!.env.example
+
+# DB
+*.sqlite3
+*.db
+
+# Alembic
+alembic/versions/__pycache__/
+
+# K8s secrets
+k8s/secrets/

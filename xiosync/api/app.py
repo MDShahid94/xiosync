@@ -1,0 +1,297 @@
+"""FastAPI composition root for the XIOSYNC control plane.
+
+Normative references:
+- Phase 7 Step 1: Application Lifecycle & Readiness Head-gates
+  - M5: Fail-fast startup with strict config validation
+  - M7: Distinct /live and /ready endpoints
+  - C6: Migration-as-deploy-step with readiness head-gate
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable
+from typing import Any
+
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from sqlalchemy.engine import Engine
+from starlette.types import Receive, Scope, Send
+
+from xiosync.api.middleware import (
+    DEFAULT_MAX_BODY_BYTES,
+    AuthenticationMiddleware,
+    BodySizeLimitMiddleware,
+    RequestIDMiddleware,
+    SecurityHeadersMiddleware,
+)
+from xiosync.api.middleware.cors import StrictCORSMiddleware
+from xiosync.api.middleware.rate_limit import RateLimitMiddleware
+from xiosync.api.middleware.versioning import VersionGovernanceMiddleware
+from xiosync.api.routers.auth import router as auth_router
+from xiosync.api.routers.batch import router as batch_router
+from xiosync.api.routers.dlq import router as dlq_router
+from xiosync.api.routers.execution import router as execution_router
+from xiosync.api.routers.health import router as health_router
+from xiosync.api.routers.listings import router as listings_router
+from xiosync.api.routers.plugins import router as plugins_router
+from xiosync.api.routers.streaming import router as streaming_router
+from xiosync.api.routers.task_streams import router as task_streams_router
+from xiosync.api.routers.triggers import router as triggers_router
+from xiosync.core.health import verify_migrations_at_head
+from xiosync.core.rate_limit import (
+    RateLimitConfig,
+    RateLimiter,
+    create_rate_limiter,
+    get_rate_limit_config,
+)
+from xiosync.persistence.database import create_database_engine
+from xiosync.persistence.identity import IdentityRepository
+from xiosync.platform.clock import Clock, SystemClock
+from xiosync.platform.config import ConfigError, load_config
+from xiosync.platform.telemetry import configure_logging
+from xiosync.services.identity import SessionService
+
+logger = logging.getLogger(__name__)
+
+
+def create_app(
+    *,
+    session_service: SessionService,
+    engine: Engine,
+    clock: Clock,
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+    rate_limiter: RateLimiter | None = None,
+    rate_limit_config: Callable[[str], RateLimitConfig] | None = None,
+    cors_origins: list[str] | None = None,
+) -> FastAPI:
+    """Compose an app from explicit dependencies (the contract-test seam).
+
+    Health check endpoints are registered at the root path (not under /api/v1)
+    so orchestrators can easily probe them without authentication.
+    """
+    # P3: Lifespan handler for graceful startup/shutdown.
+    from contextlib import asynccontextmanager
+    from collections.abc import AsyncIterator
+    import logging as _logging
+
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+        _log = _logging.getLogger("xiosync.api")
+        _log.info("startup: XIOSYNC API starting")
+        yield
+        # Graceful shutdown: dispose connection pool and close Redis.
+        _log.info("shutdown: disposing database connection pool")
+        engine.dispose()
+        if rate_limiter is not None:
+            try:
+                from xiosync.core.rate_limit import close_rate_limiter
+                close_rate_limiter(rate_limiter)
+                _log.info("shutdown: Redis rate limiter closed")
+            except Exception:
+                pass
+        _log.info("shutdown: XIOSYNC API stopped")
+
+    application = FastAPI(title="XIOSYNC API", version="1.0.0", lifespan=_lifespan)
+    application.state.session_service = session_service
+    application.state.engine = engine
+    application.state.clock = clock
+    application.state.rate_limiter = rate_limiter  # For per-capability rate checking
+
+    # P11: Observability — request metrics middleware + optional /metrics.
+    from xiosync.platform.observability import (
+        ObservabilityMiddleware,
+        get_metrics_app,
+        setup_opentelemetry,
+    )
+    application.add_middleware(ObservabilityMiddleware)
+    setup_opentelemetry()
+    metrics_app = get_metrics_app()
+    if metrics_app is not None:
+        application.mount("/metrics", metrics_app)
+
+    # Health check endpoints (no auth required, no /api/v1 prefix)
+    application.include_router(health_router)
+
+    # API routers under /api/v1 with full authentication and middleware
+    application.include_router(auth_router, prefix="/api/v1")
+    application.include_router(execution_router, prefix="/api/v1")
+    application.include_router(dlq_router, prefix="/api/v1")
+    application.include_router(plugins_router, prefix="/api/v1")
+    application.include_router(listings_router, prefix="/api/v1")
+    application.include_router(batch_router, prefix="/api/v1")
+    application.include_router(streaming_router, prefix="/api/v1")
+    application.include_router(triggers_router, prefix="/api/v1")
+    application.include_router(task_streams_router, prefix="/api/v1")
+
+    # Mount metering router (Gap M-3).
+    from xiosync.api.routers.metering import router as metering_router
+    application.include_router(metering_router, prefix="/api/v1")
+
+    # Gap P-4: API version governance middleware.
+    application.add_middleware(VersionGovernanceMiddleware)
+
+    @application.exception_handler(RequestValidationError)
+    async def validation_problem(request: Request, exc: RequestValidationError) -> JSONResponse:
+        del exc
+        return JSONResponse(
+            status_code=422,
+            media_type="application/problem+json",
+            content={
+                "type": "https://xiosync.dev/problems/invalid_request",
+                "title": "Invalid request",
+                "status": 422,
+                "code": "invalid_request",
+                "request_id": request.state.request_id,
+            },
+        )
+
+    # P2: QuotaExceededError → 429 Too Many Requests (RFC 7807).
+    from xiosync.services.quotas import QuotaExceededError
+
+    @application.exception_handler(QuotaExceededError)
+    async def quota_problem(request: Request, exc: QuotaExceededError) -> JSONResponse:
+        return JSONResponse(
+            status_code=429,
+            media_type="application/problem+json",
+            content={
+                "type": "https://xiosync.dev/problems/quota_exceeded",
+                "title": "Resource quota exceeded",
+                "status": 429,
+                "code": "quota_exceeded",
+                "detail": str(exc),
+                "resource_type": exc.resource_type,
+                "current": exc.current,
+                "limit": exc.limit,
+                "request_id": getattr(request.state, "request_id", ""),
+            },
+        )
+
+    # P2: InvalidEventError → 400 Bad Request (RFC 7807).
+    from xiosync.domain.events import InvalidEventError
+
+    @application.exception_handler(InvalidEventError)
+    async def event_problem(request: Request, exc: InvalidEventError) -> JSONResponse:
+        return JSONResponse(
+            status_code=400,
+            media_type="application/problem+json",
+            content={
+                "type": "https://xiosync.dev/problems/invalid_event",
+                "title": "Invalid event",
+                "status": 400,
+                "code": "invalid_event",
+                "detail": str(exc),
+                "request_id": getattr(request.state, "request_id", ""),
+            },
+        )
+
+    # P2: Catch-all for unhandled exceptions → 500 (RFC 7807).
+    @application.exception_handler(Exception)
+    async def unhandled_problem(request: Request, exc: Exception) -> JSONResponse:
+        import logging
+        logging.getLogger("xiosync.api").exception("unhandled_error", exc_info=exc)
+        return JSONResponse(
+            status_code=500,
+            media_type="application/problem+json",
+            content={
+                "type": "https://xiosync.dev/problems/internal_error",
+                "title": "Internal server error",
+                "status": 500,
+                "code": "internal_error",
+                "request_id": getattr(request.state, "request_id", ""),
+            },
+        )
+
+    # Starlette wraps each newly-added middleware around the previous stack.
+    # Add in reverse so the effective order is CORS -> request-id -> security -> size -> auth.
+    # StrictCORSMiddleware is the outermost layer so preflight OPTIONS never hits auth.
+    if cors_origins:
+        application.add_middleware(StrictCORSMiddleware, allowed_origins=cors_origins)
+    if rate_limiter is not None and rate_limit_config is not None:
+        application.add_middleware(
+            RateLimitMiddleware,
+            rate_limiter=rate_limiter,
+            config_fn=rate_limit_config,
+        )
+    application.add_middleware(
+        AuthenticationMiddleware,
+        session_service=session_service,
+        engine=engine,
+        clock=clock,
+    )
+    application.add_middleware(BodySizeLimitMiddleware, max_body_bytes=max_body_bytes)
+    application.add_middleware(SecurityHeadersMiddleware)
+    application.add_middleware(RequestIDMiddleware)
+    return application
+
+
+def create_production_app() -> FastAPI:
+    """Load validated configuration and wire production dependencies fail-fast (M5).
+
+    Startup enforces strict validation:
+    1. All environment variables must be present and valid (INV-CFG-1/2/3)
+    2. Database must be connectable
+    3. Database migrations must be at head revision (C6)
+
+    If any check fails, the process exits non-zero before opening ports (INV-STARTUP-1).
+    """
+    # Step 1: Load and validate configuration (INV-CFG-1/2/3, INV-STARTUP-1)
+    try:
+        config = load_config()
+    except ConfigError as exc:
+        logger.critical(f"Configuration validation failed: {exc}")
+        raise
+
+    # Step 2: Configure logging with validated level
+    configure_logging(config.log_level)
+    logger.info(f"Starting XIOSYNC in {config.environment} environment")
+
+    # Step 3: Create database engine (will fail fast if URL is invalid)
+    try:
+        engine = create_database_engine(config.database_url)
+    except Exception as exc:
+        logger.critical(f"Failed to create database engine: {exc}")
+        raise
+
+    # Step 4: Verify migrations are at head (C6, INV-STARTUP-1)
+    # This MUST succeed before the app opens ports. If migrations are not applied,
+    # startup fails immediately rather than starting a degraded service.
+    try:
+        verify_migrations_at_head(engine)
+        logger.info("Database migrations verified at head")
+    except Exception as exc:
+        logger.critical(f"Migration verification failed (C6): {exc}")
+        raise
+
+    # Step 5: Wire remaining services
+    service = SessionService(IdentityRepository(engine), config.auth_secret)
+    logger.info("All startup checks passed; application ready")
+    limiter = create_rate_limiter(config.redis_url) if config.redis_url else None
+    config_fn = (
+        (lambda route_class: get_rate_limit_config(route_class, config))
+        if limiter
+        else None
+    )
+    return create_app(
+        session_service=service,
+        engine=engine,
+        clock=SystemClock(),
+        rate_limiter=limiter,
+        rate_limit_config=config_fn,
+        cors_origins=config.cors_allowed_origins,
+    )
+
+
+class _LazyProductionApp:
+    """Delay environment loading until ASGI startup while retaining fail-fast boot."""
+
+    _application: FastAPI | None = None
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if self._application is None:
+            self._application = create_production_app()
+        await self._application(scope, receive, send)
+
+
+app: Any = _LazyProductionApp()

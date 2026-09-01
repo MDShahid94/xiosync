@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: xiosync
+  labels:
+    app.kubernetes.io/name: xiosync
+    app.kubernetes.io/part-of: xiosync

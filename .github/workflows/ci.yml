@@ -1,0 +1,206 @@
+# XIOSYNC CI — doc 09 §7 blocking gates (D-016/D-017)
+#
+# Active gates (Phase 7):
+#   1 — lint / strict types / architecture rules
+#   2 — migration chain (upgrade → downgrade → upgrade clean; single head)
+#   3 — unit tests (domain invariants, no infrastructure)
+#   4 — integration tests (services against migrated PostgreSQL)
+#   5 — security-negative suite (cross-tenant, revocation, plugin sandbox)
+#
+# Stubs for Gates 6–10 are documented below; they activate in later phases.
+# A commented stub is NOT a fake-green job (INV-CI-1 — green compile is never
+# sufficient; doc 01 §4.6).
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  UV_VERSION: "0.9.22"
+
+jobs:
+  # ── Gate 1 — lint, strict types, architecture rules (doc 04 §7) ────────
+  lint-type-arch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: ruff (lint + format check)
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: mypy --strict
+        # pyproject.toml [tool.mypy] files = ["xiosync", "tests"]
+        run: uv run mypy xiosync/
+      - name: import-linter (architecture rules)
+        run: uv run lint-imports
+
+  # ── Gate 3 — unit tests (domain invariants, no infrastructure) ─────────
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: pytest (unit)
+        run: uv run pytest tests/unit -q
+
+  # ── Gates 2 / 4 / 5 — migration chain + integration + security-negative ─
+  # All three share the same postgres:17 service container to avoid provisioning
+  # three separate databases (D-016). The migration-chain step runs first and
+  # its output is the migrated DB that integration and security tests use.
+  integration-and-security:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: xiosync
+          POSTGRES_PASSWORD: xiosync
+          POSTGRES_DB: xiosync_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U xiosync -d xiosync_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://xiosync:xiosync@localhost:5432/xiosync_ci
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      # Gate 2 — migration chain: upgrade → integration tests (which also run
+      # downgrade→upgrade in test_migration_chain.py — INV-MIG-3)
+      - name: "Gate 2: migration round-trip + single head"
+        run: uv run pytest tests/integration/test_migration_chain.py -q
+      # Gate 4 — services against the migrated database
+      - name: "Gate 4: integration tests"
+        run: |
+          uv run pytest tests/integration/ -q \
+            --ignore=tests/integration/test_migration_chain.py \
+            -m integration
+      # Gate 5 — security-negative suite (cross-tenant, authz, session, sandbox)
+      - name: "Gate 5: security-negative suite"
+        run: uv run pytest tests/integration/ -q -m security
+
+  # ── Gate 6  — contract: OpenAPI export + diff ─────────────────────────
+  openapi-contract:
+    needs: [lint-type-arch]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: "Gate 6: Export OpenAPI spec and check for drift"
+        run: |
+          uv run python tools/export_openapi.py
+          git diff --exit-code openapi.json || (echo "OpenAPI spec is out of date — run 'python tools/export_openapi.py' locally" && exit 1)
+
+  # ── Gate 7  — frontend tests (placeholder) ───────────────────────────
+  frontend-tests:
+    needs: [lint-type-arch]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Gate 7: Frontend tests"
+        run: |
+          if [ -f "frontend/package.json" ]; then
+            cd frontend
+            npm ci
+            npm test -- --ci --passWithNoTests
+          else
+            echo "No frontend/package.json found — skipping Gate 7"
+          fi
+
+  # ── Gate 8  — container smoke: build → migrate → /ready ─────────────
+  container-smoke:
+    needs: [lint-type-arch, unit]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: "Gate 8: Build and smoke-test containers"
+        run: |
+          docker compose -f docker-compose.smoke.yml up --build --abort-on-container-exit --exit-code-from smoke-test
+          docker compose -f docker-compose.smoke.yml down -v
+
+  # ── Gate 9  — test coverage threshold ───────────────────────────────
+  coverage:
+    needs: [unit, integration-and-security]
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: xiosync
+          POSTGRES_PASSWORD: xiosync
+          POSTGRES_DB: xiosync_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U xiosync -d xiosync_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://xiosync:xiosync@localhost:5432/xiosync_ci
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+      - name: Install coverage deps
+        run: uv pip install pytest-cov
+      - name: "Gate 9: Run tests with coverage"
+        run: |
+          uv run pytest tests/ -q \
+            --cov=xiosync \
+            --cov-report=term-missing \
+            --cov-report=html:coverage-html \
+            --cov-fail-under=60
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage-html/
+
+  # ── Gate 10 — secret scanning ───────────────────────────────────────
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
