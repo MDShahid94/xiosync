@@ -29,7 +29,7 @@
 # =============================================================================
 
 # ── Stage 1: builder ──────────────────────────────────────────────────────────
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 ENV UV_VERSION=0.9.22 \
     UV_COMPILE_BYTECODE=1 \
@@ -54,7 +54,7 @@ COPY alembic.ini ./
 
 
 # ── Stage 2: runtime base ─────────────────────────────────────────────────────
-FROM python:3.13-slim AS base
+FROM python:3.14-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tini \
