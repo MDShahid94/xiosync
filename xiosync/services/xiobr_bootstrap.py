@@ -9,8 +9,9 @@ from sqlalchemy.orm import Session
 
 from xiosync.domain.context import OrgContext
 from xiosync.persistence.models.ontology import TypeRegistry
-from xiosync.persistence.models.registry import CapabilityGroup
+from xiosync.persistence.models.registry import CapabilityGroup, RegistryCategory
 from xiosync.platform.ids import new_id
+from xiosync.services.projects import ProjectService
 
 logger = logging.getLogger(__name__)
 
@@ -87,21 +88,28 @@ _EVENT_TYPES = [
 
 _NEW_CAPABILITY_GROUPS = [
     {
-        "name": "browser.manage",
-        "description": "Browser automation management",
+        "name": "browser_pool.manage",
+        "description": "Browser pool management",
         "operations": [
-            "browser.pool.*", "browser.session.*"
+            "browser_pool.*"
         ],
     },
     {
-        "name": "runtime.manage",
-        "description": "Compute runtime node management",
+        "name": "browser_session.manage",
+        "description": "Browser session management",
         "operations": [
-            "runtime.node.*", "compute.provider.*"
+            "browser_session.*"
         ],
     },
     {
-        "name": "mesh.manage",
+        "name": "compute_runtime.manage",
+        "description": "Compute runtime management",
+        "operations": [
+            "compute_runtime.*", "runtime_node.*"
+        ],
+    },
+    {
+        "name": "mesh_network.manage",
         "description": "Mesh network management",
         "operations": [
             "mesh.network.*"
@@ -165,3 +173,12 @@ def register_xiobr_types(session: Session, context: OrgContext, now: datetime | 
     session.add_all(groups)
     logger.info("xiobr_bootstrap: created %d capability groups", len(groups))
     session.flush()
+
+    project_svc = ProjectService(session)
+    project_svc.create_project(
+        context,
+        name="XIO Browser",
+        slug="xio-browser",
+        description="Home for all XIOBR resources",
+    )
+    logger.info("xiobr_bootstrap: created xio-browser project")

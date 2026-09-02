@@ -103,6 +103,11 @@ EVENT_TYPES: frozenset[str] = frozenset(
         "secret.rotated",
         "worker.registered",
         "worker.approved",
+        "mesh_network.created",
+        "mesh_network.node_added",
+        "mesh_network.node_removed",
+        "compute_runtime.created",
+
         "project.created",
         "project.archived",
 

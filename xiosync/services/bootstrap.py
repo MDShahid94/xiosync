@@ -274,6 +274,15 @@ _DEFAULT_CAPABILITY_GROUPS: list[dict[str, Any]] = [
         "description": "Usage metering read access",
         "operations": [
             "metering.summary", "metering.history",
+            "project.read", "project.list",
+        ],
+    },
+    {
+        "name": "project.manage",
+        "description": "Project management operations",
+        "operations": [
+            "project.create", "project.read", "project.list", "project.update", "project.archive",
+
         ],
     },
     {
@@ -290,6 +299,15 @@ _DEFAULT_CAPABILITY_GROUPS: list[dict[str, Any]] = [
             "trigger.read", "trigger.list",
             "share.list",
             "metering.summary", "metering.history",
+            "project.read", "project.list",
+        ],
+    },
+    {
+        "name": "project.manage",
+        "description": "Project management operations",
+        "operations": [
+            "project.create", "project.read", "project.list", "project.update", "project.archive",
+
         ],
     },
 ]
