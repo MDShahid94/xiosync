@@ -1,4 +1,18 @@
-# XIOSYNC
+"""CLI module to generate XIOSYNC's README.md from the codebase analysis.
+
+This module acts as the export mechanism for the system's self-documentation,
+writing the normative README.md to the project root.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+README_CONTENT = """# XIOSYNC
 
 **XIOSYNC** is an autonomous workflow orchestration platform with multi-tenant governance. It allows human, AI, and system actors to collaborate safely in bounded tenant environments.
 
@@ -115,3 +129,25 @@ uv run import-linter
 ```bash
 uv run alembic upgrade head
 ```
+"""
+
+
+def export_readme(target_path: Path | None = None) -> None:
+    """Generate and write the README.md file."""
+    if target_path is None:
+        # Default to project root (assuming this script is in xiosync/)
+        target_path = Path(__file__).parent.parent / "README.md"
+        
+    target_path.write_text(README_CONTENT, encoding="utf-8")
+    print(f"Successfully exported README to {target_path.resolve()}")
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    try:
+        # Allow passing an explicit path as a CLI argument
+        path = Path(sys.argv[1]) if len(sys.argv) > 1 else None
+        export_readme(path)
+    except Exception as e:
+        logger.error(f"Failed to export README: {e}")
+        sys.exit(1)

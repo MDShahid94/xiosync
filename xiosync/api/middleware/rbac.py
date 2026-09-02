@@ -166,6 +166,46 @@ def require_capability(group_name: str) -> Any:
                 request_id=request_id,
             )
 
+        # Phase 2: grant-based check (only if grants exist for this capability)
+        # Check if any grants exist for this actor + capability group
+        # If grants exist → they can RESTRICT (deny) even if role allows
+        # If no grants exist → role decision stands (current behavior)
+        # This makes Phase 2 additive/restrictive, not required
+        org_session: OrmSession | None = getattr(request.state, "org_session", None)
+        if org_session is not None:
+            from xiosync.persistence.authorization import AuthorizationRepository
+            from xiosync.services.authorization import AuthorizationService
+
+            repo = AuthorizationRepository(org_session)
+            grants = repo.list_grants(context, group_name)
+
+            if grants:
+                authz_service = AuthorizationService(repo)
+                decision = authz_service.authorize(
+                    context=context,
+                    capability=group_name,
+                    operation="*",
+                    resource_type="system",
+                    resource_id=context.organization_id,
+                    resource_organization_id=context.organization_id,
+                    arguments={},
+                    now=datetime.now(UTC),
+                )
+                if not decision.allowed:
+                    logger.warning(
+                        "rbac.denied_by_grant: actor=%s role=%s group=%s reason=%s",
+                        context.actor_id,
+                        context.membership_role,
+                        group_name,
+                        decision.reason,
+                    )
+                    raise CapabilityDeniedError(
+                        group_name=group_name,
+                        actor_id=context.actor_id,
+                        membership_role=context.membership_role.value,
+                        request_id=request_id,
+                    )
+
         logger.debug(
             "rbac.allowed: actor=%s role=%s group=%s",
             context.actor_id,
