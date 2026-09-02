@@ -259,6 +259,12 @@ class ProjectService:
             outcome="success",
             rationale=f"Updated project: {project.name}",
         )
+        # Build a JSON-safe payload: exclude datetime values (e.g. updated_at)
+        # that JSONB cannot serialise directly.
+        event_payload = {
+            k: v.isoformat() if hasattr(v, "isoformat") else v
+            for k, v in values.items()
+        }
         self._events.append(
             context,
             event_type="project.updated",
@@ -267,7 +273,7 @@ class ProjectService:
             operation_id=op_id,
             entity_type="project",
             entity_id=project_id,
-            payload=values,
+            payload=event_payload,
         )
         self._session.flush()
         
