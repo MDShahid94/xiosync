@@ -235,6 +235,13 @@ def create_app(
         dependencies=[require_capability("event.manage")],
     )
 
+    # --- Genesis Phase 3: Self-referential protocol (Gaps G-5, G-7) ----------
+    from xiosync.api.routers.protocol import router as protocol_router
+    application.include_router(
+        protocol_router, prefix="/api/v1",
+        dependencies=[require_capability("capability.manage")],
+    )
+
     # Gap P-4: API version governance middleware.
     application.add_middleware(VersionGovernanceMiddleware)
 
