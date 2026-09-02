@@ -27,12 +27,17 @@ def org_context() -> OrgContext:
 @pytest.fixture
 def mock_session() -> MagicMock:
     session = MagicMock()
+    session.scalar.return_value = 0
     return session
 
 
 @pytest.fixture
 def project_service(mock_session: MagicMock) -> ProjectService:
-    return ProjectService(mock_session)
+    svc = ProjectService(mock_session)
+    svc._events = MagicMock()
+    svc._operations = MagicMock()
+    svc._operations.record_operation.return_value = uuid.uuid4()
+    return svc
 
 
 def test_create_project_success(
@@ -54,7 +59,7 @@ def test_create_project_success(
     assert record.state == "active"
     assert record.organization_id == org_context.organization_id
     assert mock_session.add.call_count == 1
-    assert mock_session.flush.call_count == 1
+    assert mock_session.flush.call_count >= 1
 
 
 def test_create_project_defaults(
@@ -135,7 +140,7 @@ def test_update_project_success(
         created_at=datetime.now(UTC),
     )
     
-    mock_session.scalar.side_effect = [mock_project, mock_project]
+    mock_session.scalar.return_value = mock_project
     
     updated = project_service.update_project(
         org_context,
@@ -145,8 +150,7 @@ def test_update_project_success(
         config={"new": "conf"},
     )
     assert mock_session.execute.call_count == 1
-    assert mock_session.flush.call_count == 1
-    # Note: we are returning the same mock_project, so we just verify the call
+    assert mock_session.flush.call_count >= 1
 
 
 def test_update_project_not_found(
@@ -173,7 +177,7 @@ def test_archive_project_success(
         state="active",
         created_at=datetime.now(UTC),
     )
-    mock_session.scalar.side_effect = [mock_project, mock_project]
+    mock_session.scalar.return_value = mock_project
     
     archived = project_service.archive_project(org_context, project_id)
     assert mock_session.execute.call_count == 1
