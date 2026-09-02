@@ -76,8 +76,6 @@ __all__ = [
     "Organization",
     "Plugin",
     "Project",
-
-
     "PluginInstallation",
     "PluginNetworkAllowRule",
     "PluginRpcMethod",
@@ -102,5 +100,4 @@ __all__ = [
     "RuntimeNode",
     "MeshNetwork",
     "MeshNode",
-    "Project",
 ]

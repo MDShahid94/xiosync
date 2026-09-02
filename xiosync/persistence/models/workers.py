@@ -112,7 +112,7 @@ class WorkerEnrollment(Base):
     software_hash: Mapped[str | None] = mapped_column(Text)
     # Gap W-4 + partial W-1: capability manifest — list of capability names
     # the worker can handle, used for future capability-based dispatch.
-    capability_manifest: Mapped[list[Any]] = mapped_column(
+    capability_manifest: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -156,7 +156,7 @@ class WorkerCredential(Base):
     enrollment_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), nullable=False
     )  # IMM
-    scoped_capabilities: Mapped[list[Any]] = mapped_column(
+    scoped_capabilities: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )  # list of capability UUIDs (as strings) granted to this credential
     issued_at: Mapped[datetime] = mapped_column(

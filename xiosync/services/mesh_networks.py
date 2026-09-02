@@ -29,6 +29,7 @@ __all__ = [
 class MeshNetworkRecord:
     id: uuid.UUID
     organization_id: uuid.UUID
+    project_id: uuid.UUID | None
     name: str
     network_type: str
     config: dict[str, Any]
@@ -65,6 +66,7 @@ class MeshNetworkService:
         self,
         ctx: OrgContext,
         *,
+        project_id: uuid.UUID | None = None,
         name: str,
         network_type: str,
         config: Mapping[str, Any],
@@ -75,6 +77,7 @@ class MeshNetworkService:
         row = MeshNetwork(
             id=network_id,
             organization_id=ctx.organization_id,
+            project_id=project_id,
             name=name,
             network_type=network_type,
             config=dict(config),
@@ -85,7 +88,7 @@ class MeshNetworkService:
         op_id = self._record_op(ctx, "create_network", actor_id=ctx.actor_id or ctx.organization_id)
         self._event_service.append(
             ctx,
-            event_type="network.created",
+            event_type="mesh_network.created",
             payload={"network_id": str(network_id), "network_type": network_type},
             actor_id=ctx.actor_id,
             operation_id=op_id,
@@ -97,6 +100,7 @@ class MeshNetworkService:
         return MeshNetworkRecord(
             id=row.id,
             organization_id=row.organization_id,
+            project_id=row.project_id,
             name=row.name,
             network_type=row.network_type,
             config=row.config,
@@ -112,9 +116,18 @@ class MeshNetworkService:
         address: str,
     ) -> None:
         now = datetime.now(tz=UTC)
+        network = self._session.scalar(
+            select(MeshNetwork).where(
+                MeshNetwork.id == network_id,
+                MeshNetwork.organization_id == ctx.organization_id
+            )
+        )
+        if not network: raise ValueError(f"Network {network_id} not found")
+
         row = MeshNode(
             id=new_id(),
             organization_id=ctx.organization_id,
+            project_id=network.project_id,
             network_id=network_id,
             node_id=node_id,
             address=address,
@@ -125,7 +138,7 @@ class MeshNetworkService:
         op_id = self._record_op(ctx, "add_node", actor_id=ctx.actor_id or ctx.organization_id)
         self._event_service.append(
             ctx,
-            event_type="network.node_added",
+            event_type="mesh_network.node_added",
             payload={"network_id": str(network_id), "node_id": str(node_id), "address": address},
             actor_id=ctx.actor_id,
             operation_id=op_id,
@@ -156,7 +169,7 @@ class MeshNetworkService:
         op_id = self._record_op(ctx, "remove_node", actor_id=ctx.actor_id or ctx.organization_id)
         self._event_service.append(
             ctx,
-            event_type="network.node_removed",
+            event_type="mesh_network.node_removed",
             payload={"network_id": str(network_id), "node_id": str(node_id)},
             actor_id=ctx.actor_id,
             operation_id=op_id,
@@ -165,16 +178,16 @@ class MeshNetworkService:
         )
         self._session.flush()
 
-    def list_networks(self, ctx: OrgContext) -> list[MeshNetworkRecord]:
-        rows = self._session.scalars(
-            select(MeshNetwork).where(
-                MeshNetwork.organization_id == ctx.organization_id
-            )
-        ).all()
+    def list_networks(self, ctx: OrgContext, *, project_id: uuid.UUID | None = None) -> list[MeshNetworkRecord]:
+        stmt = select(MeshNetwork).where(MeshNetwork.organization_id == ctx.organization_id)
+        if project_id is not None:
+            stmt = stmt.where(MeshNetwork.project_id == project_id)
+        rows = self._session.scalars(stmt).all()
         return [
             MeshNetworkRecord(
                 id=r.id,
                 organization_id=r.organization_id,
+                project_id=r.project_id,
                 name=r.name,
                 network_type=r.network_type,
                 config=r.config,

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any
+from typing import Any, cast
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -40,7 +40,7 @@ class VersionGovernanceMiddleware(BaseHTTPMiddleware):
         """Load deprecation config from env var."""
         raw = os.environ.get("XIOSYNC_API_DEPRECATION_CONFIG", "{}")
         try:
-            return json.loads(raw)  # type: ignore[no-any-return]
+            return cast(dict[str, Any], json.loads(raw))
         except (json.JSONDecodeError, TypeError):
             return {}
 

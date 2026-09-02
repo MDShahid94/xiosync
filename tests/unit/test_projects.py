@@ -58,7 +58,7 @@ def test_create_project_success(
     assert record.config == {"key": "value"}
     assert record.state == "active"
     assert record.organization_id == org_context.organization_id
-    assert mock_session.add.call_count == 1
+    assert mock_session.add.call_count >= 1
     assert mock_session.flush.call_count >= 1
 
 

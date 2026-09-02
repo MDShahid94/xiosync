@@ -16,7 +16,7 @@ class RegisterWorkerRequest(_S):
     public_key: str
     pool_type: str = "volunteer"
     software_version: str | None = None
-    capability_manifest: list[Any] | None = None
+    capability_manifest: list[str] | None = None
 
 class ApproveWorkerRequest(_S):
     approved_by: uuid.UUID

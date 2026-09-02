@@ -83,7 +83,7 @@ class WorkerEnrollmentRecord:
     # Gap W-4: worker fleet versioning and capability manifest
     software_version: str | None
     software_hash: str | None
-    capability_manifest: list[Any]
+    capability_manifest: list[str]
 
 
 @dataclass(frozen=True)
@@ -93,7 +93,7 @@ class WorkerCredentialRecord:
     id: uuid.UUID
     organization_id: uuid.UUID
     enrollment_id: uuid.UUID
-    scoped_capabilities: list[Any]
+    scoped_capabilities: list[str]
     issued_at: datetime
     expires_at: datetime
     revoked_at: datetime | None
@@ -390,7 +390,7 @@ class WorkerService:
         ctx: OrgContext,
         enrollment_id: uuid.UUID,
         *,
-        scoped_capabilities: list[Any],
+        scoped_capabilities: list[str],
         duration: timedelta,
         now: datetime,
     ) -> WorkerCredentialRecord:

@@ -32,6 +32,7 @@ __all__ = [
 class RuntimeProviderRecord:
     id: uuid.UUID
     organization_id: uuid.UUID
+    project_id: uuid.UUID | None
     name: str
     provider: str
     config: dict[str, Any]
@@ -42,6 +43,7 @@ class RuntimeProviderRecord:
 class RuntimeNodeRecord:
     id: uuid.UUID
     organization_id: uuid.UUID
+    project_id: uuid.UUID | None
     runtime_id: uuid.UUID
     state: str
     spec: dict[str, Any]
@@ -93,6 +95,7 @@ class ComputeRuntimeService:
         self,
         ctx: OrgContext,
         *,
+        project_id: uuid.UUID | None = None,
         name: str,
         provider: str,
         config: Mapping[str, Any],
@@ -103,6 +106,7 @@ class ComputeRuntimeService:
         row = RuntimeProvider(
             id=runtime_id,
             organization_id=ctx.organization_id,
+            project_id=project_id,
             name=name,
             provider=provider,
             config=dict(config),
@@ -113,7 +117,7 @@ class ComputeRuntimeService:
         op_id = self._record_op(ctx, "register_provider", actor_id=ctx.actor_id or ctx.organization_id)
         self._event_service.append(
             ctx,
-            event_type="provider.registered",
+            event_type="compute_runtime.created",
             payload={"runtime_id": str(runtime_id), "provider": provider},
             actor_id=ctx.actor_id,
             operation_id=op_id,
@@ -125,6 +129,7 @@ class ComputeRuntimeService:
         return RuntimeProviderRecord(
             id=row.id,
             organization_id=row.organization_id,
+            project_id=row.project_id,
             name=row.name,
             provider=row.provider,
             config=row.config,
@@ -141,9 +146,18 @@ class ComputeRuntimeService:
         node_id = new_id()
         now = datetime.now(tz=UTC)
         
+        runtime = self._session.scalar(
+            select(RuntimeProvider).where(
+                RuntimeProvider.id == runtime_id,
+                RuntimeProvider.organization_id == ctx.organization_id
+            )
+        )
+        if not runtime: raise ValueError(f"Runtime {runtime_id} not found")
+
         row = RuntimeNode(
             id=node_id,
             organization_id=ctx.organization_id,
+            project_id=runtime.project_id,
             runtime_id=runtime_id,
             state="provisioning",
             node_metadata=dict(spec), hostname=f"node-{str(node_id)[:8]}",
@@ -171,6 +185,7 @@ class ComputeRuntimeService:
         return RuntimeNodeRecord(
             id=row.id,
             organization_id=row.organization_id,
+            project_id=row.project_id,
             runtime_id=row.runtime_id,
             state=row.state,
             spec=row.node_metadata,
@@ -181,6 +196,7 @@ class ComputeRuntimeService:
         self,
         ctx: OrgContext,
         *,
+        project_id: uuid.UUID | None = None,
         runtime_id: uuid.UUID,
         state: str | None = None,
     ) -> list[RuntimeNodeRecord]:
@@ -188,6 +204,8 @@ class ComputeRuntimeService:
             RuntimeNode.organization_id == ctx.organization_id,
             RuntimeNode.runtime_id == runtime_id,
         )
+        if project_id is not None:
+            stmt = stmt.where(RuntimeNode.project_id == project_id)
         if state is not None:
             stmt = stmt.where(RuntimeNode.state == state)
             
@@ -196,6 +214,7 @@ class ComputeRuntimeService:
             RuntimeNodeRecord(
                 id=r.id,
                 organization_id=r.organization_id,
+                project_id=r.project_id,
                 runtime_id=r.runtime_id,
                 state=r.state,
                 spec=r.node_metadata,

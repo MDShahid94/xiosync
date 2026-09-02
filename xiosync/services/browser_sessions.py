@@ -30,6 +30,7 @@ class BrowserSessionRecord:
 
     id: uuid.UUID
     organization_id: uuid.UUID
+    project_id: uuid.UUID | None
     pool_id: uuid.UUID
     node_id: uuid.UUID | None
     session_data: dict[str, Any]
@@ -57,6 +58,7 @@ def _record(row: BrowserSession) -> BrowserSessionRecord:
     return BrowserSessionRecord(
         id=row.id,
         organization_id=row.organization_id,
+        project_id=row.project_id,
         pool_id=row.pool_id,
         node_id=row.node_id,
         session_data=dict(row.session_data),
@@ -80,9 +82,19 @@ class BrowserSessionService:
     ) -> BrowserSessionRecord:
         """Create a new browser session within a pool and record an audit operation."""
         now = datetime.now(UTC)
+        from xiosync.persistence.models.browser import BrowserPool
+        pool = self._session.scalar(
+            select(BrowserPool).where(
+                BrowserPool.id == pool_id,
+                BrowserPool.organization_id == context.organization_id
+            )
+        )
+        if not pool: raise ValueError(f"Browser pool {pool_id} not found")
+
         session_row = BrowserSession(
             id=new_id(),
             organization_id=context.organization_id,
+            project_id=pool.project_id,
             pool_id=pool_id,
             session_data=dict(config) if config else {},
             state="initializing",
@@ -248,15 +260,18 @@ class BrowserSessionService:
         self,
         context: OrgContext,
         *,
+        project_id: uuid.UUID | None = None,
         pool_id: uuid.UUID | None = None,
         state: str | None = None,
     ) -> list[BrowserSessionRecord]:
-        """List sessions in the org, filtered by pool_id and/or state."""
+        """List sessions in the org, filtered by project_id, pool_id and/or state."""
         stmt = (
             select(BrowserSession)
             .where(BrowserSession.organization_id == context.organization_id)
             .order_by(BrowserSession.created_at.desc())
         )
+        if project_id is not None:
+            stmt = stmt.where(BrowserSession.project_id == project_id)
         if pool_id is not None:
             stmt = stmt.where(BrowserSession.pool_id == pool_id)
         if state is not None:

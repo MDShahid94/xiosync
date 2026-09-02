@@ -28,6 +28,7 @@ import threading
 import time
 from typing import Callable
 
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session as OrmSession
 
 from xiosync.persistence.database import create_database_engine
@@ -47,14 +48,14 @@ def _signal_handler(signum: int, frame: object) -> None:
 def _run_loop(
     name: str,
     fn: Callable[[OrmSession], int],
-    engine: object,
+    engine: Engine,
     interval: float,
 ) -> None:
     """Run a worker function in a loop until shutdown is signaled."""
     logger.info(f"worker_loop_started", extra={"loop": name, "interval": interval})
     while not _shutdown.is_set():
         try:
-            with OrmSession(engine) as session:  # type: ignore[arg-type]
+            with OrmSession(engine) as session:
                 count = fn(session)
                 if count > 0:
                     logger.debug(

@@ -236,7 +236,7 @@ class Memory(Base):
     visibility: Mapped[str] = mapped_column(Text, nullable=False)
     provenance: Mapped[dict[str, Any] | None] = mapped_column(JSONB)  # source op/event, confidence
     # Gap D-3: artifact references linking memory to generated artifacts.
-    artifact_refs: Mapped[list[Any]] = mapped_column(
+    artifact_refs: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))

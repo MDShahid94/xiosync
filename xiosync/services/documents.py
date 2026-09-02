@@ -210,7 +210,8 @@ class DocumentService:
         coll_fresh = self._session.scalar(
             select(DocumentCollection).where(DocumentCollection.id == collection_id)
         )
-        return _collection_record(coll_fresh, page_count)  # type: ignore[arg-type]
+        assert coll_fresh is not None
+        return _collection_record(coll_fresh, page_count)
 
     def list_collections(
         self, context: OrgContext, *, doc_type: str | None = None,

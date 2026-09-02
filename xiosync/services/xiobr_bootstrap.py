@@ -80,10 +80,16 @@ _WORKFLOW_TEMPLATE_CATEGORIES = [
 ]
 
 _EVENT_TYPES = [
-    ("browser.pool.created", "Browser pool was created"),
-    ("browser.session.started", "Browser session started"),
-    ("runtime.node.provisioned", "Runtime node was provisioned"),
-    ("mesh.network.created", "Mesh network was created"),
+    ("browser_pool.created", "Browser pool was created"),
+    ("browser_pool.scaled", "Browser pool was scaled"),
+    ("browser_pool.destroyed", "Browser pool was destroyed"),
+    ("browser_session.created", "Browser session created"),
+    ("browser_session.verified", "Browser session verified"),
+    ("browser_session.terminated", "Browser session terminated"),
+    ("compute_runtime.created", "Compute runtime was created"),
+    ("mesh_network.created", "Mesh network was created"),
+    ("mesh_network.node_added", "Mesh network node added"),
+    ("mesh_network.node_removed", "Mesh network node removed"),
 ]
 
 _NEW_CAPABILITY_GROUPS = [

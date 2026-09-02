@@ -50,6 +50,17 @@ erDiagram
     Actor ||--o{ Event : performs
 ```
 
+
+## XIOBR Capabilities (Decoupling)
+
+XIOSYNC supports comprehensive capabilities inherited from the XIOBR decoupling:
+
+- **Browser Orchestration**: Management of `BrowserPool` and `BrowserSession` resources to control isolated browser environments dynamically.
+- **Compute Runtimes**: Provisioning and monitoring of `ComputeRuntime` and `RuntimeNode` entities for scalable execution.
+- **Mesh Networks**: Orchestration of `MeshNetwork` and `MeshNode` for seamless and secure peer-to-peer communication across runtime nodes.
+
+These capabilities are fully integrated into the RBAC model, audit trail (Operations), and event streaming systems.
+
 ## API Surface
 
 The API is exposed via FastAPI routers grouped by capability:

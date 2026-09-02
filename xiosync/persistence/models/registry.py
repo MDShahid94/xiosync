@@ -90,7 +90,7 @@ class CapabilityGroup(Base):
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
-    operations: Mapped[list[Any]] = mapped_column(
+    operations: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
     state: Mapped[str] = mapped_column(

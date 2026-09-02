@@ -36,7 +36,6 @@ class BrowserPool(Base):
             name="ck_browser_pools_state",
         ),
         UniqueConstraint("organization_id", "name", name="uq_browser_pools_org_name"),
-        UniqueConstraint("organization_id", "id", name="uq_browser_pools_org_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
@@ -70,7 +69,6 @@ class ComputeRuntime(Base):
             name="ck_compute_runtimes_state",
         ),
         UniqueConstraint("organization_id", "name", name="uq_compute_runtimes_org_name"),
-        UniqueConstraint("organization_id", "id", name="uq_compute_runtimes_org_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
@@ -103,7 +101,6 @@ class RuntimeNode(Base):
             name="ck_runtime_nodes_state",
         ),
         Index("ix_runtime_nodes_runtime", "runtime_id"),
-        UniqueConstraint("organization_id", "id", name="uq_runtime_nodes_org_id"),
         ForeignKeyConstraint(
             ["organization_id", "runtime_id"],
             ["compute_runtimes.organization_id", "compute_runtimes.id"],
