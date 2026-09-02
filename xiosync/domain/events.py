@@ -72,6 +72,16 @@ EVENT_TYPES: frozenset[str] = frozenset(
         "dev.merge",
         "ci.gate_passed",
         "ci.gate_failed",
+        "browser_pool.created",
+        "browser_pool.scaled",
+        "browser_pool.destroyed",
+        "browser_session.created",
+        "browser_session.verified",
+        "browser_session.terminated",
+        "provider.registered",
+        "network.created",
+        "network.node_added",
+        "network.node_removed",
         "deploy.started",
         "deploy.completed",
         "schema.migration_applied",
@@ -93,6 +103,11 @@ EVENT_TYPES: frozenset[str] = frozenset(
         "secret.rotated",
         "worker.registered",
         "worker.approved",
+        # XIOBR Decoupling events
+        "browser.pool.created",
+        "browser.session.started",
+        "runtime.node.provisioned",
+        "mesh.network.created",
     }
 )
 

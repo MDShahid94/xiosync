@@ -65,6 +65,13 @@ EXPECTED_TABLES = {
     # Improvement #2 — enterprise document management
     "document_collections",
     "document_pages",
+    # Browser orchestration
+    "browser_pools",
+    "browser_sessions",
+    "compute_runtimes",
+    "runtime_nodes",
+    "mesh_networks",
+    "mesh_nodes",
 }
 
 # organizations IS the tenant root; it carries no organization_id (doc 06 §5).

@@ -45,6 +45,14 @@ from xiosync.persistence.models.workflows import (
     Workflow,
     WorkflowRun,
 )
+from xiosync.persistence.models.browser import (
+    BrowserPool,
+    BrowserSession,
+    ComputeRuntime,
+    RuntimeNode,
+    MeshNetwork,
+    MeshNode,
+)
 
 __all__ = [
     "Actor",
@@ -82,4 +90,10 @@ __all__ = [
     "WorkflowTrigger",
     "ResourceShare",
     "UsageMeter",
+    "BrowserPool",
+    "BrowserSession",
+    "ComputeRuntime",
+    "RuntimeNode",
+    "MeshNetwork",
+    "MeshNode",
 ]

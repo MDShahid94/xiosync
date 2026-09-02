@@ -235,6 +235,31 @@ def create_app(
         dependencies=[require_capability("event.manage")],
     )
 
+    # --- XIOBR Decoupled Services ----------
+    from xiosync.api.routers.browser_pools import router as browser_pools_router
+    application.include_router(
+        browser_pools_router, prefix="/api/v1",
+        dependencies=[require_capability("browser_pool.manage")],
+    )
+
+    from xiosync.api.routers.browser_sessions import router as browser_sessions_router
+    application.include_router(
+        browser_sessions_router, prefix="/api/v1",
+        dependencies=[require_capability("browser_session.manage")],
+    )
+
+    from xiosync.api.routers.compute_runtimes import router as compute_runtimes_router
+    application.include_router(
+        compute_runtimes_router, prefix="/api/v1",
+        dependencies=[require_capability("compute_runtime.manage")],
+    )
+
+    from xiosync.api.routers.mesh_networks import router as mesh_networks_router
+    application.include_router(
+        mesh_networks_router, prefix="/api/v1",
+        dependencies=[require_capability("mesh_network.manage")],
+    )
+
     # --- Genesis Phase 3: Self-referential protocol (Gaps G-5, G-7) ----------
     from xiosync.api.routers.protocol import router as protocol_router
     application.include_router(
