@@ -192,6 +192,49 @@ def create_app(
         organizations_router, prefix="/api/v1",
     )
 
+    # --- Genesis Phase 2: Complete API surface (Gap G-4) ---------------------
+    from xiosync.api.routers.workflows_crud import router as workflows_crud_router
+    application.include_router(
+        workflows_crud_router, prefix="/api/v1",
+        dependencies=[require_capability("workflow.manage")],
+    )
+
+    from xiosync.api.routers.workers_crud import router as workers_crud_router
+    application.include_router(
+        workers_crud_router, prefix="/api/v1",
+        dependencies=[require_capability("worker.manage")],
+    )
+
+    from xiosync.api.routers.secrets_crud import router as secrets_crud_router
+    application.include_router(
+        secrets_crud_router, prefix="/api/v1",
+        dependencies=[require_capability("secret.manage")],
+    )
+
+    from xiosync.api.routers.shares import router as shares_router
+    application.include_router(
+        shares_router, prefix="/api/v1",
+        dependencies=[require_capability("share.manage")],
+    )
+
+    from xiosync.api.routers.webhooks import router as webhooks_router
+    application.include_router(
+        webhooks_router, prefix="/api/v1",
+        dependencies=[require_capability("webhook.manage")],
+    )
+
+    from xiosync.api.routers.ontology import router as ontology_router
+    application.include_router(
+        ontology_router, prefix="/api/v1",
+        dependencies=[require_capability("ontology.manage")],
+    )
+
+    from xiosync.api.routers.operations import router as operations_router
+    application.include_router(
+        operations_router, prefix="/api/v1",
+        dependencies=[require_capability("event.manage")],
+    )
+
     # Gap P-4: API version governance middleware.
     application.add_middleware(VersionGovernanceMiddleware)
 
