@@ -32,6 +32,7 @@ from xiosync.persistence.models.plugins import (
     PluginRpcMethod,
 )
 from xiosync.persistence.models.registry import CapabilityGroup, RegistryCategory
+from xiosync.persistence.models.documents import DocumentCollection, DocumentPage
 from xiosync.persistence.models.secrets import SecretRef
 from xiosync.persistence.models.sharing import ResourceShare
 from xiosync.persistence.models.triggers import WorkflowTrigger
@@ -53,6 +54,8 @@ __all__ = [
     "Capability",
     "CapabilityGroup",
     "DeadLetter",
+    "DocumentCollection",
+    "DocumentPage",
     "Edge",
     "Event",
     "Grant",

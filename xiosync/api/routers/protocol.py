@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, cast
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 router = APIRouter(tags=["protocol"])
@@ -71,9 +71,10 @@ class CreateCollectionRequest(_S):
 
 class AddPageRequest(_S):
     title: str
-    provider_type: str = "inline"
-    uri: str
-    content_type: str | None = None
+    slug: str
+    content_format: str = "markdown"
+    inline_content: str | None = None
+    artifact_id: uuid.UUID | None = None
     page_order: int | None = None
     parent_page_id: uuid.UUID | None = None
 
@@ -121,15 +122,15 @@ def add_page(collection_id: uuid.UUID, payload: AddPageRequest, request: Request
     svc = DocumentService(session)
     try:
         page = svc.add_page(ctx, collection_id=collection_id, title=payload.title,
-                            provider_type=payload.provider_type, uri=payload.uri,
-                            content_type=payload.content_type, page_order=payload.page_order,
-                            parent_page_id=payload.parent_page_id)
+                            slug=payload.slug, content_format=payload.content_format,
+                            inline_content=payload.inline_content, artifact_id=payload.artifact_id,
+                            page_order=payload.page_order, parent_page_id=payload.parent_page_id)
     except Exception as exc:
         return JSONResponse(status_code=422, media_type="application/problem+json", content={
             "type": "https://xiosync.dev/problems/document_error", "title": "Page addition failed",
             "status": 422, "detail": str(exc),
         })
-    return {"artifact_id": str(page.artifact_id), "title": page.title, "page_order": page.page_order}
+    return {"id": str(page.id), "title": page.title, "slug": page.slug, "page_order": page.page_order}
 
 @router.get("/documents/{collection_id}/pages", summary="Get pages in a collection")
 def get_pages(collection_id: uuid.UUID, request: Request) -> list[dict[str, Any]]:
@@ -140,9 +141,9 @@ def get_pages(collection_id: uuid.UUID, request: Request) -> list[dict[str, Any]
     session = cast(OrmSession, request.state.org_session)
     svc = DocumentService(session)
     pages = svc.get_collection_pages(ctx, collection_id)
-    return [{"artifact_id": str(p.artifact_id), "title": p.title, "page_order": p.page_order,
+    return [{"id": str(p.id), "title": p.title, "slug": p.slug, "page_order": p.page_order,
              "parent_page_id": str(p.parent_page_id) if p.parent_page_id else None,
-             "content_type": p.content_type, "uri": p.uri} for p in pages]
+             "content_format": p.content_format, "depth": p.depth} for p in pages]
 
 @router.post("/documents/{collection_id}/publish", summary="Publish a collection", response_model=None)
 def publish_collection(collection_id: uuid.UUID, payload: PublishCollectionRequest, request: Request) -> dict[str, Any] | JSONResponse:
@@ -161,3 +162,74 @@ def publish_collection(collection_id: uuid.UUID, payload: PublishCollectionReque
         })
     return {"id": str(rec.id), "name": rec.name, "state": rec.state, "version": rec.version,
             "page_count": rec.page_count}
+
+# --- AI-agent-readable documentation endpoints ---
+
+@router.get("/docs/{collection_slug}/llms.txt", summary="AI-readable index (llms.txt)", response_class=PlainTextResponse)
+def llms_txt(collection_slug: str, request: Request) -> Any:
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.orm import Session as OrmSession
+    from xiosync.domain.context import OrgContext
+    from xiosync.persistence.models.documents import DocumentCollection
+    from xiosync.services.documents import DocumentService
+    ctx = cast(OrgContext, request.state.org_context)
+    session = cast(OrmSession, request.state.org_session)
+    coll = session.scalar(
+        sa_select(DocumentCollection).where(
+            DocumentCollection.organization_id == ctx.organization_id,
+            DocumentCollection.slug == collection_slug,
+        ).order_by(DocumentCollection.created_at.desc()).limit(1)
+    )
+    if coll is None:
+        return PlainTextResponse("# Not Found\n", status_code=404)
+    svc = DocumentService(session)
+    return PlainTextResponse(svc.generate_llms_txt(ctx, coll.id), media_type="text/plain; charset=utf-8")
+
+@router.get("/docs/{collection_slug}/llms-full.txt", summary="AI-readable full dump (llms-full.txt)", response_class=PlainTextResponse)
+def llms_full_txt(collection_slug: str, request: Request) -> Any:
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.orm import Session as OrmSession
+    from xiosync.domain.context import OrgContext
+    from xiosync.persistence.models.documents import DocumentCollection
+    from xiosync.services.documents import DocumentService
+    ctx = cast(OrgContext, request.state.org_context)
+    session = cast(OrmSession, request.state.org_session)
+    coll = session.scalar(
+        sa_select(DocumentCollection).where(
+            DocumentCollection.organization_id == ctx.organization_id,
+            DocumentCollection.slug == collection_slug,
+        ).order_by(DocumentCollection.created_at.desc()).limit(1)
+    )
+    if coll is None:
+        return PlainTextResponse("# Not Found\n", status_code=404)
+    svc = DocumentService(session)
+    return PlainTextResponse(svc.generate_llms_full_txt(ctx, coll.id), media_type="text/plain; charset=utf-8")
+
+@router.get("/docs/{collection_slug}/pages/{page_slug}.md", summary="Per-page raw Markdown", response_class=PlainTextResponse)
+def page_markdown(collection_slug: str, page_slug: str, request: Request) -> Any:
+    from sqlalchemy import select as sa_select
+    from sqlalchemy.orm import Session as OrmSession
+    from xiosync.domain.context import OrgContext
+    from xiosync.persistence.models.documents import DocumentCollection, DocumentPage
+    ctx = cast(OrgContext, request.state.org_context)
+    session = cast(OrmSession, request.state.org_session)
+    coll = session.scalar(
+        sa_select(DocumentCollection).where(
+            DocumentCollection.organization_id == ctx.organization_id,
+            DocumentCollection.slug == collection_slug,
+        ).order_by(DocumentCollection.created_at.desc()).limit(1)
+    )
+    if coll is None:
+        return PlainTextResponse("# Not Found\n", status_code=404)
+    page = session.scalar(
+        sa_select(DocumentPage).where(
+            DocumentPage.collection_id == coll.id,
+            DocumentPage.slug == page_slug,
+        )
+    )
+    if page is None:
+        return PlainTextResponse("# Page Not Found\n", status_code=404)
+    if page.inline_content:
+        return PlainTextResponse(page.inline_content, media_type="text/markdown; charset=utf-8")
+    return PlainTextResponse(f"# {page.title}\n\n*Content stored at artifact {page.artifact_id}*\n",
+                             media_type="text/markdown; charset=utf-8")

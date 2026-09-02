@@ -62,6 +62,9 @@ EXPECTED_TABLES = {
     # Genesis Phase 0 — self-governance infrastructure
     "registry_categories",
     "capability_groups",
+    # Improvement #2 — enterprise document management
+    "document_collections",
+    "document_pages",
 }
 
 # organizations IS the tenant root; it carries no organization_id (doc 06 §5).
