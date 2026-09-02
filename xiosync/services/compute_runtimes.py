@@ -136,6 +136,32 @@ class ComputeRuntimeService:
             created_at=row.created_at,
         )
 
+    def list_providers(
+        self,
+        ctx: OrgContext,
+        *,
+        project_id: uuid.UUID | None = None,
+    ) -> list[RuntimeProviderRecord]:
+        """List all compute runtime providers in this org, optionally filtered by project_id."""
+        stmt = select(RuntimeProvider).where(
+            RuntimeProvider.organization_id == ctx.organization_id
+        )
+        if project_id is not None:
+            stmt = stmt.where(RuntimeProvider.project_id == project_id)
+        rows = self._session.scalars(stmt).all()
+        return [
+            RuntimeProviderRecord(
+                id=r.id,
+                organization_id=r.organization_id,
+                project_id=r.project_id,
+                name=r.name,
+                provider=r.provider,
+                config=r.config,
+                created_at=r.created_at,
+            )
+            for r in rows
+        ]
+
     def provision_node(
         self,
         ctx: OrgContext,

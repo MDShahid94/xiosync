@@ -189,7 +189,8 @@ def create_app(
     # current org info requires readonly
     from xiosync.api.routers.organizations import router as organizations_router
     from xiosync.api.routers.projects import router as projects_router
-    application.include_router(projects_router, prefix="/api/v1", dependencies=[require_capability("project.manage")])
+    # Projects router carries per-route RBAC (project.read / project.manage).
+    application.include_router(projects_router, prefix="/api/v1")
     application.include_router(
         organizations_router, prefix="/api/v1",
     )

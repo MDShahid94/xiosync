@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, cast
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
@@ -47,7 +47,10 @@ def create_pool(payload: CreateBrowserPoolRequest, request: Request) -> dict[str
         )
 
 @router.get("/browser-pools", summary="List browser pools", response_model=None)
-def list_pools(request: Request) -> dict[str, Any] | JSONResponse:
+def list_pools(
+    request: Request,
+    project_id: uuid.UUID | None = Query(default=None, description="Filter pools by project"),
+) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
     from xiosync.domain.context import OrgContext
     from xiosync.services.browser_pools import BrowserPoolService
@@ -56,7 +59,7 @@ def list_pools(request: Request) -> dict[str, Any] | JSONResponse:
     session = cast(OrmSession, request.state.org_session)
     svc = BrowserPoolService(session)
 
-    pools = svc.list_pools(ctx)
+    pools = svc.list_pools(ctx, project_id=project_id)
     return {"pools": [{"id": str(p.id), "name": p.name} for p in pools]}
 
 @router.get("/browser-pools/{pool_id}", summary="Get browser pool", response_model=None)

@@ -145,13 +145,18 @@ class BrowserPoolService:
     def list_pools(
         self,
         context: OrgContext,
+        *,
+        project_id: uuid.UUID | None = None,
     ) -> list[BrowserPoolRecord]:
-        """List all browser pools in this org."""
-        rows = self._session.scalars(
+        """List all browser pools in this org, optionally filtered by project_id."""
+        stmt = (
             select(BrowserPool)
             .where(BrowserPool.organization_id == context.organization_id)
             .order_by(BrowserPool.created_at.desc())
-        ).all()
+        )
+        if project_id is not None:
+            stmt = stmt.where(BrowserPool.project_id == project_id)
+        rows = self._session.scalars(stmt).all()
         return [_record(row) for row in rows]
 
     def scale_pool(

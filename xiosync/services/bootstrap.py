@@ -278,11 +278,17 @@ _DEFAULT_CAPABILITY_GROUPS: list[dict[str, Any]] = [
         ],
     },
     {
+        "name": "project.read",
+        "description": "Read-only access to project list and detail",
+        "operations": [
+            "project.list", "project.get",
+        ],
+    },
+    {
         "name": "project.manage",
         "description": "Project management operations",
         "operations": [
             "project.create", "project.read", "project.list", "project.update", "project.archive",
-
         ],
     },
     {
@@ -300,14 +306,6 @@ _DEFAULT_CAPABILITY_GROUPS: list[dict[str, Any]] = [
             "share.list",
             "metering.summary", "metering.history",
             "project.read", "project.list",
-        ],
-    },
-    {
-        "name": "project.manage",
-        "description": "Project management operations",
-        "operations": [
-            "project.create", "project.read", "project.list", "project.update", "project.archive",
-
         ],
     },
 ]

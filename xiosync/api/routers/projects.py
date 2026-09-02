@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session as OrmSession
 
+from xiosync.api.middleware.rbac import require_capability
 from xiosync.domain.context import OrgContext
 from xiosync.services.projects import (
     ProjectNotFoundError,
@@ -18,6 +19,11 @@ from xiosync.services.projects import (
 )
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+# Capability guards reused across routes.
+# Read endpoints accept either project.read OR project.manage (both work).
+_READ_CAP = require_capability("project.read")
+_MANAGE_CAP = require_capability("project.manage")
 
 
 class StrictModel(BaseModel):
@@ -95,7 +101,7 @@ def _problem(
     )
 
 
-@router.post("", response_model=ProjectResponse, status_code=201)
+@router.post("", response_model=ProjectResponse, status_code=201, dependencies=[_MANAGE_CAP])
 def create_project(request: Request, payload: ProjectCreateRequest) -> ProjectResponse:
     """Create a new project."""
     service = _service(request)
@@ -109,7 +115,7 @@ def create_project(request: Request, payload: ProjectCreateRequest) -> ProjectRe
     return _to_response(record)
 
 
-@router.get("", response_model=list[ProjectResponse])
+@router.get("", response_model=list[ProjectResponse], dependencies=[_READ_CAP])
 def list_projects(request: Request) -> list[ProjectResponse]:
     """List all projects in the organization."""
     service = _service(request)
@@ -117,7 +123,7 @@ def list_projects(request: Request) -> list[ProjectResponse]:
     return [_to_response(r) for r in records]
 
 
-@router.get("/{project_id}", response_model=ProjectResponse)
+@router.get("/{project_id}", response_model=ProjectResponse, dependencies=[_READ_CAP])
 def get_project(request: Request, project_id: uuid.UUID) -> ProjectResponse | JSONResponse:
     """Get a specific project."""
     service = _service(request)
@@ -128,7 +134,7 @@ def get_project(request: Request, project_id: uuid.UUID) -> ProjectResponse | JS
         return _problem(request, 404, "project_not_found", "Project not found")
 
 
-@router.patch("/{project_id}", response_model=ProjectResponse)
+@router.patch("/{project_id}", response_model=ProjectResponse, dependencies=[_MANAGE_CAP])
 def update_project(
     request: Request, project_id: uuid.UUID, payload: ProjectUpdateRequest
 ) -> ProjectResponse | JSONResponse:
@@ -148,7 +154,7 @@ def update_project(
         return _problem(request, 404, "project_not_found", "Project not found")
 
 
-@router.post("/{project_id}/archive", response_model=ProjectResponse)
+@router.post("/{project_id}/archive", response_model=ProjectResponse, dependencies=[_MANAGE_CAP])
 def archive_project(request: Request, project_id: uuid.UUID) -> ProjectResponse | JSONResponse:
     """Archive a project."""
     service = _service(request)

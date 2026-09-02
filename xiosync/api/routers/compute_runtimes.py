@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, cast
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
@@ -48,17 +48,20 @@ def register_provider(payload: RegisterProviderRequest, request: Request) -> dic
         )
 
 @router.get("/compute-runtimes", summary="List providers", response_model=None)
-def list_providers(request: Request) -> dict[str, Any] | JSONResponse:
+def list_providers(
+    request: Request,
+    project_id: uuid.UUID | None = Query(default=None, description="Filter providers by project"),
+) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
-    from sqlalchemy import select
     from xiosync.domain.context import OrgContext
-    from xiosync.persistence.models.browser import ComputeRuntime as RuntimeProvider
+    from xiosync.services.compute_runtimes import ComputeRuntimeService
 
     ctx = cast(OrgContext, request.state.org_context)
     session = cast(OrmSession, request.state.org_session)
+    svc = ComputeRuntimeService(session)
 
-    rows = session.scalars(select(RuntimeProvider).where(RuntimeProvider.organization_id == ctx.organization_id)).all()
-    return {"providers": [{"id": str(p.id), "name": p.name} for p in rows]}
+    providers = svc.list_providers(ctx, project_id=project_id)
+    return {"providers": [{"id": str(p.id), "name": p.name} for p in providers]}
 
 @router.post("/compute-runtimes/{runtime_id}/nodes", status_code=201, summary="Provision node", response_model=None)
 def provision_node(runtime_id: uuid.UUID, payload: ProvisionNodeRequest, request: Request) -> dict[str, Any] | JSONResponse:

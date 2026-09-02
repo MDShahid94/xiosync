@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, cast
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
@@ -48,7 +48,10 @@ def create_network(payload: CreateNetworkRequest, request: Request) -> dict[str,
         )
 
 @router.get("/mesh-networks", summary="List networks", response_model=None)
-def list_networks(request: Request) -> dict[str, Any] | JSONResponse:
+def list_networks(
+    request: Request,
+    project_id: uuid.UUID | None = Query(default=None, description="Filter networks by project"),
+) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
     from xiosync.domain.context import OrgContext
     from xiosync.services.mesh_networks import MeshNetworkService
@@ -57,7 +60,7 @@ def list_networks(request: Request) -> dict[str, Any] | JSONResponse:
     session = cast(OrmSession, request.state.org_session)
     svc = MeshNetworkService(session)
 
-    networks = svc.list_networks(ctx)
+    networks = svc.list_networks(ctx, project_id=project_id)
     return {"networks": [{"id": str(n.id), "name": n.name} for n in networks]}
 
 @router.post("/mesh-networks/{network_id}/nodes", status_code=201, summary="Add node", response_model=None)

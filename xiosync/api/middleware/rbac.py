@@ -72,6 +72,14 @@ _DEFAULT_MIN_ROLE: dict[str, MembershipRole] = {
     # Read-only
     "readonly": MembershipRole.ORG_VIEWER,
     "metering.read": MembershipRole.ORG_VIEWER,
+    "project.read": MembershipRole.ORG_VIEWER,
+    # Project management
+    "project.manage": MembershipRole.ORG_MEMBER,
+    # XIOBR resource management
+    "browser_pool.manage": MembershipRole.ORG_MEMBER,
+    "browser_session.manage": MembershipRole.ORG_MEMBER,
+    "compute_runtime.manage": MembershipRole.ORG_MEMBER,
+    "mesh_network.manage": MembershipRole.ORG_MEMBER,
 }
 
 
