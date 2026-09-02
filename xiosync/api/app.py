@@ -114,26 +114,83 @@ def create_app(
     # Health check endpoints (no auth required, no /api/v1 prefix)
     application.include_router(health_router)
 
-    # API routers under /api/v1 with full authentication and middleware
+    # --- Genesis Phase 1: RBAC enforcement (Gap G-3) -------------------------
+    # Each router gets a capability group dependency that checks the actor's
+    # membership role before any route handler executes.  The capability groups
+    # are configurable per-org (Q2 Option C).
+    from xiosync.api.middleware.rbac import require_capability
+
+    # Auth is public — no RBAC (already handled by its own logic)
     application.include_router(auth_router, prefix="/api/v1")
-    application.include_router(execution_router, prefix="/api/v1")
-    application.include_router(dlq_router, prefix="/api/v1")
-    application.include_router(plugins_router, prefix="/api/v1")
-    application.include_router(listings_router, prefix="/api/v1")
-    application.include_router(batch_router, prefix="/api/v1")
-    application.include_router(streaming_router, prefix="/api/v1")
-    application.include_router(triggers_router, prefix="/api/v1")
-    application.include_router(task_streams_router, prefix="/api/v1")
 
-    # Mount metering router (Gap M-3).
+    # Task execution — requires task.execute capability
+    application.include_router(
+        execution_router, prefix="/api/v1",
+        dependencies=[require_capability("task.execute")],
+    )
+
+    # Dead letter queue — requires dlq.manage capability
+    application.include_router(
+        dlq_router, prefix="/api/v1",
+        dependencies=[require_capability("dlq.manage")],
+    )
+
+    # Plugins — requires plugin.admin capability
+    application.include_router(
+        plugins_router, prefix="/api/v1",
+        dependencies=[require_capability("plugin.admin")],
+    )
+
+    # Listings — read-only, requires readonly capability
+    application.include_router(
+        listings_router, prefix="/api/v1",
+        dependencies=[require_capability("readonly")],
+    )
+
+    # Batch operations — requires workflow.manage capability
+    application.include_router(
+        batch_router, prefix="/api/v1",
+        dependencies=[require_capability("workflow.manage")],
+    )
+
+    # SSE streaming — requires event.manage capability
+    application.include_router(
+        streaming_router, prefix="/api/v1",
+        dependencies=[require_capability("event.manage")],
+    )
+
+    # Triggers — requires trigger.manage capability
+    application.include_router(
+        triggers_router, prefix="/api/v1",
+        dependencies=[require_capability("trigger.manage")],
+    )
+
+    # Task output streams — requires task.execute capability
+    application.include_router(
+        task_streams_router, prefix="/api/v1",
+        dependencies=[require_capability("task.execute")],
+    )
+
+    # Metering — read-only
     from xiosync.api.routers.metering import router as metering_router
-    application.include_router(metering_router, prefix="/api/v1")
+    application.include_router(
+        metering_router, prefix="/api/v1",
+        dependencies=[require_capability("metering.read")],
+    )
 
-    # Genesis Phase 0 — actor and organization management (Gaps G-1, G-2).
+    # Actors — requires actor.manage capability
     from xiosync.api.routers.actors import router as actors_router
+    application.include_router(
+        actors_router, prefix="/api/v1",
+        dependencies=[require_capability("actor.manage")],
+    )
+
+    # Organizations — bootstrap is public (handled within the route),
+    # current org info requires readonly
     from xiosync.api.routers.organizations import router as organizations_router
-    application.include_router(actors_router, prefix="/api/v1")
-    application.include_router(organizations_router, prefix="/api/v1")
+    application.include_router(
+        organizations_router, prefix="/api/v1",
+    )
 
     # Gap P-4: API version governance middleware.
     application.add_middleware(VersionGovernanceMiddleware)
