@@ -242,6 +242,12 @@ def create_app(
         dependencies=[require_capability("capability.manage")],
     )
 
+    from xiosync.api.routers.capability_groups import router as capability_groups_router
+    application.include_router(
+        capability_groups_router, prefix="/api/v1",
+        dependencies=[require_capability("capability.manage")],
+    )
+
     # Gap P-4: API version governance middleware.
     application.add_middleware(VersionGovernanceMiddleware)
 

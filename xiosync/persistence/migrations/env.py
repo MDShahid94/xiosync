@@ -13,17 +13,47 @@ Rules enforced here:
 
 from __future__ import annotations
 
+import logging
 import os
+from collections.abc import Collection, Mapping
+from typing import Any
 
 from alembic import context
+from alembic.runtime.migration import MigrationContext, MigrationInfo
 from sqlalchemy import create_engine
 from xiosync.persistence.database import validated_psycopg_url
 from xiosync.persistence.models import Base
+
+logger = logging.getLogger("xiosync.persistence.migrations")
 
 # The declarative metadata (persistence/models). The autogenerate-diff-must-
 # be-empty CI gate (INV-TEST-SCHEMA-2) compares the migrated database against
 # exactly this object.
 target_metadata = Base.metadata
+
+
+def _on_version_apply(
+    ctx: MigrationContext,
+    step: MigrationInfo,
+    heads: Collection[Any],
+    run_args: Mapping[str, Any],
+) -> None:
+    """Record a schema migration as an observable protocol evolution event."""
+    direction = "upgrade" if step.is_upgrade else "downgrade"
+    source = ",".join(step.source_revision_ids) if step.source_revision_ids else "base"
+    destination = (
+        ",".join(step.destination_revision_ids)
+        if step.destination_revision_ids
+        else "base"
+    )
+    revision = step.up_revision_id or destination
+    logger.info(
+        "protocol.evolution: schema_migration applied direction=%s revision=%s (%s -> %s)",
+        direction,
+        revision,
+        source,
+        destination,
+    )
 
 
 def _database_url() -> str:
@@ -52,13 +82,21 @@ def run_migrations_online() -> None:
     """Run migrations against the configured database (the deploy-step path)."""
     engine = create_engine(_database_url(), pool_pre_ping=True)
     with engine.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            on_version_apply=_on_version_apply,
+        )
         with context.begin_transaction():
             context.run_migrations()
     engine.dispose()
 
 
-if context.is_offline_mode():
-    run_migrations_offline()
-else:
-    run_migrations_online()
+try:
+    if context.is_offline_mode():
+        run_migrations_offline()
+    else:
+        run_migrations_online()
+except NameError:
+    # Invoked outside Alembic runner (e.g., imported for unit testing)
+    pass

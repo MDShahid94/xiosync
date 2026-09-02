@@ -482,6 +482,74 @@ class TestSharingConstants:
                 resource_id=new_id(),
             )
 
+    def test_sharing_enabled_creates_share(self) -> None:
+        session = MagicMock()
+        svc = SharingService(session, enabled=True)
+        ctx = system_context(new_id())
+        res_id = new_id()
+        rec = svc.create_share(
+            ctx,
+            resource_type="capability",
+            resource_id=res_id,
+        )
+        assert rec.resource_type == "capability"
+        assert rec.resource_id == res_id
+        assert session.add.called
+        assert session.flush.called
+
+
+class TestSharesRouter:
+    def test_create_share_router(self) -> None:
+        from xiosync.api.routers.shares import CreateShareRequest, create_share
+
+        req = MagicMock()
+        req.state.org_context = system_context(new_id())
+        session = MagicMock()
+        req.state.org_session = session
+        payload = CreateShareRequest(resource_type="capability", resource_id=new_id())
+        resp = create_share(payload, req)
+        assert isinstance(resp, dict)
+        assert resp["resource_type"] == "capability"
+        assert "id" in resp
+
+
+    def test_list_shares_router(self) -> None:
+        from xiosync.api.routers.shares import list_shares
+
+        req = MagicMock()
+        req.state.org_context = system_context(new_id())
+        session = MagicMock()
+        session.scalars.return_value.all.return_value = []
+        req.state.org_session = session
+        resp = list_shares(req)
+        assert resp == []
+
+    def test_revoke_share_router(self) -> None:
+        from xiosync.api.routers.shares import revoke_share
+
+        req = MagicMock()
+        ctx = system_context(new_id())
+        req.state.org_context = ctx
+        session = MagicMock()
+        share_id = new_id()
+        mock_row = MagicMock()
+        mock_row.id = share_id
+        mock_row.source_org_id = ctx.organization_id
+        mock_row.target_org_id = None
+        mock_row.resource_type = "capability"
+        mock_row.resource_id = new_id()
+        mock_row.permissions = ["read"]
+        mock_row.state = "active"
+        mock_row.created_at = datetime.now(timezone.utc)
+        mock_row.expires_at = None
+        session.scalar.return_value = mock_row
+        req.state.org_session = session
+        resp = revoke_share(share_id, req)
+        assert isinstance(resp, dict)
+        assert resp["share_id"] == str(share_id)
+        assert resp["state"] == "revoked"
+
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MeteringService — constants

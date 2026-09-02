@@ -443,3 +443,8 @@ class TestConfigKeys:
     def test_cross_org_sharing_registered(self) -> None:
         from xiosync.platform.config import _KNOWN_PREFIXED_KEYS
         assert "XIOSYNC_ENABLE_CROSS_ORG_SHARING" in _KNOWN_PREFIXED_KEYS
+
+    def test_sharing_enabled_registered(self) -> None:
+        from xiosync.platform.config import _KNOWN_PREFIXED_KEYS
+        assert "XIOSYNC_SHARING_ENABLED" in _KNOWN_PREFIXED_KEYS
+
