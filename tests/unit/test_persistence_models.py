@@ -12,6 +12,9 @@ import uuid
 import xiosync.persistence.models.plugins  # noqa: F401 — registers Phase 5 tables
 import xiosync.persistence.models.workers  # noqa: F401 — registers Phase 4 tables
 import xiosync.persistence.models.workflows  # noqa: F401 — registers Phase 3 tables
+import xiosync.persistence.models.projects  # noqa: F401
+
+
 from sqlalchemy import Table, UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from xiosync.persistence.models import Base
@@ -65,6 +68,9 @@ EXPECTED_TABLES = {
     # Improvement #2 — enterprise document management
     "document_collections",
     "document_pages",
+    "projects",
+
+    
     # Browser orchestration
     "browser_pools",
     "browser_sessions",

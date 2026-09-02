@@ -25,6 +25,9 @@ from xiosync.persistence.models.ontology import (
 )
 from xiosync.persistence.models.network import WorkerNetworkAllowRule
 from xiosync.persistence.models.operations import Operation
+from xiosync.persistence.models.projects import Project
+
+
 from xiosync.persistence.models.plugins import (
     Plugin,
     PluginInstallation,
@@ -72,6 +75,9 @@ __all__ = [
     "Operation",
     "Organization",
     "Plugin",
+    "Project",
+
+
     "PluginInstallation",
     "PluginNetworkAllowRule",
     "PluginRpcMethod",

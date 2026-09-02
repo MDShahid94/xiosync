@@ -103,6 +103,12 @@ EVENT_TYPES: frozenset[str] = frozenset(
         "secret.rotated",
         "worker.registered",
         "worker.approved",
+        "project.created",
+        "project.archived",
+
+        "project.created",
+        "project.archived",
+
         # XIOBR Decoupling events
         "browser.pool.created",
         "browser.session.started",
