@@ -129,6 +129,12 @@ def create_app(
     from xiosync.api.routers.metering import router as metering_router
     application.include_router(metering_router, prefix="/api/v1")
 
+    # Genesis Phase 0 — actor and organization management (Gaps G-1, G-2).
+    from xiosync.api.routers.actors import router as actors_router
+    from xiosync.api.routers.organizations import router as organizations_router
+    application.include_router(actors_router, prefix="/api/v1")
+    application.include_router(organizations_router, prefix="/api/v1")
+
     # Gap P-4: API version governance middleware.
     application.add_middleware(VersionGovernanceMiddleware)
 

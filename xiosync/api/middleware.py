@@ -20,7 +20,7 @@ from xiosync.services.identity import AuthenticationError, SessionService
 
 DEFAULT_MAX_BODY_BYTES = 1_048_576
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
-_PUBLIC_AUTH_PATHS = frozenset({"/api/v1/auth/login", "/api/v1/auth/refresh"})
+_PUBLIC_AUTH_PATHS = frozenset({"/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/bootstrap"})
 
 
 def _problem(status: int, code: str, title: str, request_id: str) -> dict[str, Any]:

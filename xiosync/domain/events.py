@@ -50,6 +50,7 @@ POLICY_DECISION = "policy_decision"
 
 #: The closed ``event_type`` set a fresh install seeds the registry with. At
 #: runtime the Type Registry is authoritative (doc 03 §8); this is the seed.
+#: Genesis Phase 0 expanded this with development + self-governance events.
 EVENT_TYPES: frozenset[str] = frozenset(
     {
         ACTION_EXECUTED,
@@ -65,6 +66,33 @@ EVENT_TYPES: frozenset[str] = frozenset(
         "webhook.dispatch",    # R-2: webhook delivery intent
         "webhook.delivered",   # R-2: successful webhook delivery
         "webhook.failed",      # R-2: failed webhook delivery
+        # Genesis Phase 0 — development events (Gap G-5)
+        "dev.commit",
+        "dev.review",
+        "dev.merge",
+        "ci.gate_passed",
+        "ci.gate_failed",
+        "deploy.started",
+        "deploy.completed",
+        "schema.migration_applied",
+        "schema.migration_rolled_back",
+        "protocol.evolution",
+        # Genesis Phase 0 — self-governance events
+        "genesis.bootstrap",
+        "actor.created",
+        "actor.registered",
+        "capability.created",
+        "capability.deprecated",
+        "artifact.created",
+        "share.created",
+        "share.revoked",
+        "workflow.created",
+        "workflow.published",
+        "trigger.created",
+        "secret.created",
+        "secret.rotated",
+        "worker.registered",
+        "worker.approved",
     }
 )
 

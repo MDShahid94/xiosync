@@ -50,8 +50,14 @@ from xiosync.platform.ids import new_id
 
 _timestamptz = TIMESTAMP(timezone=True)
 
-# Doc 03 §8 / doc 06 §8: the closed set of categories the registry governs.
-_CATEGORY_CHECK = (
+# Doc 03 §8 / doc 06 §8: categories are now validated via FK to
+# registry_categories table (migration 0017 — Genesis meta-registry).
+# The former hardcoded CHECK was:
+#   category IN ('actor_type', 'actor_subtype', 'capability_type',
+#                'operation_type', 'edge_type', 'event_type', 'lifecycle_state')
+# New categories can be registered at runtime without DDL.
+# _CATEGORY_CHECK is retained only for reference in tests/downgrade scripts.
+_LEGACY_CATEGORY_CHECK = (
     "category IN ("
     "'actor_type', 'actor_subtype', 'capability_type', 'operation_type', "
     "'edge_type', 'event_type', 'lifecycle_state')"
@@ -73,7 +79,13 @@ class TypeRegistry(Base):
             "version",
             name="uq_type_registry_namespace_category_value_version",
         ),
-        CheckConstraint(_CATEGORY_CHECK, name="category_allowed"),
+        # Genesis meta-registry: category validated by FK to registry_categories
+        # (replaces former CHECK constraint, migration 0017).
+        ForeignKeyConstraint(
+            ["category"],
+            ["registry_categories.name"],
+            name="fk_type_registry_category",
+        ),
         CheckConstraint("state IN ('active', 'deprecated')", name="state_allowed"),
         Index("ix_type_registry_lookup", "namespace", "category", "value"),
     )
@@ -118,7 +130,13 @@ class TypeRegistryAlias(Base):
             ["type_registry.organization_id", "type_registry.id"],
             name="fk_type_registry_aliases_target_same_org",
         ),
-        CheckConstraint(_CATEGORY_CHECK, name="category_allowed"),
+        # Genesis meta-registry: category validated by FK to registry_categories
+        # (replaces former CHECK constraint, migration 0017).
+        ForeignKeyConstraint(
+            ["category"],
+            ["registry_categories.name"],
+            name="fk_type_registry_aliases_category",
+        ),
         Index("ix_type_registry_aliases_lookup", "namespace", "category", "alias_value"),
     )
 

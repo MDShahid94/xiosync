@@ -46,6 +46,8 @@ _KNOWN_PREFIXED_KEYS = frozenset({
     "XIOSYNC_API_DEPRECATION_CONFIG",
     # Wave 3 — M-2 cross-org sharing
     "XIOSYNC_ENABLE_CROSS_ORG_SHARING",
+    # Genesis Phase 0 — bootstrap token for API-based genesis
+    "XIOSYNC_BOOTSTRAP_TOKEN",
 })
 
 _ALLOWED_DATABASE_SCHEMES = frozenset({"postgresql", "postgresql+psycopg"})

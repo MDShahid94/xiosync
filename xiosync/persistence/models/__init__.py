@@ -31,6 +31,7 @@ from xiosync.persistence.models.plugins import (
     PluginNetworkAllowRule,
     PluginRpcMethod,
 )
+from xiosync.persistence.models.registry import CapabilityGroup, RegistryCategory
 from xiosync.persistence.models.secrets import SecretRef
 from xiosync.persistence.models.sharing import ResourceShare
 from xiosync.persistence.models.triggers import WorkflowTrigger
@@ -50,6 +51,7 @@ __all__ = [
     "AuthIdentity",
     "Base",
     "Capability",
+    "CapabilityGroup",
     "DeadLetter",
     "Edge",
     "Event",
@@ -62,6 +64,7 @@ __all__ = [
     "PluginInstallation",
     "PluginNetworkAllowRule",
     "PluginRpcMethod",
+    "RegistryCategory",
     "Session",
     "Task",
     "TypeRegistry",

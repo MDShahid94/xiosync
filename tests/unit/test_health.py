@@ -125,8 +125,7 @@ class TestGetAlembicHeadRevision:
 
     def test_get_head_revision_success(self) -> None:
         """Get head revision from actual Alembic script directory."""
-        # Use the real XIOPATH alembic directory
-        head = get_alembic_head_revision("XIOPATH/alembic")
+        head = get_alembic_head_revision("xiosync/persistence/migrations")
         assert head is not None
         assert isinstance(head, str)
         assert len(head) > 0

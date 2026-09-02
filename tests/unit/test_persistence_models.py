@@ -59,12 +59,20 @@ EXPECTED_TABLES = {
     "workflow_triggers",
     "resource_shares",
     "usage_meters",
+    # Genesis Phase 0 — self-governance infrastructure
+    "registry_categories",
+    "capability_groups",
 }
 
 # organizations IS the tenant root; it carries no organization_id (doc 06 §5).
 # type_registry and type_registry_aliases use a global nullable organization_id for core.*.
 # resource_shares uses source_org_id/target_org_id (no RLS, used BY RLS policies).
-TENANT_BEARING = EXPECTED_TABLES - {"organizations", "type_registry", "type_registry_aliases", "resource_shares"}
+# registry_categories is a global lookup table (no organization_id).
+# capability_groups uses nullable org_id (NULL = global defaults, non-null = org override).
+TENANT_BEARING = EXPECTED_TABLES - {
+    "organizations", "type_registry", "type_registry_aliases",
+    "resource_shares", "registry_categories", "capability_groups",
+}
 
 
 def _tables() -> dict[str, Table]:
