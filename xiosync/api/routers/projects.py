@@ -163,3 +163,10 @@ def archive_project(request: Request, project_id: uuid.UUID) -> ProjectResponse 
         return _to_response(record)
     except ProjectNotFoundError:
         return _problem(request, 404, "project_not_found", "Project not found")
+
+from xiosync.api.router_registry import register_router
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["projects"],
+)

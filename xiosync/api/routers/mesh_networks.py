@@ -112,3 +112,12 @@ def remove_node(network_id: uuid.UUID, node_id: uuid.UUID, request: Request) -> 
                 "detail": str(exc),
             },
         )
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["mesh-networks"],
+    dependencies=[require_capability("mesh_network.manage")],
+)

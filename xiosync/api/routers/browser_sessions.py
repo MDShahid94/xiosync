@@ -113,3 +113,12 @@ def terminate_session(session_id: uuid.UUID, request: Request) -> dict[str, Any]
                 "status": 404,
             },
         )
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["browser-sessions"],
+    dependencies=[require_capability("browser_session.manage")],
+)

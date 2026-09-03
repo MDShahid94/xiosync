@@ -62,3 +62,12 @@ def create_memory(payload: CreateMemoryRequest, request: Request) -> dict[str, A
             "status": 422, "detail": str(exc),
         })
     return {"id": str(memory_id)}
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["ontology"],
+    dependencies=[require_capability("ontology.manage")],
+)

@@ -102,3 +102,11 @@ def revoke_share(share_id: uuid.UUID, request: Request) -> dict[str, Any] | JSON
         )
     return {"share_id": str(share_id), "state": "revoked"}
 
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["shares"],
+    dependencies=[require_capability("share.manage")],
+)

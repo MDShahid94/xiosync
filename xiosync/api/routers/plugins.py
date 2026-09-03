@@ -390,3 +390,12 @@ def _installation_response(record: Any) -> InstallationResponse:
         approved_by=record.approved_by,
         grant_id=record.grant_id,
     )
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["plugins"],
+    dependencies=[require_capability("plugin.admin")],
+)

@@ -81,3 +81,10 @@ async def readiness_probe(request: Request) -> dict[str, str]:
         raise HTTPException(status_code=503, detail=state.ready_reason)
 
     return {"status": "ready", "message": "Fully operational"}
+
+from xiosync.api.router_registry import register_router
+register_router(
+    router,
+    prefix='',
+    tags=["health"],
+)

@@ -225,3 +225,12 @@ def transition_actor(
         "operation_id": str(result.operation_id),
         "event_id": str(result.event_id),
     }
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["actors"],
+    dependencies=[require_capability("actor.manage")],
+)

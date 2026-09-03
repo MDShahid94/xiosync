@@ -161,3 +161,10 @@ def get_current_organization(
         external_providers=org.external_providers,
         created_at=org.created_at.isoformat(),
     )
+
+from xiosync.api.router_registry import register_router
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["organizations"],
+)

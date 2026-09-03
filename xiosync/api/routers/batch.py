@@ -209,3 +209,12 @@ def _dispatch_action(
 
     else:
         raise ValueError(f"unknown batch action: {action!r}")
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["batch"],
+    dependencies=[require_capability("workflow.manage")],
+)

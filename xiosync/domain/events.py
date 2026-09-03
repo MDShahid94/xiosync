@@ -26,6 +26,8 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from xiosync.domain.event_registry import event_registry
+
 __all__ = [
     "EVENT_TYPES",
     "SEVERITIES",
@@ -33,6 +35,7 @@ __all__ = [
     "InvalidEventTypeError",
     "InvalidSeverityError",
     "build_state_change_payload",
+    "event_registry",
     "extract_routing_fields",
     "validate_event_type",
     "validate_severity",
@@ -51,6 +54,12 @@ POLICY_DECISION = "policy_decision"
 #: The closed ``event_type`` set a fresh install seeds the registry with. At
 #: runtime the Type Registry is authoritative (doc 03 §8); this is the seed.
 #: Genesis Phase 0 expanded this with development + self-governance events.
+#:
+#: DEPRECATED: ``EVENT_TYPES`` is kept only for backward compatibility with
+#: existing tests and call sites that do ``value in EVENT_TYPES``.
+#: The runtime source of truth is now ``event_registry`` (populated from DB
+#: at genesis/startup). ``validate_event_type()`` already delegates to it.
+#: Will be removed once all callers are migrated to ``event_registry.all()``.
 EVENT_TYPES: frozenset[str] = frozenset(
     {
         ACTION_EXECUTED,
@@ -148,11 +157,12 @@ class InvalidSeverityError(InvalidEventError):
 def validate_event_type(event_type: str) -> str:
     """Return ``event_type`` if it is a known type, else raise.
 
-    This is the cheap, always-available guard on the bootstrap vocabulary; the
-    Type Registry remains the runtime authority (doc 03 §8) for tenant/plugin
-    namespaces.
+    Delegates to ``event_registry`` (the runtime-populated in-process cache)
+    rather than the static ``EVENT_TYPES`` frozenset. When the registry has
+    not yet been populated (dev/test environments that skip genesis) every
+    type is allowed — ``event_registry.is_valid()`` returns ``True``.
     """
-    if event_type not in EVENT_TYPES:
+    if not event_registry.is_valid(event_type):
         raise InvalidEventTypeError(event_type)
     return event_type
 

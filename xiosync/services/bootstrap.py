@@ -134,6 +134,26 @@ _CORE_LIFECYCLE_STATES = [
     ("terminating", "Entity is being terminated"),
     ("terminated", "Entity has been terminated"),
     ("archived", "Entity has been archived"),
+    # States used by browser/mesh/plugin tables — previously enforced by
+    # CHECK constraints dropped in migration 0024 (Gap 1.2).  Adding them
+    # here makes type_registry the single source of truth for lifecycle state
+    # vocabulary.
+    ("failed", "Entity encountered an unrecoverable failure"),
+    ("ready", "Entity is provisioned and ready to accept work"),
+    ("busy", "Entity is currently processing a request"),
+    ("deprecated", "Entity is deprecated and pending removal"),
+    ("configuring", "Entity is being configured"),
+    ("error", "Entity is in an error state requiring attention"),
+    ("draft", "Entity is in draft and not yet activated"),
+    # Browser orchestration states
+    ("offline", "Entity is offline / unreachable"),
+    ("provisioning", "Entity is being provisioned"),
+    ("disabled", "Entity has been administratively disabled"),
+    # Plugin states
+    ("registered", "Plugin is registered but not yet installed"),
+    ("pending_approval", "Installation is pending approval"),
+    ("approved", "Installation approved, awaiting activation"),
+    ("revoked", "Entity access or installation has been revoked"),
 ]
 
 _CORE_OPERATION_TYPES = [
@@ -563,6 +583,11 @@ class BootstrapService:
         self._session.add_all(entries)
         self._session.flush()
         logger.info("genesis: seeded %d type_registry entries", len(entries))
+
+        # Populate the in-process event type cache so validate_event_type()
+        # works immediately in this process without a DB round-trip.
+        from xiosync.domain.event_registry import event_registry
+        event_registry.register([value for value, _ in _CORE_EVENT_TYPES])
 
     def _seed_capability_groups(self, now: datetime) -> None:
         """Create default capability groups for RBAC."""

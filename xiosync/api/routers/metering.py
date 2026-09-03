@@ -140,3 +140,12 @@ def get_metric_detail(
         context, metric_type=metric_type, since=since_dt, until=until_dt,
     )
     return [_to_record_response(r) for r in records]
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["metering"],
+    dependencies=[require_capability("metering.read")],
+)

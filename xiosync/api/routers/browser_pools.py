@@ -144,3 +144,12 @@ def destroy_pool(pool_id: uuid.UUID, request: Request) -> dict[str, Any] | JSONR
                 "status": 404,
             },
         )
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["browser-pools"],
+    dependencies=[require_capability("browser_pool.manage")],
+)

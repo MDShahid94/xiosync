@@ -64,3 +64,12 @@ def rotate_secret(secret_id: uuid.UUID, payload: RotateSecretRequest, request: R
             "status": 422, "detail": str(exc),
         })
     return {"id": str(rec.id), "name": rec.name, "state": rec.state}
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["secrets"],
+    dependencies=[require_capability("secret.manage")],
+)

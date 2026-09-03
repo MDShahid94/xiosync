@@ -120,3 +120,12 @@ async def event_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["streaming"],
+    dependencies=[require_capability("event.manage")],
+)

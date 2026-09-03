@@ -181,3 +181,12 @@ def resume_trigger(
     svc = TriggerService(session)
     rec = svc.resume_trigger(context, trigger_id)
     return _to_response(rec)
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["triggers"],
+    dependencies=[require_capability("trigger.manage")],
+)

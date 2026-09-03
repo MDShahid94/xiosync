@@ -180,6 +180,10 @@ def register_xiobr_types(session: Session, context: OrgContext, now: datetime | 
     logger.info("xiobr_bootstrap: created %d capability groups", len(groups))
     session.flush()
 
+    # Populate the in-process event type cache with XIOBR-specific event types.
+    from xiosync.domain.event_registry import event_registry
+    event_registry.register([value for value, _ in _EVENT_TYPES])
+
     project_svc = ProjectService(session)
     project_svc.create_project(
         context,

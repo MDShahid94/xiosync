@@ -61,3 +61,12 @@ def pause_webhook(subscription_id: uuid.UUID, request: Request) -> dict[str, Any
             "status": 422, "detail": str(exc),
         })
     return {"subscription_id": str(subscription_id), "state": "paused"}
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["webhooks"],
+    dependencies=[require_capability("webhook.manage")],
+)

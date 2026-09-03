@@ -125,3 +125,12 @@ def terminate_node(node_id: uuid.UUID, request: Request) -> dict[str, Any] | JSO
                 "detail": str(exc),
             },
         )
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["compute-runtimes"],
+    dependencies=[require_capability("compute_runtime.manage")],
+)

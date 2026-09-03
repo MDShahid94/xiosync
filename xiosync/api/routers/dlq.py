@@ -270,3 +270,12 @@ def resolve_dead_letter(
         )
 
     return ResolveResponse(dead_letter_id=dead_letter_id, state="resolved")
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["dlq"],
+    dependencies=[require_capability("dlq.manage")],
+)

@@ -121,3 +121,12 @@ def deprecate_capability(capability_id: uuid.UUID, request: Request) -> dict[str
             "status": 422, "detail": str(exc),
         })
     return {"capability_id": str(capability_id), "state": "deprecated"}
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["operations"],
+    dependencies=[require_capability("event.manage")],
+)

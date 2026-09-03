@@ -429,3 +429,12 @@ def list_artifacts(
         ],
         cursor=next_cursor,
     )
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["listings"],
+    dependencies=[require_capability("readonly")],
+)

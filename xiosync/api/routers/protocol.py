@@ -233,3 +233,12 @@ def page_markdown(collection_slug: str, page_slug: str, request: Request) -> Any
         return PlainTextResponse(page.inline_content, media_type="text/markdown; charset=utf-8")
     return PlainTextResponse(f"# {page.title}\n\n*Content stored at artifact {page.artifact_id}*\n",
                              media_type="text/markdown; charset=utf-8")
+
+from xiosync.api.router_registry import register_router
+from xiosync.api.middleware.rbac import require_capability
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["protocol"],
+    dependencies=[require_capability("capability.manage")],
+)

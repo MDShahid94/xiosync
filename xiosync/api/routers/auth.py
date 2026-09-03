@@ -118,3 +118,10 @@ def logout(
     context: OrgContext = request.state.org_context
     service.logout(context, now=clock.now())
     return LogoutResponse(request_id=request.state.request_id)
+
+from xiosync.api.router_registry import register_router
+register_router(
+    router,
+    prefix='/api/v1',
+    tags=["authentication"],
+)
