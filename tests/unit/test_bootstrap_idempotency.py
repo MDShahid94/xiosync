@@ -31,6 +31,7 @@ from xiosync.services.bootstrap import (
     _CORE_EVENT_TYPES,
     _CORE_LIFECYCLE_STATES,
     _CORE_OPERATION_TYPES,
+    _CORE_TRIGGER_TYPES,
     _DEFAULT_CAPABILITY_GROUPS,
     AI_AGENT_ACTOR_ID,
     BOOTSTRAP_HUMAN_ACTOR_ID,
@@ -159,10 +160,11 @@ def test_genesis_first_run_creates_all_expected_entities_without_password() -> N
         + len(_CORE_EVENT_TYPES)
         + len(_CORE_LIFECYCLE_STATES)
         + len(_CORE_OPERATION_TYPES)
+        + len(_CORE_TRIGGER_TYPES)
     )
     assert len(type_entries) == expected_type_count
     categories = {t.category for t in type_entries}
-    assert categories == {"actor_type", "event_type", "lifecycle_state", "operation_type"}
+    assert categories == {"actor_type", "event_type", "lifecycle_state", "operation_type", "trigger_type"}
     for entry in type_entries:
         assert entry.organization_id is None  # Global namespace
         assert entry.namespace == "core"

@@ -119,6 +119,10 @@ _CORE_EVENT_TYPES = [
     ("secret.rotated", "A secret reference was rotated"),
     ("worker.registered", "A worker enrolled"),
     ("worker.approved", "A worker was approved"),
+    # Project lifecycle events
+    ("project.created", "A project was created"),
+    ("project.updated", "A project was updated"),
+    ("project.archived", "A project was archived"),
 ]
 
 _CORE_LIFECYCLE_STATES = [
@@ -164,6 +168,12 @@ _CORE_OPERATION_TYPES = [
     ("capability.deprecate", "Capability deprecation"),
     ("workflow.create", "Workflow creation"),
     ("workflow.publish", "Workflow publication"),
+]
+
+_CORE_TRIGGER_TYPES = [
+    ("cron", "Time-based schedule trigger (cron expression)"),
+    ("event", "Internal event-driven trigger (pub/sub)"),
+    ("webhook", "External HTTP webhook trigger"),
 ]
 
 # -- Default capability groups (Q2-C: configurable RBAC) -----------------------
@@ -580,14 +590,36 @@ class BootstrapService:
                 )
             )
 
+        for value, desc in _CORE_TRIGGER_TYPES:
+            entries.append(
+                TypeRegistry(
+                    id=new_id(),
+                    organization_id=None,
+                    namespace="core",
+                    category="trigger_type",
+                    value=value,
+                    version=1,
+                    state="active",
+                    definition={"description": desc},
+                    created_at=now,
+                )
+            )
+
         self._session.add_all(entries)
         self._session.flush()
         logger.info("genesis: seeded %d type_registry entries", len(entries))
 
-        # Populate the in-process event type cache so validate_event_type()
-        # works immediately in this process without a DB round-trip.
+        # Populate in-process domain registries so validators work immediately
+        # in this process without a DB round-trip.
         from xiosync.domain.event_registry import event_registry
         event_registry.register([value for value, _ in _CORE_EVENT_TYPES])
+
+        from xiosync.domain.trigger_registry import trigger_registry
+        trigger_registry.register([value for value, _ in _CORE_TRIGGER_TYPES])
+
+        from xiosync.domain.lifecycle_registry import lifecycle_registry
+        lifecycle_registry.register([value for value, _ in _CORE_LIFECYCLE_STATES])
+
 
     def _seed_capability_groups(self, now: datetime) -> None:
         """Create default capability groups for RBAC."""
