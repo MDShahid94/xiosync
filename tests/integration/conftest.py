@@ -28,7 +28,9 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
+from xiosync.domain.event_registry import event_registry
 from xiosync.persistence.database import validated_psycopg_url
+from xiosync.services.bootstrap import _CORE_EVENT_TYPES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
@@ -142,3 +144,24 @@ def app_role_database_url(migrated_database_url: str) -> Iterator[str]:
                 connection.execute(text(f'DROP ROLE IF EXISTS "{role_name}"'))
     finally:
         engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def seeded_event_registry() -> Iterator[None]:
+    """Populate the process-global event_registry before each integration test.
+
+    Integration tests skip genesis (by design — INV-TEST-SCHEMA-1), so the
+    event_registry singleton is never populated from the DB.  Without seeding,
+    ``event_registry.is_valid()`` returns ``True`` for *every* string, making
+    ``EventService.append`` accept unknown types and breaking
+    ``test_append_unknown_event_type_is_rejected``.
+
+    This fixture seeds the registry with the same ``_CORE_EVENT_TYPES`` that
+    ``BootstrapService._seed_type_registry`` would register at genesis, then
+    resets it on teardown to prevent cross-test contamination.
+    """
+    event_registry.register([value for value, _desc in _CORE_EVENT_TYPES])
+    try:
+        yield
+    finally:
+        event_registry.reset()
