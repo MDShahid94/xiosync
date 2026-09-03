@@ -78,6 +78,13 @@ def scratch_database_url() -> Iterator[str]:
         with admin_engine.connect() as connection:
             # scratch_name is generated from uuid4 hex above — not user input.
             connection.execute(text(f'CREATE DATABASE "{scratch_name}"'))
+            # Disable autovacuum for scratch databases. Migration 0025 generates enough
+            # DDL to trigger immediate autovacuum on the newly constrained tables.
+            # Because autovacuum runs as the `postgres` superuser, the test role
+            # (xiosync_test) gets InsufficientPrivilege when WITH (FORCE) tries to
+            # terminate it during teardown.
+            connection.execute(text(f'ALTER DATABASE "{scratch_name}" SET autovacuum = off'))
+
         try:
             yield admin_url.set(database=scratch_name).render_as_string(hide_password=False)
         finally:
