@@ -488,8 +488,9 @@ class _FakeSession:
     """A minimal stand-in for the parts of ``Session`` PluginService touches.
 
     ``scalar`` returns queued values in order; ``scalars`` returns a queued list;
-    ``add``/``flush`` are recorded. Mirrors the unit-suite fake so router and
-    service branch logic can be driven without a real database.
+    ``execute`` returns a queued result (defaults to empty); ``add``/``flush`` are
+    recorded. Mirrors the unit-suite fake so router and service branch logic can
+    be driven without a real database.
     """
 
     def __init__(
@@ -497,9 +498,11 @@ class _FakeSession:
         *,
         scalar_results: list[Any] | None = None,
         scalars_results: list[list[Any]] | None = None,
+        execute_results: list[list[Any]] | None = None,
     ) -> None:
         self._scalar_results = list(scalar_results or [])
         self._scalars_results = list(scalars_results or [])
+        self._execute_results = list(execute_results or [])
         self.added: list[Any] = []
         self.flush_count = 0
 
@@ -512,6 +515,17 @@ class _FakeSession:
         if not self._scalars_results:
             raise AssertionError("unexpected scalars() call")
         return _FakeScalarList(self._scalars_results.pop(0))
+
+    def execute(self, _statement: Any) -> _FakeScalarList:
+        """Return a queued result set, or an empty one if no results queued.
+
+        The authorization layer calls session.execute() for list_grants; these
+        plugin tests bypass RBAC via _FakeSessionService, but the dependency-
+        injected session is still called. Returning [] satisfies that call path.
+        """
+        if self._execute_results:
+            return _FakeScalarList(self._execute_results.pop(0))
+        return _FakeScalarList([])
 
     def add(self, obj: Any) -> None:
         self.added.append(obj)

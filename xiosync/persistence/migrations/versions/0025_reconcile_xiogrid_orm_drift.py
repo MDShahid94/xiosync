@@ -25,23 +25,31 @@ def upgrade() -> None:
     # databases (running full migration chain) and existing databases that may
     # have auto-generated FK names from earlier migration runs.
 
-    # Step 1: Unique constraints backing composite FKs.
-    # Use ADD CONSTRAINT ... UNIQUE so Alembic treats them as UniqueConstraints
-    # (matching the ORM model definitions) rather than raw indexes.
-    # Drop-then-add pattern is idempotent: IF EXISTS on drop, always add.
-    op.execute("ALTER TABLE runtime_nodes DROP CONSTRAINT IF EXISTS uq_runtime_nodes_org_id")
-    op.execute("ALTER TABLE runtime_nodes ADD CONSTRAINT uq_runtime_nodes_org_id UNIQUE (organization_id, id)")
-    op.execute("ALTER TABLE browser_pools DROP CONSTRAINT IF EXISTS uq_browser_pools_org_id")
-    op.execute("ALTER TABLE browser_pools ADD CONSTRAINT uq_browser_pools_org_id UNIQUE (organization_id, id)")
-    op.execute("ALTER TABLE compute_runtimes DROP CONSTRAINT IF EXISTS uq_compute_runtimes_org_id")
-    op.execute("ALTER TABLE compute_runtimes ADD CONSTRAINT uq_compute_runtimes_org_id UNIQUE (organization_id, id)")
-    op.execute("ALTER TABLE browser_sessions DROP CONSTRAINT IF EXISTS uq_browser_sessions_org_id")
-    op.execute("ALTER TABLE browser_sessions ADD CONSTRAINT uq_browser_sessions_org_id UNIQUE (organization_id, id)")
-    # Also drop any stale raw indexes created by earlier attempts.
-    op.execute("DROP INDEX IF EXISTS uq_runtime_nodes_org_id")
-    op.execute("DROP INDEX IF EXISTS uq_browser_pools_org_id")
-    op.execute("DROP INDEX IF EXISTS uq_compute_runtimes_org_id")
-    op.execute("DROP INDEX IF EXISTS uq_browser_sessions_org_id")
+    # Step 1: Formal UNIQUE constraints backing composite FKs.
+    # First drop any composite FKs that may already reference the raw indexes
+    # from a previous partial migration run — we'll re-add them in Steps 3 & 7.
+    op.execute("ALTER TABLE browser_sessions DROP CONSTRAINT IF EXISTS fk_browser_sessions_node_same_org")
+    op.execute("ALTER TABLE browser_sessions DROP CONSTRAINT IF EXISTS fk_browser_sessions_pool_same_org")
+    op.execute("ALTER TABLE runtime_nodes DROP CONSTRAINT IF EXISTS fk_runtime_nodes_runtime_same_org")
+
+    # Now convert raw indexes → formal UNIQUE constraints (idempotent).
+    for _tbl, _name in [
+        ("runtime_nodes", "uq_runtime_nodes_org_id"),
+        ("browser_pools", "uq_browser_pools_org_id"),
+        ("compute_runtimes", "uq_compute_runtimes_org_id"),
+        ("browser_sessions", "uq_browser_sessions_org_id"),
+    ]:
+        op.execute(f"""
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '{_name}') THEN
+                    RETURN;  -- Already a formal constraint, skip.
+                END IF;
+                IF EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = '{_name}') THEN
+                    EXECUTE 'DROP INDEX {_name}';
+                END IF;
+                EXECUTE 'ALTER TABLE {_tbl} ADD CONSTRAINT {_name} UNIQUE (organization_id, id)';
+            END $$;
+        """)
 
     # Step 2: browser_pools — drop old simple FK, add named FK.
     op.execute("ALTER TABLE browser_pools DROP CONSTRAINT IF EXISTS browser_pools_project_id_fkey")
