@@ -51,9 +51,9 @@ erDiagram
 ```
 
 
-## XIOBR Capabilities (Decoupling)
+## XIOGRID Capabilities (Decoupling)
 
-XIOSYNC supports comprehensive capabilities inherited from the XIOBR decoupling:
+XIOSYNC supports comprehensive capabilities inherited from the XIOGRID decoupling:
 
 - **Browser Orchestration**: Management of `BrowserPool` and `BrowserSession` resources to control isolated browser environments dynamically.
 - **Compute Runtimes**: Provisioning and monitoring of `ComputeRuntime` and `RuntimeNode` entities for scalable execution.

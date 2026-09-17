@@ -1,0 +1,25 @@
+{
+  "name": "xio-browser",
+  "version": "0.4.0",
+  "description": "Playwright-based browser automation MCP server for the XIO Mesh — data-driven, workflow-plugin architecture",
+  "type": "module",
+  "bin": {
+    "xiobr": "./bin/xio-browser.mjs"
+  },
+  "scripts": {
+    "start": "node bin/xio-browser.mjs",
+    "mcp:stdio": "node bin/xio-browser.mjs --stdio",
+    "mcp:http": "node bin/xio-browser.mjs --http 4242"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "better-sqlite3": "^12.11.1",
+    "express": "^5.2.1",
+    "otplib": "^12.0.1",
+    "patchright": "^1.50.2",
+    "zod": "^4.4.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

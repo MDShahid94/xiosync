@@ -82,9 +82,4 @@ async def readiness_probe(request: Request) -> dict[str, str]:
 
     return {"status": "ready", "message": "Fully operational"}
 
-from xiosync.api.router_registry import register_router
-register_router(
-    router,
-    prefix='',
-    tags=["health"],
-)
+

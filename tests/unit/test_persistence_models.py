@@ -11,7 +11,6 @@ import uuid
 
 import xiosync.persistence.models.plugins  # noqa: F401 — registers Phase 5 tables
 import xiosync.persistence.models.workers  # noqa: F401 — registers Phase 4 tables
-import xiosync.persistence.models.workflows  # noqa: F401 — registers Phase 3 tables
 import xiosync.persistence.models.projects  # noqa: F401
 
 

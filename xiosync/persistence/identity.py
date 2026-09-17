@@ -28,7 +28,7 @@ from sqlalchemy import select, text, update
 from sqlalchemy.engine import CursorResult, Engine
 from sqlalchemy.orm import Session as OrmSession
 
-from xiosync.persistence.models.identity import AuthIdentity, Membership
+from xiosync.persistence.models.identity import MemberAuth, Membership
 from xiosync.persistence.models.identity import Session as SessionRow
 from xiosync.persistence.tenancy import RLS_ORG_SETTING
 
@@ -40,7 +40,7 @@ _SESSION_STATE_REVOKED = "revoked"
 
 @dataclass(frozen=True, slots=True)
 class IdentityRecord:
-    """One ``auth_identities`` row, detached from the ORM."""
+    """One ``member_auth`` row, detached from the ORM."""
 
     id: uuid.UUID
     organization_id: uuid.UUID
@@ -64,7 +64,7 @@ class SessionRecord:
     expires_at: datetime
 
 
-def _identity_record(row: AuthIdentity) -> IdentityRecord:
+def _identity_record(row: MemberAuth) -> IdentityRecord:
     return IdentityRecord(
         id=row.id,
         organization_id=row.organization_id,
@@ -115,9 +115,9 @@ class IdentityRepository:
         """Look up the identity for a login attempt (email unique within org)."""
         with self._org_transaction(organization_id) as session:
             row = session.scalars(
-                select(AuthIdentity).where(
-                    AuthIdentity.organization_id == organization_id,
-                    AuthIdentity.email == email,
+                select(MemberAuth).where(
+                    MemberAuth.organization_id == organization_id,
+                    MemberAuth.email == email,
                 )
             ).one_or_none()
             return None if row is None else _identity_record(row)
@@ -127,9 +127,9 @@ class IdentityRepository:
     ) -> IdentityRecord | None:
         with self._org_transaction(organization_id) as session:
             row = session.scalars(
-                select(AuthIdentity).where(
-                    AuthIdentity.organization_id == organization_id,
-                    AuthIdentity.id == auth_identity_id,
+                select(MemberAuth).where(
+                    MemberAuth.organization_id == organization_id,
+                    MemberAuth.id == auth_identity_id,
                 )
             ).one_or_none()
             return None if row is None else _identity_record(row)
@@ -146,10 +146,10 @@ class IdentityRepository:
         """Persist a failed login: the new counter and (on breach) the lock."""
         with self._org_transaction(organization_id) as session:
             session.execute(
-                update(AuthIdentity)
+                update(MemberAuth)
                 .where(
-                    AuthIdentity.organization_id == organization_id,
-                    AuthIdentity.id == auth_identity_id,
+                    MemberAuth.organization_id == organization_id,
+                    MemberAuth.id == auth_identity_id,
                 )
                 .values(failed_attempts=failed_attempts, locked_until=locked_until, updated_at=now)
             )
@@ -159,10 +159,10 @@ class IdentityRepository:
     ) -> None:
         with self._org_transaction(organization_id) as session:
             session.execute(
-                update(AuthIdentity)
+                update(MemberAuth)
                 .where(
-                    AuthIdentity.organization_id == organization_id,
-                    AuthIdentity.id == auth_identity_id,
+                    MemberAuth.organization_id == organization_id,
+                    MemberAuth.id == auth_identity_id,
                 )
                 .values(failed_attempts=0, locked_until=None, updated_at=now)
             )

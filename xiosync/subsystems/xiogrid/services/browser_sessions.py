@@ -36,6 +36,13 @@ class BrowserSessionRecord:
     session_data: dict[str, Any]
     state: str
     created_at: datetime
+    # PPPoE exit node identity (None when no residential IP assigned)
+    pppoe_exit_node_id: uuid.UUID | None = None
+    pppoe_host_id: uuid.UUID | None = None
+    pppoe_slot: int | None = None
+    proxy_url: str | None = None
+    public_ip: str | None = None
+    worker_ts_ip: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +71,12 @@ def _record(row: BrowserSession) -> BrowserSessionRecord:
         session_data=dict(row.session_data),
         state=row.state,
         created_at=row.created_at,
+        pppoe_exit_node_id=getattr(row, "pppoe_exit_node_id", None),
+        pppoe_host_id=getattr(row, "pppoe_host_id", None),
+        pppoe_slot=getattr(row, "pppoe_slot", None),
+        proxy_url=getattr(row, "proxy_url", None),
+        public_ip=getattr(row, "public_ip", None),
+        worker_ts_ip=getattr(row, "worker_ts_ip", None),
     )
 
 
@@ -91,6 +104,23 @@ class BrowserSessionService:
         )
         if not pool: raise ValueError(f"Browser pool {pool_id} not found")
 
+        # Attempt to acquire a residential exit node from the warm pool.
+        # Failures are non-fatal — session is created without a proxy in that case.
+        pppoe_slot = None
+        try:
+            from xiosync.subsystems.xiogrid.services.pppoe_nodes import PPPoENodeService
+            pppoe_svc = PPPoENodeService(self._session)
+            worker_ts_ip = (config or {}).get("worker_ts_ip", "")
+            if worker_ts_ip:
+                pppoe_slot = pppoe_svc.acquire_any(
+                    context, session_id="pending", worker_ts_ip=worker_ts_ip
+                )
+        except Exception as _pppoe_err:
+            import logging
+            logging.getLogger(__name__).warning(
+                "PPPoE acquire failed — session will have no residential IP: %s", _pppoe_err
+            )
+
         session_row = BrowserSession(
             id=new_id(),
             organization_id=context.organization_id,
@@ -99,8 +129,26 @@ class BrowserSessionService:
             session_data=dict(config) if config else {},
             state="initializing",
             created_at=now,
+            pppoe_exit_node_id=uuid.UUID(str(pppoe_slot.id)) if pppoe_slot else None,
+            pppoe_host_id=uuid.UUID(str(pppoe_slot.host_id)) if pppoe_slot else None,
+            pppoe_slot=pppoe_slot.ppp_slot if pppoe_slot else None,
+            proxy_url=pppoe_slot.proxy_url if pppoe_slot else None,
+            public_ip=pppoe_slot.public_ip if pppoe_slot else None,
+            worker_ts_ip=(config or {}).get("worker_ts_ip") if pppoe_slot else None,
         )
         self._session.add(session_row)
+
+        # Now that we have the real session ID, backfill it on the PPPoE node record
+        if pppoe_slot:
+            try:
+                from xiosync.subsystems.xiogrid.services.pppoe_nodes import PPPoENodeService
+                from sqlalchemy import text as _text
+                self._session.execute(
+                    _text("UPDATE xiogrid_pppoe_exit_nodes SET assigned_session_id = :sid WHERE id = :nid"),
+                    {"sid": str(session_row.id), "nid": str(pppoe_slot.id)},
+                )
+            except Exception:
+                pass
 
         op_id = new_id()
         self._session.add(
@@ -135,6 +183,46 @@ class BrowserSessionService:
         self._session.flush()
         return _record(session_row)
 
+    def set_state(
+        self,
+        session_id: uuid.UUID,
+        state: str,
+        *,
+        worker_ts_ip: str | None = None,
+    ) -> None:
+        """Update browser_sessions.state (and optionally worker_ts_ip).
+
+        Called by XIORUN (launcher.py) at each lifecycle transition:
+          initializing → active  (browser launched and CDP attached)
+          active → suspended     (graceful teardown, profile saved)
+          active → failed        (proxy lost, Chromium crashed)
+
+        Does NOT require OrgContext — XIORUN operates at the platform level
+        and already holds a validated session_id from _claim_next_pending().
+
+        Args:
+            session_id:   UUID of the browser_sessions row to update.
+            state:        Target state: 'initializing'|'active'|'suspended'|
+                          'terminated'|'failed'.
+            worker_ts_ip: Tailscale IP of the Colab node — set on first
+                          transition to 'active', None otherwise.
+        """
+        _VALID_STATES = {"initializing", "active", "suspended", "terminated", "failed"}
+        if state not in _VALID_STATES:
+            raise ValueError(f"Invalid browser session state: {state!r}")
+
+        now = datetime.now(UTC)
+        values: dict[str, Any] = {"state": state, "updated_at": now}
+        if worker_ts_ip is not None:
+            values["worker_ts_ip"] = worker_ts_ip
+
+        self._session.execute(
+            update(BrowserSession)
+            .where(BrowserSession.id == session_id)
+            .values(**values)
+        )
+        # No flush/commit — caller owns the transaction boundary
+
     def verify_session(
         self,
         context: OrgContext,
@@ -151,14 +239,47 @@ class BrowserSessionService:
             raise BrowserSessionNotFoundError(session_id)
         
         now = datetime.now(UTC)
-        # Dummy health check logic mapped to the states in decoupling plan
-        # In actual implementation, we would inspect cookies, indexeddb, etc.
-        # Defaulting to healthy for the stub.
-        status = "healthy"
-        if row.state == "failed":
-            status = "immediate"
+
+        # ── Signal 1: ORM state ───────────────────────────────────────────────
+        # Terminal states map directly to health status
+        if row.state in ("terminated", "failed"):
+            status = "dead"
         elif row.state == "suspended":
             status = "soon"
+        elif row.state == "initializing":
+            # Initializing for more than 3 minutes → stale init, treat as immediate
+            age_secs = (now - row.created_at).total_seconds() if row.created_at else 0
+            status = "immediate" if age_secs > 180 else "healthy"
+        else:
+            # state == "active"
+            # ── Signal 2: Staleness via updated_at ───────────────────────────
+            # If the active session hasn't been touched in > 10 minutes → stale
+            last_touch = row.updated_at or row.created_at
+            idle_secs = (now - last_touch).total_seconds() if last_touch else 0
+            if idle_secs > 600:    # 10 minutes — session is likely zombie
+                status = "immediate"
+            elif idle_secs > 300:  # 5 minutes — worth checking
+                status = "soon"
+            else:
+                status = "healthy"
+
+            # ── Signal 3: TCP CDP port probe (non-blocking, best-effort) ─────
+            # Attempt a 1-second TCP connect to the CDP port via Tailscale IP.
+            # If it fails we escalate the status by one level (healthy→soon,
+            # soon→immediate) but never downgrade a terminal-state verdict.
+            ts_ip = getattr(row, "worker_ts_ip", None)
+            cdp_port = (row.session_data or {}).get("port")
+            if ts_ip and cdp_port and status != "dead":
+                import socket as _sock  # noqa: PLC0415
+                try:
+                    with _sock.create_connection((ts_ip, int(cdp_port)), timeout=1.0):
+                        pass  # CDP port reachable — status unchanged
+                except OSError:
+                    # Port unreachable — escalate
+                    if status == "healthy":
+                        status = "soon"
+                    elif status == "soon":
+                        status = "immediate"
 
         op_id = new_id()
         self._session.add(
@@ -215,6 +336,19 @@ class BrowserSessionService:
 
         now = datetime.now(UTC)
         old_state = row.state
+
+        # Release the PPPoE exit node back to the idle pool (best-effort)
+        if row.pppoe_host_id and row.pppoe_slot is not None:
+            try:
+                from xiosync.subsystems.xiogrid.services.pppoe_nodes import PPPoENodeService
+                PPPoENodeService(self._session).release_from_worker(
+                    row.pppoe_host_id, row.pppoe_slot
+                )
+            except Exception as _rel_err:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "PPPoE release failed on session termination %s: %s", session_id, _rel_err
+                )
 
         self._session.execute(
             update(BrowserSession)

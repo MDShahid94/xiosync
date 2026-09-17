@@ -1,0 +1,14 @@
+[Unit]
+Description=XIOGRID VM Startup (PROMISC + warm pool notify)
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/xiogrid/vm-startup.sh
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

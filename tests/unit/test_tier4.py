@@ -285,7 +285,7 @@ class TestReaperWorker:
 # Worker — dispatcher
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from xiosync.worker.dispatcher import dispatch_pending_webhooks
+from xiosync.worker.webhook_dispatcher import dispatch_pending_webhooks
 
 
 class TestDispatcherWorker:

@@ -1,10 +1,10 @@
-"""Bootstrap XIOBR Workflow Templates."""
+"""Bootstrap XIOGRID Workflow Templates."""
 
 from sqlalchemy.orm import Session
 from xiosync.domain.context import OrgContext
 from xiosync.subsystems.xiogrid.services.workflow_templates import WorkflowTemplateService
 
-def register_xiobr_templates(session: Session, context: OrgContext) -> None:
+def register_platform_templates(session: Session, context: OrgContext) -> None:
     svc = WorkflowTemplateService(session)
     
     # 1. _test-runner.mjs

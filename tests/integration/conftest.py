@@ -22,15 +22,30 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine as _sqlalchemy_create_engine
+from sqlalchemy import text
 from sqlalchemy.engine import make_url
+from sqlalchemy.pool import NullPool
 from xiosync.domain.event_registry import event_registry
 from xiosync.persistence.database import validated_psycopg_url
 from xiosync.services.bootstrap import _CORE_EVENT_TYPES
+
+def create_engine(*args: Any, **kwargs: Any) -> Any:
+    """Patch create_engine to use NullPool by default for integration tests.
+    
+    Tests often create engines for `app_role` but fail to dispose them. 
+    A normal connection pool keeps these connections alive. When the fixture
+    teardown runs DROP DATABASE WITH (FORCE), Postgres attempts to kill these
+    connections, but `xiosync_test` lacks privileges to kill connections owned
+    by `app_role`. NullPool ensures connections close immediately upon checkin.
+    """
+    kwargs.setdefault("poolclass", NullPool)
+    return _sqlalchemy_create_engine(*args, **kwargs)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"
@@ -78,12 +93,6 @@ def scratch_database_url() -> Iterator[str]:
         with admin_engine.connect() as connection:
             # scratch_name is generated from uuid4 hex above — not user input.
             connection.execute(text(f'CREATE DATABASE "{scratch_name}"'))
-            # Disable autovacuum for scratch databases. Migration 0025 generates enough
-            # DDL to trigger immediate autovacuum on the newly constrained tables.
-            # Because autovacuum runs as the `postgres` superuser, the test role
-            # (xiosync_test) gets InsufficientPrivilege when WITH (FORCE) tries to
-            # terminate it during teardown.
-            connection.execute(text(f'ALTER DATABASE "{scratch_name}" SET autovacuum = off'))
 
         try:
             yield admin_url.set(database=scratch_name).render_as_string(hide_password=False)

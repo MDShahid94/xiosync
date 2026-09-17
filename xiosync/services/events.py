@@ -11,6 +11,26 @@ The caller owns the transaction (via ``org_scoped_session``); every write here
 flushes within it so an Event and the Operation it accompanies (INV-LC-2) commit
 or roll back atomically together. Reads return frozen ``EventRecord`` values so
 the service layer holds no live ORM state.
+
+Layer disambiguation (#18)
+--------------------------
+There are **two** "event" modules in the codebase with distinct roles:
+
+``xiosync.services.events`` (THIS FILE)
+    DB persistence layer.  Validates + appends rows to the ``events`` PostgreSQL
+    table.  Participates in the caller's ACID transaction.  Used by API routers
+    and background workers that need durable audit/webhook events.
+
+``xiosync.subsystems.xioflow.api.events``
+    In-process SSE pub-sub.  Maintains an org-keyed dict of ``asyncio.Queue``
+    objects for live event fan-out to connected browser clients.  Ephemeral —
+    resets on restart, not persisted to DB.  Used by the DAG executor
+    (``_emit_action``) and XIOVIEW websocket sessions.
+
+Rule of thumb:
+    - Write to the DB → use ``EventService`` from THIS module.
+    - Push to live SSE subscribers → use ``publish_event`` from xioflow.api.events.
+    - Both can be called in the same request (DAG runs write DB + push SSE).
 """
 
 from __future__ import annotations

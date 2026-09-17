@@ -49,6 +49,12 @@ _KNOWN_PREFIXED_KEYS = frozenset({
     "XIOSYNC_SHARING_ENABLED",
     # Genesis Phase 0 — bootstrap token for API-based genesis
     "XIOSYNC_BOOTSTRAP_TOKEN",
+    # Worker self-enroll — shared secret for autonomous Colab/VM worker enrollment
+    "XIOSYNC_WORKER_ORG_SECRET",
+    # XIORUN internal callbacks — Colab agent → XIOSYNC (proxy-lost, browser-crashed)
+    "XIOSYNC_INTERNAL_SECRET",
+    # Public-facing base URL — embedded in worker bootstrap URLs
+    "XIOSYNC_PUBLIC_URL",
 })
 
 _ALLOWED_DATABASE_SCHEMES = frozenset({"postgresql", "postgresql+psycopg"})
@@ -156,7 +162,13 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
             raise ConfigError(f"{key} must be positive")
         return value
 
+
     redis_url = source.get(_KEY_REDIS_URL, "").strip() or None
+    if environment in (Environment.STAGING, Environment.PRODUCTION) and not redis_url:
+        raise ConfigError(
+            f"REDIS_URL must be set in the {environment.value!r} environment "
+            "(rate-limit store is required; absent = zero rate limiting)."
+        )
     rate_limit_auth_limit = positive_int(_KEY_RATE_LIMIT_AUTH, 20)
     rate_limit_api_limit = positive_int(_KEY_RATE_LIMIT_API, 100)
     rate_limit_window_seconds = positive_int(_KEY_RATE_LIMIT_WINDOW, 60)

@@ -1,220 +1,275 @@
-"""Batch / bulk operation endpoints (Gap P-3).
+"""batch.py — Bulk resource operations router.
 
-Provides ``POST /api/v1/batch`` for submitting multiple operations in a
-single HTTP request. Each item is processed independently (partial success
-is possible), and results are returned in order with per-item status codes.
+Provides efficient bulk mutations for identities, sessions, and workflow runs.
+All endpoints are org-scoped and require the ``workflow.manage`` capability.
 
-The batch envelope is deliberately simple: an array of ``{action, payload}``
-items. This avoids imposing a specific batch protocol while keeping the
-surface universal enough to wrap any existing endpoint.
+Endpoints
+---------
+POST /api/v1/batch/identities/enable       — bulk enable identities by ID list
+POST /api/v1/batch/identities/disable      — bulk disable identities by ID list
+POST /api/v1/batch/identities/tag          — attach a tag to multiple identities
+POST /api/v1/batch/identities/delete       — soft-delete multiple identities
+POST /api/v1/batch/sessions/terminate      — terminate multiple browser sessions
+POST /api/v1/batch/sessions/purge          — hard-delete session records
+POST /api/v1/batch/runs/cancel             — cancel in-progress workflow runs
+POST /api/v1/batch/runs/retry              — re-queue failed workflow runs
 """
-
 from __future__ import annotations
 
+import json
+import logging
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field, ConfigDict
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
-router = APIRouter(tags=["batch"])
+from xiosync.api.middleware.db import get_db
+from xiosync.api.middleware.rbac import get_org_context, require_capability
+from xiosync.domain.context import OrgContext
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/batch", tags=["Batch Operations"])
+
+_MAX_BATCH = 500  # prevent accidental bulk-deletes of entire org
 
 
-class BatchItem(BaseModel):
-    """One item in a batch request."""
+# ── Shared helpers ─────────────────────────────────────────────────────────────
 
-    model_config = ConfigDict(extra="forbid")
+class IDListRequest(BaseModel):
+    ids: list[uuid.UUID] = Field(..., min_length=1, max_length=_MAX_BATCH)
+    model_config = ConfigDict(from_attributes=True)
 
-    action: str = Field(
-        description=(
-            "The operation to perform. Supported actions: "
-            "'enqueue_task', 'create_artifact', 'append_event', "
-            "'create_capability'."
-        )
+
+class BatchResult(BaseModel):
+    affected:  int
+    ids:       list[str]
+    message:   str = ""
+
+
+def _id_strs(ids: list[uuid.UUID]) -> list[str]:
+    return [str(i) for i in ids]
+
+
+def _check_org_owns(db: Session, org_id: uuid.UUID, table: str, col: str, ids: list[uuid.UUID]) -> None:
+    """Raise 403 if any ID in the list does not belong to this org."""
+    rows = db.execute(
+        text(f"SELECT id FROM {table} WHERE id = ANY(:ids) AND {col} != :org"),  # noqa: S608
+        {"ids": _id_strs(ids), "org": str(org_id)},
+    ).fetchall()
+    if rows:
+        foreign = [str(r[0]) for r in rows]
+        raise HTTPException(status_code=403, detail=f"IDs not owned by org: {foreign}")
+
+
+# ── Identity bulk endpoints ────────────────────────────────────────────────────
+
+@router.post("/identities/enable", response_model=BatchResult)
+def bulk_enable_identities(
+    req: IDListRequest,
+    db:  Session    = Depends(get_db),
+    ctx: OrgContext = Depends(get_org_context),
+) -> dict:
+    """Enable a list of identities (set status = 'active')."""
+    result = db.execute(
+        text("""
+            UPDATE identities
+            SET    status = 'active', updated_at = now()
+            WHERE  id = ANY(:ids) AND organization_id = :org
+              AND  status != 'active'
+        """),
+        {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
     )
-    payload: dict[str, Any] = Field(description="Action-specific payload.")
+    db.commit()
+    logger.info("batch.identities.enabled", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
+    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} identity/ies enabled"}
 
 
-class BatchRequest(BaseModel):
-    """Batch request envelope."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    items: list[BatchItem] = Field(
-        description="Ordered list of operations to execute.",
-        min_length=1,
-        max_length=100,
+@router.post("/identities/disable", response_model=BatchResult)
+def bulk_disable_identities(
+    req: IDListRequest,
+    db:  Session    = Depends(get_db),
+    ctx: OrgContext = Depends(get_org_context),
+) -> dict:
+    """Disable a list of identities (set status = 'suspended')."""
+    result = db.execute(
+        text("""
+            UPDATE identities
+            SET    status = 'suspended', updated_at = now()
+            WHERE  id = ANY(:ids) AND organization_id = :org
+              AND  status != 'suspended'
+        """),
+        {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
     )
+    db.commit()
+    logger.info("batch.identities.disabled", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
+    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} identity/ies suspended"}
 
 
-class BatchItemResult(BaseModel):
-    """Result of one batch item."""
+class TagRequest(BaseModel):
+    ids: list[uuid.UUID]  = Field(..., min_length=1, max_length=_MAX_BATCH)
+    tag: str              = Field(..., min_length=1, max_length=64)
 
-    index: int
-    status: int
-    action: str
-    result: dict[str, Any] | None = None
-    error: str | None = None
+    model_config = ConfigDict(from_attributes=True)
 
 
-class BatchResponse(BaseModel):
-    """Batch response envelope."""
-
-    total: int
-    succeeded: int
-    failed: int
-    results: list[BatchItemResult]
-
-
-@router.post(
-    "/batch",
-    response_model=BatchResponse,
-    summary="Execute multiple operations in a single request (P-3)",
-)
-def batch_operations(
-    payload: BatchRequest,
-    request: Request,
-) -> BatchResponse:
-    """Process a batch of independent operations.
-
-    Gap P-3: Each item is processed independently within the caller's
-    transaction. Partial success is possible — individual items may fail
-    without affecting others. Results are returned in input order.
-
-    Supported actions:
-    - ``enqueue_task``: Enqueue a task (requires run_id, node_id, capability_id)
-    - ``create_artifact``: Create an artifact reference
-    - ``append_event``: Append an event to the audit stream
-    - ``create_capability``: Register a new capability
-
-    Unknown actions return a 400 status for that item.
-    """
-    results: list[BatchItemResult] = []
-    succeeded = 0
-    failed = 0
-
-    for idx, item in enumerate(payload.items):
-        try:
-            result = _dispatch_action(request, item.action, item.payload)
-            results.append(
-                BatchItemResult(
-                    index=idx,
-                    status=200,
-                    action=item.action,
-                    result=result,
-                )
-            )
-            succeeded += 1
-        except ValueError as exc:
-            results.append(
-                BatchItemResult(
-                    index=idx,
-                    status=400,
-                    action=item.action,
-                    error=str(exc),
-                )
-            )
-            failed += 1
-        except Exception as exc:
-            results.append(
-                BatchItemResult(
-                    index=idx,
-                    status=500,
-                    action=item.action,
-                    error=f"internal error: {type(exc).__name__}",
-                )
-            )
-            failed += 1
-
-    return BatchResponse(
-        total=len(payload.items),
-        succeeded=succeeded,
-        failed=failed,
-        results=results,
+@router.post("/identities/tag", response_model=BatchResult)
+def bulk_tag_identities(
+    req: TagRequest,
+    db:  Session    = Depends(get_db),
+    ctx: OrgContext = Depends(get_org_context),
+) -> dict:
+    """Append a tag to the metadata.tags array of multiple identities."""
+    result = db.execute(
+        text("""
+            UPDATE identities
+            SET    metadata   = jsonb_set(
+                                  coalesce(metadata, '{}'::jsonb),
+                                  '{tags}',
+                                  coalesce(metadata->'tags', '[]'::jsonb) || :tag_json::jsonb,
+                                  true
+                                ),
+                   updated_at = now()
+            WHERE  id = ANY(:ids) AND organization_id = :org
+        """),
+        {
+            "ids":      _id_strs(req.ids),
+            "org":      str(ctx.organization_id),
+            "tag_json": json.dumps([req.tag]),
+        },
     )
+    db.commit()
+    logger.info("batch.identities.tagged", extra={"tag": req.tag, "count": result.rowcount})
+    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"Tag '{req.tag}' applied"}
 
 
-def _dispatch_action(
-    request: Request,
-    action: str,
-    payload: dict[str, Any],
-) -> dict[str, Any]:
-    """Route a batch action to the appropriate service method.
+@router.post("/identities/delete", response_model=BatchResult)
+def bulk_delete_identities(
+    req: IDListRequest,
+    db:  Session    = Depends(get_db),
+    ctx: OrgContext = Depends(get_org_context),
+) -> dict:
+    """Soft-delete multiple identities (set status = 'deleted', clear credentials)."""
+    result = db.execute(
+        text("""
+            UPDATE identities
+            SET    status     = 'deleted',
+                   updated_at = now()
+            WHERE  id = ANY(:ids) AND organization_id = :org
+              AND  status != 'deleted'
+        """),
+        {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
+    )
+    db.commit()
+    logger.info("batch.identities.deleted", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
+    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} identity/ies soft-deleted"}
 
-    Returns a result dict on success, raises on failure.
-    """
-    from xiosync.domain.context import OrgContext
-    from sqlalchemy.orm import Session as OrmSession
-    from typing import cast
 
-    context = cast(OrgContext, request.state.org_context)
-    session = cast(OrmSession, request.state.org_session)
+# ── Session bulk endpoints ─────────────────────────────────────────────────────
 
-    if action == "enqueue_task":
-        from xiosync.services.workflows import WorkflowService
-        wf_svc = WorkflowService(session)
-        task_id = wf_svc.enqueue_task(
-            context,
-            run_id=uuid.UUID(payload["run_id"]),
-            node_id=payload["node_id"],
-            capability_id=uuid.UUID(payload["capability_id"]),
-            input=payload.get("input"),
-            priority=payload.get("priority", 5),
-        )
-        return {"task_id": str(task_id), "state": "queued"}
+@router.post("/sessions/terminate", response_model=BatchResult)
+def bulk_terminate_sessions(
+    req: IDListRequest,
+    db:  Session    = Depends(get_db),
+    ctx: OrgContext = Depends(get_org_context),
+) -> dict:
+    """Mark multiple browser sessions as terminated."""
+    result = db.execute(
+        text("""
+            UPDATE browser_sessions
+            SET    status       = 'terminated',
+                   terminated_at = now(),
+                   updated_at   = now()
+            WHERE  id = ANY(:ids) AND organization_id = :org
+              AND  status NOT IN ('terminated', 'error')
+        """),
+        {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
+    )
+    db.commit()
+    logger.info("batch.sessions.terminated", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
+    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} session(s) terminated"}
 
-    elif action == "create_artifact":
-        from xiosync.services.artifacts import ArtifactService
-        art_svc = ArtifactService(session)
-        artifact = art_svc.create_artifact(
-            context,
-            provider_type=payload["provider_type"],
-            uri=payload["uri"],
-            created_by=uuid.UUID(payload["created_by"]),
-            content_type=payload.get("content_type"),
-            size_bytes=payload.get("size_bytes"),
-            checksum=payload.get("checksum"),
-            metadata=payload.get("metadata"),
-        )
-        return {"artifact_id": str(artifact.id)}
 
-    elif action == "append_event":
-        from xiosync.services.events import EventService
-        evt_svc = EventService(session)
-        event_id = evt_svc.append(
-            context,
-            event_type=payload["event_type"],
-            payload=payload.get("payload", {}),
-            actor_id=uuid.UUID(payload["actor_id"]) if payload.get("actor_id") else None,
-            severity=payload.get("severity"),
-        )
-        return {"event_id": str(event_id)}
+@router.post("/sessions/purge", response_model=BatchResult)
+def bulk_purge_sessions(
+    req: IDListRequest,
+    db:  Session    = Depends(get_db),
+    ctx: OrgContext = Depends(get_org_context),
+) -> dict:
+    """Hard-delete terminated/error session records."""
+    # Only allow purging sessions that are already terminated/error
+    result = db.execute(
+        text("""
+            DELETE FROM browser_sessions
+            WHERE  id = ANY(:ids) AND organization_id = :org
+              AND  status IN ('terminated', 'error')
+        """),
+        {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
+    )
+    db.commit()
+    logger.info("batch.sessions.purged", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
+    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} session record(s) purged"}
 
-    elif action == "create_capability":
-        from xiosync.services.capabilities import CapabilityService
-        cap_svc = CapabilityService(session)
-        cap = cap_svc.create_capability(
-            context,
-            name=payload["name"],
-            description=payload.get("description"),
-            input_schema=payload.get("input_schema"),
-            output_schema=payload.get("output_schema"),
-            execution_mode=payload.get("execution_mode", "sync"),
-            timeout_ms=payload.get("timeout_ms"),
-            retry_policy=payload.get("retry_policy"),
-            state=payload.get("state", "active"),
-        )
-        return {"capability_id": str(cap.id), "name": cap.name}
 
-    else:
-        raise ValueError(f"unknown batch action: {action!r}")
+# ── Workflow run bulk endpoints ────────────────────────────────────────────────
 
-from xiosync.api.router_registry import register_router
-from xiosync.api.middleware.rbac import require_capability
+@router.post("/runs/cancel", response_model=BatchResult)
+def bulk_cancel_runs(
+    req: IDListRequest,
+    db:  Session    = Depends(get_db),
+    ctx: OrgContext = Depends(get_org_context),
+) -> dict:
+    """Cancel multiple in-progress workflow runs."""
+    result = db.execute(
+        text("""
+            UPDATE workflow_runs
+            SET    status      = 'cancelled',
+                   finished_at = now(),
+                   updated_at  = now()
+            WHERE  id = ANY(:ids) AND organization_id = :org
+              AND  status IN ('pending', 'running', 'paused')
+        """),
+        {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
+    )
+    db.commit()
+    logger.info("batch.runs.cancelled", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
+    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} run(s) cancelled"}
+
+
+@router.post("/runs/retry", response_model=BatchResult)
+def bulk_retry_runs(
+    req: IDListRequest,
+    db:  Session    = Depends(get_db),
+    ctx: OrgContext = Depends(get_org_context),
+) -> dict:
+    """Re-queue failed/cancelled workflow runs by resetting their status to 'pending'."""
+    result = db.execute(
+        text("""
+            UPDATE workflow_runs
+            SET    status      = 'pending',
+                   started_at  = NULL,
+                   finished_at = NULL,
+                   error       = NULL,
+                   updated_at  = now()
+            WHERE  id = ANY(:ids) AND organization_id = :org
+              AND  status IN ('failed', 'cancelled', 'error')
+        """),
+        {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
+    )
+    db.commit()
+    logger.info("batch.runs.retried", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
+    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} run(s) re-queued"}
+
+
+# ── Router registration ────────────────────────────────────────────────────────
+from xiosync.api.router_registry import register_router   # noqa: E402
+
 register_router(
     router,
-    prefix='/api/v1',
-    tags=["batch"],
+    prefix="/api/v1",
+    tags=["Batch Operations"],
     dependencies=[require_capability("workflow.manage")],
 )

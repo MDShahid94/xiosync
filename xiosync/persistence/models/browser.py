@@ -10,6 +10,10 @@ from xiosync.subsystems.xiogrid.models.browser import MeshNetwork  # noqa: F401
 from xiosync.subsystems.xiogrid.models.browser import MeshNode  # noqa: F401
 from xiosync.subsystems.xiogrid.models.browser import RuntimeNode  # noqa: F401
 
+from xiosync.subsystems.xiogrid.models.exit_node import FingerprintProfile  # noqa: F401
+from xiosync.subsystems.xiogrid.models.exit_node import PPPoEExitNode  # noqa: F401
+from xiosync.subsystems.xiogrid.models.exit_node import PPPoEHost  # noqa: F401
+
 __all__ = [
     "BrowserPool",
     "BrowserSession",

@@ -124,8 +124,8 @@ _NEW_CAPABILITY_GROUPS = [
 ]
 
 
-def register_xiobr_types(session: Session, context: OrgContext, now: datetime | None = None) -> None:
-    """Register XIOBR-decoupled types into the TypeRegistry and create capability groups."""
+def register_platform_types(session: Session, context: OrgContext, now: datetime | None = None) -> None:
+    """Register XIOGRID-decoupled types into the TypeRegistry and create capability groups."""
     from datetime import UTC
     
     if now is None:
@@ -139,7 +139,7 @@ def register_xiobr_types(session: Session, context: OrgContext, now: datetime | 
                 TypeRegistry(
                     id=new_id(),
                     organization_id=context.organization_id,
-                    namespace="xiobr",
+                    namespace="xiosync",
                     category=category,
                     value=value,
                     version=1,
@@ -160,7 +160,7 @@ def register_xiobr_types(session: Session, context: OrgContext, now: datetime | 
     _add_entries("event_type", _EVENT_TYPES)
 
     session.add_all(entries)
-    logger.info("xiobr_bootstrap: registered %d type_registry entries", len(entries))
+    logger.info("platform_bootstrap: registered %d type_registry entries", len(entries))
 
     groups: list[CapabilityGroup] = []
     for group_def in _NEW_CAPABILITY_GROUPS:
@@ -177,10 +177,10 @@ def register_xiobr_types(session: Session, context: OrgContext, now: datetime | 
         )
 
     session.add_all(groups)
-    logger.info("xiobr_bootstrap: created %d capability groups", len(groups))
+    logger.info("platform_bootstrap: created %d capability groups", len(groups))
     session.flush()
 
-    # Populate the in-process event type cache with XIOBR-specific event types.
+    # Populate the in-process event type cache with XIOGRID-specific event types.
     from xiosync.domain.event_registry import event_registry
     event_registry.register([value for value, _ in _EVENT_TYPES])
 
@@ -189,10 +189,10 @@ def register_xiobr_types(session: Session, context: OrgContext, now: datetime | 
         context,
         name="XIO Browser",
         slug="xio-browser",
-        description="Home for all XIOBR resources",
+        description="Home for all XIOGRID resources",
     )
-    logger.info("xiobr_bootstrap: created xio-browser project")
+    logger.info("platform_bootstrap: created xio-browser project")
 
 
 # Canonical public name for the subsystem entry point.
-register_xiogrid = register_xiobr_types
+register_xiogrid = register_platform_types  # backward-compat alias

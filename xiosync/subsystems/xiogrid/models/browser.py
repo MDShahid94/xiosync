@@ -1,4 +1,4 @@
-"""Browser orchestration models for XIOBR decoupling."""
+"""Browser orchestration models for XIOGRID decoupling."""
 
 from __future__ import annotations
 
@@ -131,7 +131,16 @@ class RuntimeNode(Base):
 
 
 class BrowserSession(Base):
-    """An active or completed browser session."""
+    """An active or completed browser session.
+
+    PPPoE identity fields (nullable — not all sessions use residential IPs):
+      pppoe_exit_node_id  FK → xiogrid_pppoe_exit_nodes.id
+      pppoe_host_id       host UUID (denorm, for release_from_worker)
+      pppoe_slot          PPPoE slot number (denorm, for release_from_worker)
+      proxy_url           socks5://... URL routed through the exit node
+      public_ip           residential public IP at session start
+      worker_ts_ip        Tailscale IP of the worker owning this session
+    """
 
     __tablename__ = "browser_sessions"
     __table_args__ = (
@@ -161,16 +170,27 @@ class BrowserSession(Base):
     project_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True,
     )
-    pool_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False,
+    pool_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    node_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    session_data: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
-    node_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True,
-    )
-    session_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     state: Mapped[str] = mapped_column(Text, nullable=False, server_default="initializing")
     created_at: Mapped[datetime] = mapped_column(_ts, nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime | None] = mapped_column(_ts)
+
+    # PPPoE exit node identity (all nullable — set at acquire time)
+    pppoe_exit_node_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("xiogrid_pppoe_exit_nodes.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    pppoe_host_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    pppoe_slot: Mapped[int | None] = mapped_column(nullable=True)
+    proxy_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    public_ip: Mapped[str | None] = mapped_column(Text, nullable=True)
+    worker_ts_ip: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     pool: Mapped[BrowserPool] = relationship(back_populates="sessions", overlaps="sessions")
     node: Mapped[RuntimeNode | None] = relationship(back_populates="sessions", overlaps="pool,sessions")

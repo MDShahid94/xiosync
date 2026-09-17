@@ -107,6 +107,11 @@ EVENT_TYPES: frozenset[str] = frozenset(
         "share.revoked",
         "workflow.created",
         "workflow.published",
+        # XIOFLOW DAG node-level action events (emitted per node by dag_executor)
+        "workflow.action.started",    # node claimed, about to execute
+        "workflow.action.completed",  # node finished successfully
+        "workflow.action.failed",     # node failed (retry or dead)
+        "workflow.action.skipped",    # conditional branch not taken
         "trigger.created",
         "secret.created",
         "secret.rotated",

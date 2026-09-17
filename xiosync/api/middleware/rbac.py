@@ -61,6 +61,8 @@ _DEFAULT_MIN_ROLE: dict[str, MembershipRole] = {
     "share.manage": MembershipRole.ORG_ADMIN,
     "webhook.manage": MembershipRole.ORG_ADMIN,
     "capability.manage": MembershipRole.ORG_ADMIN,
+    # Vault — universal secret store
+    "vault.platform": MembershipRole.ORG_ADMIN,   # write platform-global secrets
     # Member operations
     "workflow.manage": MembershipRole.ORG_MEMBER,
     "task.execute": MembershipRole.ORG_MEMBER,
@@ -69,17 +71,28 @@ _DEFAULT_MIN_ROLE: dict[str, MembershipRole] = {
     "ontology.manage": MembershipRole.ORG_MEMBER,
     "dlq.manage": MembershipRole.ORG_MEMBER,
     "trigger.manage": MembershipRole.ORG_MEMBER,
+    "vault.read": MembershipRole.ORG_MEMBER,       # read own org secrets + platform-global
+    "vault.write": MembershipRole.ORG_MEMBER,      # write own org secrets
+    "storage.read": MembershipRole.ORG_MEMBER,     # list providers + objects, get access info
+    "storage.write": MembershipRole.ORG_MEMBER,    # register providers + objects
+    "identities.read":   MembershipRole.ORG_MEMBER,    # list/get identities + credential metadata
+    "identities.write":  MembershipRole.ORG_MEMBER,    # create/update identities + credentials
+    "identities.secret": MembershipRole.ORG_MEMBER,    # decrypt credential values
+    "integrations.manage": MembershipRole.ORG_ADMIN,   # register + test external connectors
     # Read-only
     "readonly": MembershipRole.ORG_VIEWER,
     "metering.read": MembershipRole.ORG_VIEWER,
     "project.read": MembershipRole.ORG_VIEWER,
     # Project management
     "project.manage": MembershipRole.ORG_MEMBER,
-    # XIOBR resource management
+    # XIOGRID resource management
     "browser_pool.manage": MembershipRole.ORG_MEMBER,
     "browser_session.manage": MembershipRole.ORG_MEMBER,
     "compute_runtime.manage": MembershipRole.ORG_MEMBER,
     "mesh_network.manage": MembershipRole.ORG_MEMBER,
+    # XIOVIEW — live browser session observation and remote control
+    "session.observe": MembershipRole.ORG_MEMBER,   # live stream, action logs
+    "session.control": MembershipRole.ORG_ADMIN,    # remote control relay (mouse/key/scroll)
 }
 
 

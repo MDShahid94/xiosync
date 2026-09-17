@@ -50,7 +50,7 @@ XIOSYNC is an evolutionary entity that governs itself.
 Key entities include:
 - `Organization`: The core tenant boundary. All tenant data is tied to an organization.
 - `Actor`: Any participating entity (human, AI agent, system worker, service).
-- `AuthIdentity`: Login credentials for a human actor.
+- `MemberAuth`: Login credentials for a human actor.
 - `Membership`: Maps an identity to a role within an organization.
 - `Session`: Revocable authentication sessions.
 - `Event` & `Operation`: Full audit trail of actions taken in the system.
@@ -59,15 +59,15 @@ Key entities include:
 ```mermaid
 erDiagram
     Organization ||--o{ Actor : has
-    Organization ||--o{ AuthIdentity : has
-    AuthIdentity ||--o{ Membership : holds
+    Organization ||--o{ MemberAuth : has
+    MemberAuth ||--o{ Membership : holds
     Actor ||--o{ Event : performs
 ```
 
 
-## XIOBR Capabilities (Decoupling)
+## XIOGRID Capabilities (Decoupling)
 
-XIOSYNC supports comprehensive capabilities inherited from the XIOBR decoupling:
+XIOSYNC supports comprehensive capabilities inherited from the XIOGRID decoupling:
 
 - **Browser Orchestration**: Management of `BrowserPool` and `BrowserSession` resources to control isolated browser environments dynamically.
 - **Compute Runtimes**: Provisioning and monitoring of `ComputeRuntime` and `RuntimeNode` entities for scalable execution.

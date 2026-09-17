@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  XIOSYNC FastAPI Server LaunchDaemon
+  Starts XIOSYNC API on Mac Mini at every boot.
+  Colab workers reach it via Tailscale at http://100.86.149.127:8000
+
+  Install:
+    sudo cp com.xiogrid.xiosync.plist /Library/LaunchDaemons/
+    sudo chown root:wheel /Library/LaunchDaemons/com.xiogrid.xiosync.plist
+    sudo chmod 644 /Library/LaunchDaemons/com.xiogrid.xiosync.plist
+    sudo launchctl unload /Library/LaunchDaemons/com.xiogrid.xiosync.plist 2>/dev/null || true
+    sudo launchctl load /Library/LaunchDaemons/com.xiogrid.xiosync.plist
+
+  Logs: ~/Library/Logs/xiosync.log
+  Stop: sudo launchctl unload /Library/LaunchDaemons/com.xiogrid.xiosync.plist
+-->
+<dict>
+  <key>Label</key>
+  <string>com.xiogrid.xiosync</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-lc</string>
+    <string>
+      set -e
+      LOG=/Users/karmareturns/Library/Logs/xiosync.log
+      exec >> $LOG 2>&amp;1
+      echo "[$(date -Iseconds)] XIOSYNC LaunchDaemon starting..."
+
+      # Wait for Postgres to accept connections (up to 90s)
+      # Use pg_isready directly — no docker path dependency
+      for i in $(seq 1 30); do
+        if /opt/homebrew/bin/pg_isready -h localhost -p 5432 -U xiosync -d xiosync -q 2>/dev/null; then
+          echo "[$(date -Iseconds)] Postgres ready"
+          break
+        fi
+        echo "[$(date -Iseconds)] Waiting for Postgres ($i/30)..."
+        sleep 3
+      done
+
+      # Start XIOSYNC using the .venv uvicorn directly
+      cd /Users/karmareturns/projects/XIOSYNC
+
+      exec /Users/karmareturns/projects/XIOSYNC/.venv/bin/uvicorn \
+        xiosync.api.app:app \
+        --host 0.0.0.0 \
+        --port 8000 \
+        --workers 1 \
+        --log-level info
+    </string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>UserName</key>
+  <string>karmareturns</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/karmareturns/Library/Logs/xiosync.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/karmareturns/Library/Logs/xiosync.log</string>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/karmareturns/projects/XIOSYNC</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin:/Users/karmareturns/.local/bin</string>
+    <key>HOME</key>
+    <string>/Users/karmareturns</string>
+    <key>XIOSYNC_ENVIRONMENT</key>
+    <string>production</string>
+    <key>XIOSYNC_LOG_LEVEL</key>
+    <string>info</string>
+    <key>DATABASE_URL</key>
+    <string>postgresql+psycopg://xiosync:xiosync@localhost:5432/xiosync</string>
+    <key>XIOSYNC_AUTH_SECRET</key>
+    <string>xiogrid-mac-mini-1-auth-secret-2026-karma</string>
+    <key>CORS_ALLOWED_ORIGINS</key>
+    <string>http://localhost:3000,http://127.0.0.1:3000,http://100.86.149.127:8000</string>
+  </dict>
+</dict>
+</plist>

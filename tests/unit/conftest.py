@@ -1,9 +1,9 @@
 """Unit-test fixtures for the XIOSYNC test suite.
 
 Ensures the in-process ``event_registry`` contains every known event type
-(core + XIOBR) before any test runs.  This prevents order-dependent failures
+(core + XIOGRID) before any test runs.  This prevents order-dependent failures
 when a genesis-calling test populates the registry with only core types and a
-subsequent XIOBR-service test then hits a populated-but-incomplete registry.
+subsequent XIOGRID-service test then hits a populated-but-incomplete registry.
 
 The ``event_registry`` singleton has ``_populated=False`` by default, which
 makes ``is_valid()`` return ``True`` for everything (allow-all dev/test mode).
@@ -20,7 +20,7 @@ import pytest
 
 from xiosync.domain.event_registry import event_registry
 from xiosync.services.bootstrap import _CORE_EVENT_TYPES
-from xiosync.services.xiobr_bootstrap import _EVENT_TYPES as _XIOBR_EVENT_TYPES
+from xiosync.services.xiobr_bootstrap import _EVENT_TYPES as _XIOGRID_EVENT_TYPES
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -32,6 +32,6 @@ def populate_event_registry() -> None:
     """
     all_event_types: list[str] = (
         [value for value, _ in _CORE_EVENT_TYPES]
-        + [value for value, _ in _XIOBR_EVENT_TYPES]
+        + [value for value, _ in _XIOGRID_EVENT_TYPES]
     )
     event_registry.register(all_event_types)

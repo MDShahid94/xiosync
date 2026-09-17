@@ -12,7 +12,7 @@ from xiosync.persistence.models.authorization import Capability, Event, Grant
 from xiosync.persistence.models.base import Base
 from xiosync.persistence.models.identity import (
     Actor,
-    AuthIdentity,
+    MemberAuth,
     Membership,
     Organization,
     Session,
@@ -37,16 +37,9 @@ from xiosync.persistence.models.registry import CapabilityGroup, RegistryCategor
 from xiosync.persistence.models.documents import DocumentCollection, DocumentPage
 from xiosync.persistence.models.secrets import SecretRef
 from xiosync.persistence.models.sharing import ResourceShare
-from xiosync.persistence.models.triggers import WorkflowTrigger
 from xiosync.persistence.models.webhooks import WebhookSubscription
 from xiosync.persistence.models.metering import UsageMeter
 from xiosync.persistence.models.workers import WorkerCredential, WorkerEnrollment
-from xiosync.persistence.models.workflows import (
-    DeadLetter,
-    Task,
-    Workflow,
-    WorkflowRun,
-)
 from xiosync.persistence.models.projects import Project
 from xiosync.persistence.models.browser import (
     BrowserPool,
@@ -56,15 +49,20 @@ from xiosync.persistence.models.browser import (
     MeshNetwork,
     MeshNode,
 )
+# PPPoE exit node models — must be imported here for Alembic autogenerate
+from xiosync.subsystems.xiogrid.models.exit_node import (  # noqa: F401
+    FingerprintProfile,
+    PPPoEExitNode,
+    PPPoEHost,
+)
 
 __all__ = [
     "Actor",
     "Artifact",
-    "AuthIdentity",
+    "MemberAuth",
     "Base",
     "Capability",
     "CapabilityGroup",
-    "DeadLetter",
     "DocumentCollection",
     "DocumentPage",
     "Edge",
@@ -81,23 +79,24 @@ __all__ = [
     "PluginRpcMethod",
     "RegistryCategory",
     "Session",
-    "Task",
     "TypeRegistry",
     "TypeRegistryAlias",
-    "Workflow",
-    "WorkflowRun",
     "WorkerCredential",
     "WorkerEnrollment",
     "WorkerNetworkAllowRule",
     "WebhookSubscription",
     "SecretRef",
-    "WorkflowTrigger",
     "ResourceShare",
     "UsageMeter",
     "BrowserPool",
     "BrowserSession",
     "ComputeRuntime",
+    "FingerprintProfile",
     "RuntimeNode",
     "MeshNetwork",
     "MeshNode",
+    "PPPoEExitNode",
+    "PPPoEHost",
 ]
+from xiosync.persistence.models.organizations import OrganizationBranding
+__all__.append("OrganizationBranding")

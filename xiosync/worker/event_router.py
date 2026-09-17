@@ -1,102 +1,86 @@
-"""Event trigger evaluator — matches new events against event-type triggers.
-
-Listens for newly appended events and evaluates them against active
-event-type triggers. When a match is found, creates a workflow run.
-"""
-
+"""Event trigger evaluator — matches fired events to xioflow_triggers and creates runs."""
 from __future__ import annotations
 
+import json
 import logging
-from datetime import datetime, timezone
 
-from sqlalchemy import select, func
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from xiosync.worker.context import system_context
-from xiosync.persistence.models.authorization import Event
-from xiosync.persistence.models.identity import Organization
-from xiosync.services.triggers import TriggerService
-from xiosync.services.workflows import WorkflowService
-
-logger = logging.getLogger("xiosync.worker.event_router")
-
-# Track the last processed event timestamp to avoid reprocessing.
-_last_processed_at: datetime | None = None
+logger = logging.getLogger(__name__)
 
 
 def evaluate_event_triggers(session: Session, *, limit: int = 100) -> int:
-    """Match recent events against event-type triggers. Returns runs created."""
-    global _last_processed_at
+    """Find unprocessed events and check them against enabled event triggers.
 
-    now = datetime.now(timezone.utc)
-    if _last_processed_at is None:
-        # On first run, only process events from the last 60 seconds.
-        from datetime import timedelta
-        _last_processed_at = now - timedelta(seconds=60)
+    For each matching (event, trigger) pair, create an xioflow_run in PENDING state.
 
-    # Find events created since our last check, excluding system events.
-    stmt = (
-        select(Event)
-        .where(
-            Event.created_at > _last_processed_at,
-            Event.event_type.notin_(["webhook.dispatch", "webhook.delivered", "webhook.failed"]),
+    The events table is the existing ``xiosync`` events store (operation events).
+    Triggers are matched on ``event_name`` column.
+
+    Returns the number of runs created.
+    """
+    from xiosync.platform.ids import new_id
+
+    created = 0
+
+    # Find recent unprocessed events that have matching enabled triggers.
+    # We match on events.event_type (the actual column name) against triggers.event_name.
+    # Events are processed if there's already a run with trigger_id pointing to this trigger
+    # fired AFTER the event's created_at — simple idempotency guard.
+    matches = session.execute(
+        text("""
+            SELECT DISTINCT ON (e.id, tr.id)
+                e.id         AS event_id,
+                e.event_type AS event_type,
+                e.organization_id,
+                e.payload,
+                tr.id        AS trigger_id,
+                tr.template_id,
+                tr.context_defaults
+            FROM events e
+            JOIN xioflow_triggers tr
+              ON tr.event_name = e.event_type
+             AND tr.organization_id = e.organization_id
+             AND tr.trigger_type = 'event'
+             AND tr.enabled = true
+            WHERE e.created_at > now() - interval '5 minutes'
+              -- Idempotency: no run already fired for this trigger after this event
+              AND NOT EXISTS (
+                  SELECT 1 FROM xioflow_runs r
+                  WHERE r.trigger_id = tr.id
+                    AND r.started_at >= e.created_at
+              )
+            LIMIT :lim
+        """),
+        {"lim": limit},
+    ).fetchall()
+
+    for row in matches:
+        run_id = new_id()
+        ctx = {**(row.context_defaults or {}), "event_type": row.event_type, "event_id": str(row.event_id)}
+        session.execute(
+            text("""
+                INSERT INTO xioflow_runs
+                  (id, organization_id, template_id, trigger_id, state, context, started_at)
+                VALUES
+                  (:id, :org_id, :template_id, :trigger_id, 'PENDING', cast(:ctx as jsonb), now())
+            """),
+            {
+                "id": str(run_id),
+                "org_id": str(row.organization_id),
+                "template_id": str(row.template_id) if row.template_id else None,
+                "trigger_id": str(row.trigger_id),
+                "ctx": json.dumps(ctx),
+            },
         )
-        .order_by(Event.created_at.asc())
-        .limit(limit)
-    )
-    events = list(session.scalars(stmt).all())
+        created += 1
+        logger.info(
+            "event_trigger_fired",
+            extra={"event_type": row.event_type, "trigger_id": str(row.trigger_id), "run_id": str(run_id)},
+        )
 
-    if not events:
-        return 0
-
-    runs_created = 0
-    for event in events:
-        try:
-            context = system_context(event.organization_id)
-            trigger_svc = TriggerService(session)
-
-            matching = trigger_svc.evaluate_event_triggers(
-                context,
-                event_type=event.event_type,
-                event_payload=event.payload,
-            )
-
-            for trigger in matching:
-                try:
-                    wf_svc = WorkflowService(session)
-                    run_id = wf_svc.start_run(
-                        context,
-                        trigger.workflow_id,
-                        initiated_by=event.actor_id or event.organization_id,
-                    )
-                    runs_created += 1
-                    logger.info(
-                        "event_trigger_fired",
-                        extra={
-                            "trigger_id": str(trigger.id),
-                            "event_id": str(event.id),
-                            "event_type": event.event_type,
-                            "run_id": str(run_id),
-                        },
-                    )
-                except Exception:
-                    logger.exception(
-                        "event_trigger_run_failed",
-                        extra={
-                            "trigger_id": str(trigger.id),
-                            "event_id": str(event.id),
-                        },
-                    )
-        except Exception:
-            logger.exception(
-                "event_trigger_eval_failed",
-                extra={"event_id": str(event.id)},
-            )
-
-    # Update watermark to the latest event we processed.
-    _last_processed_at = events[-1].created_at
-
-    if runs_created:
+    if created:
         session.commit()
 
-    return runs_created
+    return created

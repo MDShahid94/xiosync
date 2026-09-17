@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from xiosync.persistence.models.authorization import Capability, Event, Grant
 from xiosync.persistence.models.identity import (
     Actor,
-    AuthIdentity,
+    MemberAuth,
     Membership,
     Organization,
 )
@@ -650,7 +650,7 @@ class BootstrapService:
         identity_id = new_id()
         membership_id = new_id()
 
-        identity = AuthIdentity(
+        identity = MemberAuth(
             id=identity_id,
             organization_id=GENESIS_ORG_ID,
             human_actor_id=BOOTSTRAP_HUMAN_ACTOR_ID,

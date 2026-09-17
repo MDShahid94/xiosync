@@ -23,7 +23,9 @@ class _StrictModel(BaseModel):
 
 
 class BootstrapRequest(_StrictModel):
-    bootstrap_token: str = Field(description="One-time bootstrap token from XIOSYNC_BOOTSTRAP_TOKEN env")
+    bootstrap_token: str = Field(
+        description="One-time bootstrap token from XIOSYNC_BOOTSTRAP_TOKEN env"
+    )
     admin_email: str = Field(default="admin@xiosync.dev", description="Admin email")
     admin_password: str | None = Field(default=None, description="Admin password (omit to skip)")
 
@@ -93,7 +95,6 @@ def bootstrap_genesis(
             },
         )
 
-    from sqlalchemy import create_engine
     from sqlalchemy.orm import Session as SASession
 
     from xiosync.services.bootstrap import BootstrapService
@@ -162,9 +163,107 @@ def get_current_organization(
         created_at=org.created_at.isoformat(),
     )
 
+
 from xiosync.api.router_registry import register_router
+
 register_router(
     router,
-    prefix='/api/v1',
+    prefix="/api/v1",
     tags=["organizations"],
 )
+
+
+class BrandingUpdateSchema(_StrictModel):
+    theme_mode: str | None = None
+    primary_color: str | None = None
+    logo_url: str | None = None
+    favicon_url: str | None = None
+    custom_domain: str | None = None
+
+
+class BrandingResponse(_StrictModel):
+    organization_id: uuid.UUID
+    theme_mode: str
+    primary_color: str | None = None
+    logo_url: str | None = None
+    favicon_url: str | None = None
+    custom_domain: str | None = None
+    created_at: str
+    updated_at: str | None = None
+
+
+@router.get(
+    "/organizations/{id}/branding",
+    response_model=BrandingResponse,
+    summary="Get organization branding",
+)
+def get_organization_branding(
+    id: uuid.UUID,
+    request: Request,
+) -> BrandingResponse | JSONResponse:
+    from sqlalchemy.orm import Session as OrmSession
+
+    from xiosync.services.organizations import OrganizationService
+
+    session = cast(OrmSession, request.state.org_session)
+    svc = OrganizationService(session)
+
+    branding = svc.get_branding(id)
+    if not branding:
+        return JSONResponse(status_code=404, content={"detail": "Branding not found"})
+
+    return BrandingResponse(
+        organization_id=branding.organization_id,
+        theme_mode=branding.theme_mode,
+        primary_color=branding.primary_color,
+        logo_url=branding.logo_url,
+        favicon_url=branding.favicon_url,
+        custom_domain=branding.custom_domain,
+        created_at=branding.created_at.isoformat(),
+        updated_at=branding.updated_at.isoformat() if branding.updated_at else None,
+    )
+
+
+from xiosync.api.middleware.rbac import require_capability
+
+
+@router.put(
+    "/organizations/{id}/branding",
+    response_model=BrandingResponse,
+    summary="Update organization branding",
+    dependencies=[require_capability("organization.manage")],
+)
+def update_organization_branding(
+    id: uuid.UUID,
+    payload: BrandingUpdateSchema,
+    request: Request,
+) -> BrandingResponse:
+    from sqlalchemy.orm import Session as OrmSession
+
+    from xiosync.domain.organizations import BrandingUpdate
+    from xiosync.services.organizations import OrganizationService
+
+    session = cast(OrmSession, request.state.org_session)
+    svc = OrganizationService(session)
+
+    update_data = BrandingUpdate(
+        theme_mode=payload.theme_mode,
+        primary_color=payload.primary_color,
+        logo_url=payload.logo_url,
+        favicon_url=payload.favicon_url,
+        custom_domain=payload.custom_domain,
+    )
+
+    with session.begin_nested():
+        branding = svc.update_branding(id, update_data)
+
+    return BrandingResponse(
+        organization_id=branding.organization_id,
+        theme_mode=branding.theme_mode,
+        primary_color=branding.primary_color,
+        logo_url=branding.logo_url,
+        favicon_url=branding.favicon_url,
+        custom_domain=branding.custom_domain,
+        created_at=branding.created_at.isoformat(),
+        updated_at=branding.updated_at.isoformat() if branding.updated_at else None,
+    )

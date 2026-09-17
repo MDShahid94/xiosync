@@ -23,7 +23,6 @@ from sqlalchemy.orm import Session
 from xiosync.persistence.models.authorization import Event
 from xiosync.persistence.models.identity import Organization
 from xiosync.persistence.models.workers import WorkerEnrollment
-from xiosync.persistence.models.workflows import Task, WorkflowRun
 
 __all__ = ["QuotaExceededError", "QuotaService"]
 
@@ -70,36 +69,6 @@ class QuotaService:
         ) or 0
         if current >= limit:
             raise QuotaExceededError("workers", current, limit)
-
-    def check_queued_tasks(self, organization_id: uuid.UUID) -> None:
-        """Raise if the org has reached max_queued_tasks."""
-        quotas = self._get_quotas(organization_id)
-        limit = quotas.get("max_queued_tasks")
-        if limit is None:
-            return
-        current = self._session.scalar(
-            select(func.count()).where(
-                Task.organization_id == organization_id,
-                Task.state == "queued",
-            )
-        ) or 0
-        if current >= limit:
-            raise QuotaExceededError("queued_tasks", current, limit)
-
-    def check_concurrent_runs(self, organization_id: uuid.UUID) -> None:
-        """Raise if the org has reached max_concurrent_runs."""
-        quotas = self._get_quotas(organization_id)
-        limit = quotas.get("max_concurrent_runs")
-        if limit is None:
-            return
-        current = self._session.scalar(
-            select(func.count()).where(
-                WorkflowRun.organization_id == organization_id,
-                WorkflowRun.state == "running",
-            )
-        ) or 0
-        if current >= limit:
-            raise QuotaExceededError("concurrent_runs", current, limit)
 
     def check_daily_events(self, organization_id: uuid.UUID) -> None:
         """Raise if the org has reached max_daily_events for today (UTC)."""

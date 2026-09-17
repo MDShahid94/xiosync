@@ -7,7 +7,7 @@ the old static frozenset.
 
 Design notes:
 * Pure domain — no I/O, no ORM imports. Population is the caller's concern
-  (``BootstrapService``, ``xiobr_bootstrap``).
+  (``BootstrapService``, ``xiogrid_bootstrap``).
 * ``_populated`` flag: if the registry has never been loaded (e.g. unit
   tests that don't run genesis) every type is treated as valid, preserving
   test ergonomics without any extra setup.
@@ -37,7 +37,7 @@ class EventTypeRegistry:
     def register(self, event_types: list[str]) -> None:
         """Merge *event_types* into the cache and mark as populated.
 
-        Idempotent — calling multiple times (e.g. core + xiobr bootstrap)
+        Idempotent — calling multiple times (e.g. core + xiogrid bootstrap)
         unions the sets rather than replacing them.
         """
         with self._lock:

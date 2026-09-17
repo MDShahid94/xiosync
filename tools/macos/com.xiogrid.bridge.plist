@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  XIOGRID Bridge100 Persistence LaunchDaemon
+  
+  Ensures bridge100 always includes en0 after every Mac reboot.
+  VMware Fusion creates bridge100 automatically, but en0 membership
+  can be lost after wake-from-sleep or network stack resets.
+  
+  Install:
+    sudo cp com.xiogrid.bridge.plist /Library/LaunchDaemons/
+    sudo chown root:wheel /Library/LaunchDaemons/com.xiogrid.bridge.plist
+    sudo chmod 644 /Library/LaunchDaemons/com.xiogrid.bridge.plist
+    sudo launchctl load /Library/LaunchDaemons/com.xiogrid.bridge.plist
+    
+  Test:
+    sudo launchctl list | grep xiogrid
+    ifconfig bridge100 | grep "member: en0"
+-->
+<dict>
+  <key>Label</key>
+  <string>com.xiogrid.bridge</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>
+      # Wait for network and bridge100 to be created by VMware
+      for i in $(seq 1 30); do
+        ifconfig bridge100 &gt;/dev/null 2&gt;&amp;1 &amp;&amp; break
+        sleep 2
+      done
+
+      # Add en0 to bridge100 if not already a member
+      if ifconfig bridge100 | grep -q 'member: en0'; then
+        echo "[xiogrid-bridge] en0 already in bridge100"
+      else
+        ifconfig bridge100 addm en0
+        echo "[xiogrid-bridge] Added en0 to bridge100"
+      fi
+
+      # Enable IP forwarding (required for PPPoE routing from VM)
+      sysctl -w net.inet.ip.forwarding=1
+      echo "[xiogrid-bridge] IP forwarding enabled"
+    </string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Also re-run whenever network configuration changes -->
+  <key>WatchPaths</key>
+  <array>
+    <string>/Library/Preferences/SystemConfiguration</string>
+  </array>
+
+  <!-- Run as root so ifconfig addm works -->
+  <key>UserName</key>
+  <string>root</string>
+
+  <key>StandardOutPath</key>
+  <string>/var/log/xiogrid-bridge.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/var/log/xiogrid-bridge.log</string>
+</dict>
+</plist>

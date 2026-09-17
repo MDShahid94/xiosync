@@ -78,7 +78,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--mode",
-        choices=["all", "ticker", "reaper", "dispatcher", "events"],
+        choices=["all", "ticker", "reaper", "dispatcher", "run-dispatcher", "events"],
         default="all",
         help="Which worker loop(s) to run (default: all)",
     )
@@ -110,8 +110,19 @@ def main() -> None:
     # Import worker functions.
     from xiosync.worker.ticker import tick_cron_triggers
     from xiosync.worker.reaper import reap_expired_leases
-    from xiosync.worker.dispatcher import dispatch_pending_webhooks
+    from xiosync.worker.webhook_dispatcher import dispatch_pending_webhooks
     from xiosync.worker.event_router import evaluate_event_triggers
+    from xiosync.worker.run_dispatcher import dispatch_pending_runs
+    from xiosync.worker.pppoe_health import tick_pppoe_health
+    from xiosync.worker.pppoe_warmpool import tick_pppoe_warmpool
+    from xiosync.subsystems.xiorun.health_loop import tick_xiorun_health
+
+    # PPPoE health check interval (default 60s)
+    pppoe_health_interval = float(os.environ.get("WORKER_PPPOE_HEALTH_INTERVAL", "60"))
+    # Warm pool top-up interval (default 120s — slower, each provision takes ~30s)
+    pppoe_warmpool_interval = float(os.environ.get("WORKER_PPPOE_WARMPOOL_INTERVAL", "120"))
+    # XIORUN browser health check interval (default 30s)
+    xiorun_health_interval = float(os.environ.get("WORKER_XIORUN_HEALTH_INTERVAL", "30"))
 
     # Build the set of loops to run.
     loops: list[tuple[str, Callable[[OrmSession], int], float]] = []
@@ -123,6 +134,14 @@ def main() -> None:
         loops.append(("dispatcher", dispatch_pending_webhooks, dispatch_interval))
     if args.mode in ("all", "events"):
         loops.append(("events", evaluate_event_triggers, event_interval))
+    # PPPoE health check + warm pool — always enabled in "all" mode
+    if args.mode in ("all", "run-dispatcher"):
+        run_dispatch_interval = float(os.environ.get("WORKER_RUN_DISPATCH_INTERVAL", "5"))
+        loops.append(("run-dispatcher", dispatch_pending_runs, run_dispatch_interval))
+    if args.mode in ("all",):
+        loops.append(("pppoe-health",   tick_pppoe_health,   pppoe_health_interval))
+        loops.append(("pppoe-warmpool", tick_pppoe_warmpool, pppoe_warmpool_interval))
+        loops.append(("xiorun-health",  tick_xiorun_health,  xiorun_health_interval))
 
     if not loops:
         logger.error("no_loops_selected")

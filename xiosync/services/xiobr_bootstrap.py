@@ -1,7 +1,5 @@
-"""Backward-compat shim — register_xiobr_types moved to xiosync.subsystems.xiogrid.bootstrap."""
-from xiosync.subsystems.xiogrid.bootstrap import *  # noqa: F401, F403
-from xiosync.subsystems.xiogrid.bootstrap import (  # noqa: F401
-    _EVENT_TYPES,
-    register_xiobr_types,
-    register_xiogrid,
-)
+"""Backward-compat shim — register_platform_types (was register_xiobr_types).
+
+Import from xiosync.subsystems.xiogrid.bootstrap directly.
+"""
+from xiosync.subsystems.xiogrid.bootstrap import register_platform_types as register_xiobr_types  # noqa: F401
