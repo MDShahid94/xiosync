@@ -933,18 +933,27 @@ async def observe_session(
             if _page:
                 try:
                     _vp = await _page.evaluate("() => ({ w: window.innerWidth, h: window.innerHeight })")
-                    _sw = entry.stream_width
-                    _sh = entry.stream_height
-                    entry.viewport_width = _vp.get("w", _sw)
-                    entry.viewport_height = _vp.get("h", _sh)
+                    # Use actual viewport size — matches the JPEG frame dimensions
+                    # (Chrome on Xvfb reports 1919×992, not the 1920×1080 default)
+                    _sw = _vp.get("w", entry.stream_width)
+                    _sh = _vp.get("h", entry.stream_height)
+                    entry.viewport_width = _sw
+                    entry.viewport_height = _sh
+                    # Cache in _attached_browsers so _scale_coords is 1:1
+                    if session_id in _attached_browsers:
+                        _attached_browsers[session_id]["stream_width"] = _sw
+                        _attached_browsers[session_id]["stream_height"] = _sh
+                        _attached_browsers[session_id]["_viewport_w"] = _sw
+                        _attached_browsers[session_id]["_viewport_h"] = _sh
                 except Exception:
-                    _sw, _sh = 1920, 1080
+                    _sw, _sh = entry.stream_width, entry.stream_height
                 await websocket.send_json({
                     "type": "session_info",
                     "url": _page.url,
                     "width": _sw,
                     "height": _sh,
                 })
+
         except Exception:
             pass
 
