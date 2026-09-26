@@ -1301,7 +1301,33 @@ async def _cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
         return
 
 
-    STREAM_W, STREAM_H = 1920, 1080
+    # Detect actual frame dimensions from first screencast/screenshot frame
+    # Chrome on Xvfb reports 1919x992 (not 1920x1080) — use actual dims for
+    # correct coordinate scaling in _dispatch_control and in the viewer.
+    STREAM_W, STREAM_H = 1920, 1080  # defaults; updated from frame metadata below
+    try:
+        _probe = await cdp.send("Page.captureScreenshot", {"format": "jpeg", "quality": 30})
+        import base64 as _b64, struct as _struct
+        _jpeg = _b64.b64decode(_probe.get("data", ""))
+        _i = 2
+        while _i < len(_jpeg) - 4:
+            if _jpeg[_i] != 0xFF:
+                break
+            if _jpeg[_i+1] in (0xC0, 0xC2):
+                STREAM_H = _struct.unpack(">H", _jpeg[_i+5:_i+7])[0]
+                STREAM_W = _struct.unpack(">H", _jpeg[_i+7:_i+9])[0]
+                break
+            _i += 2 + _struct.unpack(">H", _jpeg[_i+2:_i+4])[0]
+    except Exception:
+        pass  # keep defaults
+
+    # Also store actual dims in _attached_browsers for _scale_coords
+    if session_id in _attached_browsers:
+        _attached_browsers[session_id]["stream_width"] = STREAM_W
+        _attached_browsers[session_id]["stream_height"] = STREAM_H
+        _attached_browsers[session_id]["_viewport_w"] = STREAM_W
+        _attached_browsers[session_id]["_viewport_h"] = STREAM_H
+
     try:
         queue.put_nowait(_json.dumps({
             "type": "session_info",
