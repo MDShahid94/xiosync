@@ -24,8 +24,13 @@ logger = logging.getLogger(__name__)
 MODE_SCREENSHOT = "screenshot"
 MODE_CDP_SCREENCAST = "cdp_screencast"
 MODE_DOM_STREAM = "dom_stream"
+MODE_CDP_DOM_SNAPSHOT = "cdp_dom_snapshot"
+MODE_DOM_OVERLAY = "dom_overlay"
 
-VALID_MODES = {MODE_SCREENSHOT, MODE_CDP_SCREENCAST, MODE_DOM_STREAM}
+VALID_MODES = {
+    MODE_SCREENSHOT, MODE_CDP_SCREENCAST, MODE_DOM_STREAM,
+    MODE_CDP_DOM_SNAPSHOT, MODE_DOM_OVERLAY,
+}
 
 # Default capture rates (screenshots per second)
 _FPS_ACTIVE = float(os.environ.get("XIOVIEW_FPS_ACTIVE", "5"))
@@ -45,6 +50,12 @@ class ObservationEntry:
     capture_task: asyncio.Task | None = None
     last_frame: bytes | None = None  # last good JPEG (never go dark)
     active: bool = True
+    # Stream dimensions — used by client for coordinate mapping
+    stream_width: int = 1920
+    stream_height: int = 1080
+    # Actual remote Chrome viewport — populated lazily from CDP
+    viewport_width: int | None = None
+    viewport_height: int | None = None
 
     @property
     def client_count(self) -> int:

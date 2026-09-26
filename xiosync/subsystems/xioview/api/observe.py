@@ -616,15 +616,28 @@ setInterval(() => {
   frameCount = 0; lastFpsTime = now;
 }, 2000);
 
-// Focus management — auto-focus on mouseenter, release on mouseleave/Escape
+// ── Focus / cursor management ────────────────────────────────────────────────
+// Click anywhere inside the wrap to acquire focus (pointer-lock style).
+// Move mouse out or press Escape to release.
+// We also show the SVG cursor as soon as the mouse enters regardless of focus
+// so the user can see where they are before clicking to activate.
+
 function setFocused(v) {
   focused = v;
   badge.className = v ? "active" : "";
   wrap.style.outline = v ? "2px solid #4af" : "";
-  cursorEl.className = v ? "visible" : "";
+  // Always show cursor while mouse is inside wrap; just change badge
 }
-wrap.addEventListener("mouseenter", () => setFocused(true));
-wrap.addEventListener("mouseleave", () => { setFocused(false); });
+
+// Show cursor as soon as mouse enters the wrap area (regardless of focused state)
+wrap.addEventListener("mouseenter", () => {
+  cursorEl.classList.add("visible");
+  setFocused(true);   // auto-focus on enter — simpler UX than requiring a click
+});
+wrap.addEventListener("mouseleave", () => {
+  cursorEl.classList.remove("visible");
+  setFocused(false);
+});
 
 // Interaction feedback flash
 function flashInteraction(success) {
@@ -721,15 +734,15 @@ function canvasCoords(e) {
   };
 }
 
-// Cursor overlay — track position relative to wrap (so it renders over margins too)
+// Cursor overlay — always track position relative to wrap
 wrap.addEventListener("mousemove", (e) => {
-  const rect = wrap.getBoundingClientRect();
-  cursorEl.style.left = (e.clientX - rect.left) + "px";
-  cursorEl.style.top  = (e.clientY - rect.top)  + "px";
+  const wRect = wrap.getBoundingClientRect();
+  cursorEl.style.left = (e.clientX - wRect.left) + "px";
+  cursorEl.style.top  = (e.clientY - wRect.top)  + "px";
   if (!focused) return;
-  // Only send mouse_move if pointer is within the canvas bounds
   const cRect = canvas.getBoundingClientRect();
-  if (e.clientX >= cRect.left && e.clientX <= cRect.right &&
+  if (canvas.width > 0 &&
+      e.clientX >= cRect.left && e.clientX <= cRect.right &&
       e.clientY >= cRect.top  && e.clientY <= cRect.bottom) {
     const {x, y} = canvasCoords(e);
     send({ type: "mouse_move", x, y });
@@ -878,13 +891,19 @@ async def observe_session(
         # Register client in registry — starts capture task if first client.
         # Only pass page_getter for screenshot mode to prevent _capture_loop
         # from running concurrently with CDP screencast or DOM stream (RC-8).
-        _needs_capture = mode == MODE_SCREENSHOT
+        # Only pass page_getter for screenshot mode. For CDP/rrweb modes the capture
+        # loop is started separately below (_cdp_screencast_loop / _inject_rrweb).
+        # If we pass a lambda that returns None, _capture_loop calls `await None`
+        # which raises "NoneType can't be used in await" every 2s — Bug-A fix.
+        _screenshot_getter = (
+            (lambda: _get_playwright_page(session_id)) if mode == MODE_SCREENSHOT else None
+        )
         entry = reg.add_client(
             session_id=session_id,
             org_id=org_id,
             mode=mode,
             queue=queue,
-            page_getter=lambda: _get_playwright_page(session_id) if _needs_capture else None,
+            page_getter=_screenshot_getter,
         )
 
         # Send connected confirmation + last good frame immediately
@@ -903,14 +922,23 @@ async def observe_session(
             })
 
         # Push session_info (current page URL + viewport dims) so viewer updates immediately
+        # If page is not available yet (attach happens after WS connect), retry for up to 10s.
         try:
-            _page = await _get_playwright_page(session_id)
+            _page = None
+            for _retry in range(20):   # up to 10s (20 × 0.5s)
+                _page = await _get_playwright_page(session_id)
+                if _page is not None:
+                    break
+                await asyncio.sleep(0.5)
             if _page:
-                _vp = await _page.evaluate("() => ({ w: window.innerWidth, h: window.innerHeight })")
-                _sw = entry.stream_width
-                _sh = entry.stream_height
-                entry.viewport_width = _vp.get("w", _sw)
-                entry.viewport_height = _vp.get("h", _sh)
+                try:
+                    _vp = await _page.evaluate("() => ({ w: window.innerWidth, h: window.innerHeight })")
+                    _sw = entry.stream_width
+                    _sh = entry.stream_height
+                    entry.viewport_width = _vp.get("w", _sw)
+                    entry.viewport_height = _vp.get("h", _sh)
+                except Exception:
+                    _sw, _sh = 1920, 1080
                 await websocket.send_json({
                     "type": "session_info",
                     "url": _page.url,
@@ -1259,10 +1287,19 @@ async def _cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
     """
     import json as _json
 
-    page = await _get_playwright_page(session_id)
+    # Wait up to 15s for the page — the WS client often connects before
+    # POST /xioview/attach completes (race condition on first open).
+    page = None
+    for _wait_i in range(30):    # 30 × 0.5s = 15s
+        page = await _get_playwright_page(session_id)
+        if page is not None:
+            break
+        await asyncio.sleep(0.5)
+
     if page is None:
         logger.warning("xioview.cdp_no_page", extra={"session_id": session_id})
         return
+
 
     STREAM_W, STREAM_H = 1920, 1080
     try:
