@@ -546,7 +546,7 @@ canvas { max-width: 100%; max-height: 100%; image-rendering: auto; display: bloc
   </select>
   <span id="focus-badge">LIVE CONTROL</span>
   <span id="latency-display"></span>
-  <span id="ctrl-hint">Move mouse in to control  Esc to release</span>
+  <span id="ctrl-hint">Click or move mouse into view to control &nbsp;·&nbsp; Esc to release</span>
 </div>
 
 <div id="canvas-wrap">
@@ -635,6 +635,14 @@ document.querySelectorAll("#cursor, #ripple, #flash").forEach(el => {
 wrap.addEventListener("mouseenter", () => {
   cursorEl.classList.add("visible");
   setFocused(true);
+});
+
+// Also activate on click (catches cases where mouse entered but focused didn't fire)
+wrap.addEventListener("mousedown", () => {
+  if (!focused) {
+    setFocused(true);
+    cursorEl.classList.add("visible");
+  }
 });
 
 wrap.addEventListener("mouseleave", (e) => {
