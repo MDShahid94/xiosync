@@ -617,26 +617,32 @@ setInterval(() => {
 }, 2000);
 
 // ── Focus / cursor management ────────────────────────────────────────────────
-// Click anywhere inside the wrap to acquire focus (pointer-lock style).
-// Move mouse out or press Escape to release.
-// We also show the SVG cursor as soon as the mouse enters regardless of focus
-// so the user can see where they are before clicking to activate.
+// Mouse enters wrap → auto-focus. Mouse leaves to outside → release focus.
+// IMPORTANT: use CSS pointer-events:none on children (cursor, ripple) so
+// mouseleave on wrap never fires when entering those children.
 
 function setFocused(v) {
   focused = v;
   badge.className = v ? "active" : "";
   wrap.style.outline = v ? "2px solid #4af" : "";
-  // Always show cursor while mouse is inside wrap; just change badge
 }
 
-// Show cursor as soon as mouse enters the wrap area (regardless of focused state)
+// Pointer-events:none on overlay children prevents spurious mouseleave
+document.querySelectorAll("#cursor, #ripple, #flash").forEach(el => {
+  el.style.pointerEvents = "none";
+});
+
 wrap.addEventListener("mouseenter", () => {
   cursorEl.classList.add("visible");
-  setFocused(true);   // auto-focus on enter — simpler UX than requiring a click
+  setFocused(true);
 });
-wrap.addEventListener("mouseleave", () => {
-  cursorEl.classList.remove("visible");
-  setFocused(false);
+
+wrap.addEventListener("mouseleave", (e) => {
+  // Only release if the mouse left to a non-child element
+  if (!wrap.contains(e.relatedTarget)) {
+    cursorEl.classList.remove("visible");
+    setFocused(false);
+  }
 });
 
 // Interaction feedback flash
