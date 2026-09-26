@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session as OrmSession
 
 from xiosync.subsystems.xioview.registry import (
     get_registry, VALID_MODES, MODE_SCREENSHOT, MODE_CDP_SCREENCAST, MODE_DOM_STREAM,
+    MODE_CDP_DOM_SNAPSHOT, MODE_DOM_OVERLAY,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,99 @@ public_router = APIRouter(prefix="/xioview", tags=["XIOVIEW-public"])
 # session_id → {pw, browser, context, page}
 _attached_browsers: dict[str, dict[str, Any]] = {}
 
+# ── CDP session cache for interactions (one per session, reused) ──────────────
+# session_id → CDPSession (from patchright)
+_interaction_cdp_sessions: dict[str, Any] = {}
+
+
+async def _get_or_create_cdp_session(session_id: str, page: Any) -> Any:
+    """Get or create a cached CDP session for dispatching interactions.
+
+    Reuses the same CDP session across multiple interactions to avoid
+    the overhead of opening a new session for every mouse move / click.
+    Falls back to creating a new session if the cached one is dead.
+    """
+    cdp = _interaction_cdp_sessions.get(session_id)
+    if cdp is not None:
+        try:
+            # Quick health check — if this fails, session is dead
+            await cdp.send("Runtime.evaluate", {"expression": "1", "returnByValue": True})
+            return cdp
+        except Exception:
+            _interaction_cdp_sessions.pop(session_id, None)
+
+    cdp = await page.context.new_cdp_session(page)
+    _interaction_cdp_sessions[session_id] = cdp
+    logger.debug("xioview.cdp_session_created", extra={"session_id": session_id})
+    return cdp
+
+
+async def _scale_coords(
+    session_id: str, page: Any, raw_x: int, raw_y: int,
+) -> tuple[int, int]:
+    """Scale viewer coordinates to actual Chrome viewport coordinates.
+
+    The viewer sends coordinates relative to the stream dimensions (e.g.
+    1920×1080 for CDP screencast).  The actual Chrome viewport may differ
+    (e.g. 1280×720 on Colab with swiftshader).  This function transforms
+    client-space coords → Chrome viewport-space coords.
+    """
+    attached = _attached_browsers.get(session_id, {})
+    stream_w = attached.get("stream_width", 1920)
+    stream_h = attached.get("stream_height", 1080)
+
+    # Get actual viewport size (cache in _attached_browsers to avoid per-event CDP calls)
+    actual_w = attached.get("_viewport_w")
+    actual_h = attached.get("_viewport_h")
+    if actual_w is None or actual_h is None:
+        try:
+            vp = await page.evaluate("() => ({ w: window.innerWidth, h: window.innerHeight })")
+            actual_w = vp["w"]
+            actual_h = vp["h"]
+            if session_id in _attached_browsers:
+                _attached_browsers[session_id]["_viewport_w"] = actual_w
+                _attached_browsers[session_id]["_viewport_h"] = actual_h
+        except Exception:
+            actual_w = stream_w
+            actual_h = stream_h
+
+    scaled_x = int(raw_x * actual_w / stream_w)
+    scaled_y = int(raw_y * actual_h / stream_h)
+    return max(0, scaled_x), max(0, scaled_y)
+
+
+def _is_run_active(session_id: str) -> bool:
+    """Check if any run (script OR DAG) is currently executing on this session.
+
+    Delegates to runtime_pool.is_run_active() which tracks active runs for
+    both execution paradigms. When a run is active, XIOVIEW blocks manual
+    interactions to prevent conflicting input from corrupting execution.
+    """
+    # 1. Check process-local fast-path cache
+    try:
+        from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+        if get_runtime_pool().is_run_active(session_id):
+            return True
+    except Exception:
+        pass
+
+    # 2. Cross-process authoritative check (fixes multi-process visibility)
+    try:
+        from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
+        from sqlalchemy import text  # noqa: PLC0415
+        engine = get_engine()
+        if engine:
+            with engine.connect() as conn:
+                res = conn.execute(
+                    text("SELECT 1 FROM xioflow_runs WHERE context->>'session_id' = :sid AND state = 'RUNNING'"),
+                    {"sid": session_id}
+                ).fetchone()
+                if res:
+                    return True
+    except Exception:
+        pass
+
+    return False
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -187,6 +281,39 @@ class AttachRequest(BaseModel):
     cdp_ws_url: str           # ws://tailscale_ip:PORT from xiorun-agent /launch
     session_id: str | None = None   # auto-generated if omitted
     internal_secret: str | None = None  # XIOSYNC_INTERNAL_SECRET for lightweight auth
+    # cdp_screencast works with UC Chrome 131 + swiftshader; screenshot mode returns black frames.
+    mode: str = "cdp_screencast"   # "screenshot" | "cdp_screencast"
+
+
+async def _cleanup_dead_sessions() -> None:
+    """Remove _attached_browsers entries whose CDP connection has dropped.
+
+    Only removes sessions where patchright reports the browser as disconnected.
+    Active sessions (browser.is_connected()==True) are NEVER removed, regardless
+    of age — safe for long-running workflow automation sessions.
+    """
+    from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+    dead = [
+        sid for sid, entry in list(_attached_browsers.items())
+        if not entry.get("browser") or not entry["browser"].is_connected()
+    ]
+    pool = get_runtime_pool()
+    for sid in dead:
+        entry = _attached_browsers.pop(sid, None)
+        pool._unregister(sid)
+        if entry:
+            try:
+                await entry["browser"].close()
+            except Exception:
+                pass
+            try:
+                await entry["pw"].stop()
+            except Exception:
+                pass
+        logger.info("xioview.dead_session_cleaned", extra={"session_id": sid})
+    if dead:
+        logger.info(f"xioview.cleanup: removed {len(dead)} dead session(s), "
+                    f"{len(_attached_browsers)} alive")
 
 
 @public_router.post("/attach", summary="Attach XIOSYNC to an existing Colab Chrome CDP session")
@@ -200,6 +327,9 @@ async def attach_session(body: AttachRequest) -> dict[str, Any]:
 
     Auth: pass XIOSYNC_INTERNAL_SECRET as internal_secret in the request body,
     OR call from inside the Tailscale network (no external exposure).
+
+    mode: "cdp_screencast" (default) — works with UC Chrome + swiftshader (no black frames).
+          "screenshot"               — use only for patchright-native sessions.
     """
     # Lightweight auth — internal secret check (JWT not required for this endpoint)
     expected = os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
@@ -208,6 +338,9 @@ async def attach_session(body: AttachRequest) -> dict[str, Any]:
 
     from patchright.async_api import async_playwright  # noqa: PLC0415
     from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+
+    # Clean up dead (disconnected) sessions first — never removes live sessions
+    await _cleanup_dead_sessions()
 
     session_id = body.session_id or str(uuid.uuid4())
 
@@ -225,7 +358,8 @@ async def attach_session(body: AttachRequest) -> dict[str, Any]:
 
     # CDP URL: patchright connect_over_cdp expects http://host:port
     cdp_http_url = body.cdp_ws_url.replace("ws://", "http://").split("/json")[0]
-    logger.info("xioview.attach_start", extra={"session_id": session_id, "url": cdp_http_url})
+    logger.info("xioview.attach_start", extra={"session_id": session_id, "url": cdp_http_url,
+                                                "mode": body.mode})
 
     pw = await async_playwright().start()
     try:
@@ -240,18 +374,23 @@ async def attach_session(body: AttachRequest) -> dict[str, Any]:
 
     _attached_browsers[session_id] = {
         "pw": pw, "browser": browser, "context": context, "page": page,
+        "mode": body.mode,
+        # Stream dimensions for coordinate scaling (UC Chrome always runs 1920x1080)
+        "stream_width": 1920, "stream_height": 1080,
     }
 
     # Register in runtime_pool so _get_playwright_page() finds it
     get_runtime_pool()._register(session_id, page, None)
 
     current_url = page.url
-    logger.info("xioview.attached", extra={"session_id": session_id, "url": current_url})
+    logger.info("xioview.attached", extra={"session_id": session_id, "url": current_url,
+                                            "mode": body.mode})
     return {
         "session_id": session_id,
         "ok": True,
         "current_url": current_url,
         "view_url": f"/api/v1/xioview/sessions/{session_id}/view",
+        "mode": body.mode,
     }
 
 
@@ -260,6 +399,13 @@ async def detach_session(session_id: str) -> dict[str, Any]:
     """Close the CDP connection for an attached session."""
     from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
     old = _attached_browsers.pop(session_id, None)
+    # Clean up cached CDP interaction session
+    cdp = _interaction_cdp_sessions.pop(session_id, None)
+    if cdp:
+        try:
+            await cdp.detach()
+        except Exception:
+            pass
     get_runtime_pool()._unregister(session_id)
     if old:
         try:
@@ -320,12 +466,60 @@ body { background: #0a0a0f; color: #e0e0e0; font-family: 'SF Mono', 'Fira Code',
 #fps-display { color: #8f8; }
 #mode-select { background: #1a1a2a; color: #ccc; border: 1px solid #333; border-radius: 3px;
                padding: 2px 6px; font-size: 10px; cursor: pointer; }
+#focus-badge { font-size: 10px; padding: 1px 7px; border-radius: 3px;
+               background: #1a3a1a; color: #4f4; border: 1px solid #2a5a2a; display: none; }
+#focus-badge.active { display: inline; }
 #ctrl-hint { color: #555; font-size: 10px; }
 
-#canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center;
-               overflow: hidden; cursor: crosshair; background: #050508; }
-canvas { max-width: 100%; max-height: 100%; image-rendering: auto; }
+/* Canvas area — cursor:none so our SVG overlay cursor shows instead */
+#canvas-wrap { flex: 1; position: relative; display: flex; align-items: center;
+               justify-content: center; overflow: hidden; cursor: none; background: #050508; }
+canvas { max-width: 100%; max-height: 100%; image-rendering: auto; display: block; }
 
+/* ── Custom cursor overlay ─────────────────────────────────────────── */
+#cursor {
+  position: absolute; pointer-events: none; z-index: 999;
+  transform: translate(-2px, -2px);   /* hot-spot at top-left tip */
+  display: none;
+  will-change: left, top;
+  filter: drop-shadow(0 0 3px rgba(0,0,0,0.9)) drop-shadow(0 0 1px rgba(0,0,0,1));
+}
+#cursor.visible { display: block; }
+
+/* Click ripple */
+#ripple {
+  position: absolute; pointer-events: none; z-index: 998;
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 2px solid rgba(100,180,255,0.8);
+  transform: translate(-50%,-50%) scale(0); opacity: 0;
+}
+#ripple.pop { animation: ripple-anim 0.35s ease-out forwards; }
+@keyframes ripple-anim {
+  0%   { transform: translate(-50%,-50%) scale(0.2); opacity: 0.9; }
+  100% { transform: translate(-50%,-50%) scale(2.2); opacity: 0; }
+}
+
+/* Interaction feedback flash */
+#interaction-flash {
+  position: absolute; inset: 0; pointer-events: none; z-index: 997;
+  background: transparent; transition: background 0.15s;
+}
+#interaction-flash.success { background: rgba(80,255,80,0.06); }
+#interaction-flash.fail    { background: rgba(255,80,80,0.08); }
+
+/* DAG Running badge */
+#dag-badge {
+  position: absolute; top: 8px; right: 8px; z-index: 100;
+  padding: 4px 12px; border-radius: 4px; font-size: 11px;
+  background: rgba(200,100,0,0.85); color: #fff; display: none;
+  animation: pulse 1.2s infinite;
+}
+#dag-badge.visible { display: block; }
+
+/* Latency display */
+#latency-display { color: #aaa; font-size: 10px; }
+
+/* Connection overlay */
 #overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex;
            align-items: center; justify-content: center; z-index: 100; }
 #overlay.hidden { display: none; }
@@ -339,25 +533,48 @@ canvas { max-width: 100%; max-height: 100%; image-rendering: auto; }
 
 <div id="statusbar">
   <div id="status-dot"></div>
-  <span id="status-label">Connecting…</span>
+  <span id="status-label">Connecting...</span>
   <span id="session-id">__SESSION_ID__</span>
-  <span id="url-display">—</span>
-  <span id="fps-display">— fps</span>
+  <span id="url-display">-</span>
+  <span id="fps-display">- fps</span>
   <select id="mode-select">
-    <option value="screenshot" selected>Screenshot</option>
-    <option value="cdp_screencast">CDP Screencast</option>
+    <option value="screenshot">Screenshot</option>
+    <option value="cdp_screencast" selected>CDP Screencast</option>
+    <option value="cdp_dom_snapshot">DOM Snapshot</option>
+    <option value="dom_overlay">DOM Overlay</option>
+    <option value="dom_stream">DOM Stream (rrweb)</option>
   </select>
-  <span id="ctrl-hint">Click to focus · Esc to release</span>
+  <span id="focus-badge">LIVE CONTROL</span>
+  <span id="latency-display"></span>
+  <span id="ctrl-hint">Move mouse in to control  Esc to release</span>
 </div>
 
-<div id="canvas-wrap" id="wrap">
+<div id="canvas-wrap">
   <canvas id="screen"></canvas>
+
+  <!-- Custom SVG pointer cursor — larger + dual stroke for visibility on any background -->
+  <svg id="cursor" width="28" height="32" viewBox="0 0 28 32" fill="none"
+       xmlns="http://www.w3.org/2000/svg">
+    <path d="M3 3 L3 27 L9.5 21 L14.5 30 L17.5 28.5 L12.5 19.5 L21 19.5 Z"
+          fill="white" stroke="#111" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M3 3 L3 27 L9.5 21 L14.5 30 L17.5 28.5 L12.5 19.5 L21 19.5 Z"
+          fill="none" stroke="rgba(80,200,255,0.6)" stroke-width="0.8" stroke-linejoin="round"/>
+  </svg>
+
+  <!-- Click ripple feedback -->
+  <div id="ripple"></div>
+
+  <!-- Interaction feedback flash -->
+  <div id="interaction-flash"></div>
+
+  <!-- DAG Running badge -->
+  <div id="dag-badge">&#9654; WORKFLOW RUNNING — VIEW ONLY</div>
 </div>
 
 <div id="overlay">
   <div class="overlay-box">
     <h2>XIOVIEW</h2>
-    <p id="overlay-msg">Connecting to session…</p>
+    <p id="overlay-msg">Connecting to session...</p>
   </div>
 </div>
 
@@ -365,40 +582,65 @@ canvas { max-width: 100%; max-height: 100%; image-rendering: auto; }
 const SESSION_ID = "__SESSION_ID__";
 const WS_BASE    = "__WS_URL__";
 
-const canvas  = document.getElementById("screen");
-const ctx     = canvas.getContext("2d");
-const wrap    = document.getElementById("canvas-wrap");
-const dot     = document.getElementById("status-dot");
-const label   = document.getElementById("status-label");
-const urlDisp = document.getElementById("url-display");
-const fpsDisp = document.getElementById("fps-display");
-const modesel = document.getElementById("mode-select");
-const overlay = document.getElementById("overlay");
-const ovMsg   = document.getElementById("overlay-msg");
+const canvas   = document.getElementById("screen");
+const ctx      = canvas.getContext("2d");
+const wrap     = document.getElementById("canvas-wrap");
+const dot      = document.getElementById("status-dot");
+const label    = document.getElementById("status-label");
+const urlDisp  = document.getElementById("url-display");
+const fpsDisp  = document.getElementById("fps-display");
+const modesel  = document.getElementById("mode-select");
+const overlay  = document.getElementById("overlay");
+const ovMsg    = document.getElementById("overlay-msg");
+const cursorEl = document.getElementById("cursor");
+const ripple   = document.getElementById("ripple");
+const badge    = document.getElementById("focus-badge");
+const dagBadge = document.getElementById("dag-badge");
+const iFlash   = document.getElementById("interaction-flash");
+const latDisp  = document.getElementById("latency-display");
 
 let ws = null;
 let focused = false;
 let frameCount = 0, lastFpsTime = Date.now();
-let pageW = 1920, pageH = 1080;  // remote page dimensions
+let pageW = 1920, pageH = 1080;
 let reconnectDelay = 1000;
+let dagRunning = false;
+let lastInteractionTs = 0;  // for latency measurement
 
 // FPS counter
 setInterval(() => {
   const now = Date.now();
-  const fps = (frameCount / ((now - lastFpsTime) / 1000)).toFixed(1);
+  const elapsed = (now - lastFpsTime) / 1000;
+  const fps = elapsed > 0 ? (frameCount / elapsed).toFixed(1) : "0.0";
   fpsDisp.textContent = fps + " fps";
   frameCount = 0; lastFpsTime = now;
 }, 2000);
 
+// Focus management — auto-focus on mouseenter, release on mouseleave/Escape
+function setFocused(v) {
+  focused = v;
+  badge.className = v ? "active" : "";
+  wrap.style.outline = v ? "2px solid #4af" : "";
+  cursorEl.className = v ? "visible" : "";
+}
+wrap.addEventListener("mouseenter", () => setFocused(true));
+wrap.addEventListener("mouseleave", () => { setFocused(false); });
+
+// Interaction feedback flash
+function flashInteraction(success) {
+  iFlash.className = success ? "success" : "fail";
+  setTimeout(() => { iFlash.className = ""; }, 200);
+}
+
+// WebSocket
 function connect() {
   const mode = modesel.value;
-  const url  = WS_BASE + "?mode=" + mode;
   dot.className = "reconnecting";
-  label.textContent = "Connecting…";
-  ovMsg.textContent = "Connecting to session…";
+  label.textContent = "Connecting...";
+  ovMsg.textContent = "Connecting to session...";
   overlay.classList.remove("hidden");
 
-  ws = new WebSocket(url);
+  ws = new WebSocket(WS_BASE + "?mode=" + mode);
   ws.binaryType = "arraybuffer";
 
   ws.onopen = () => {
@@ -411,34 +653,37 @@ function connect() {
   ws.onmessage = (e) => {
     let msg;
     try { msg = JSON.parse(e.data); } catch { return; }
-
     switch (msg.type) {
       case "frame": {
-        const jpeg = msg.jpeg_b64;
-        if (!jpeg) break;
+        if (!msg.jpeg_b64) break;
         const img = new Image();
         img.onload = () => {
-          // Resize canvas to match image if changed
           if (canvas.width !== img.width || canvas.height !== img.height) {
-            canvas.width  = img.width;
-            canvas.height = img.height;
+            canvas.width = img.width; canvas.height = img.height;
             pageW = img.width; pageH = img.height;
           }
           ctx.drawImage(img, 0, 0);
           frameCount++;
         };
-        img.src = "data:image/jpeg;base64," + jpeg;
+        img.src = "data:image/jpeg;base64," + msg.jpeg_b64;
         break;
       }
-      case "connected":
-        label.textContent = "Live — " + msg.mode;
-        break;
+      case "connected":   label.textContent = "Live - " + msg.mode; break;
       case "session_info":
-        if (msg.url) urlDisp.textContent = msg.url;
+        if (msg.url)    urlDisp.textContent = msg.url;
         if (msg.width)  pageW = msg.width;
         if (msg.height) pageH = msg.height;
         break;
-      case "keepalive": break;
+      case "interaction_ack": {
+        const latMs = Date.now() - lastInteractionTs;
+        if (lastInteractionTs > 0) latDisp.textContent = latMs + "ms";
+        flashInteraction(msg.success !== false);
+        break;
+      }
+      case "interaction_blocked":
+        dagRunning = true;
+        dagBadge.className = "visible";
+        break;
       case "error":
         ovMsg.textContent = "Error: " + (msg.detail || "unknown");
         overlay.classList.remove("hidden");
@@ -448,46 +693,86 @@ function connect() {
 
   ws.onclose = () => {
     dot.className = "";
-    label.textContent = "Disconnected — reconnecting in " + (reconnectDelay/1000).toFixed(0) + "s";
+    label.textContent = "Disconnected - reconnecting in " + (reconnectDelay/1000).toFixed(0) + "s";
     overlay.classList.remove("hidden");
-    ovMsg.textContent = "Reconnecting…";
+    ovMsg.textContent = "Reconnecting...";
     setTimeout(connect, reconnectDelay);
     reconnectDelay = Math.min(reconnectDelay * 1.5, 15000);
   };
-
   ws.onerror = () => ws.close();
 }
 
 function send(msg) {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    lastInteractionTs = Date.now();
+    ws.send(JSON.stringify(msg));
+  }
 }
 
-// ── Coordinate mapping ────────────────────────────────────────────────────────
+// Coordinate mapping: translate viewer pixel coordinates to remote page coordinates.
+// Uses the canvas rect (not wrap rect) to avoid letterbox/pillarbox margin errors (RC-5).
 function canvasCoords(e) {
   const rect = canvas.getBoundingClientRect();
-  const scaleX = pageW / rect.width;
-  const scaleY = pageH / rect.height;
+  const x = (e.clientX - rect.left) * pageW / rect.width;
+  const y = (e.clientY - rect.top)  * pageH / rect.height;
   return {
-    x: Math.round((e.clientX - rect.left) * scaleX),
-    y: Math.round((e.clientY - rect.top)  * scaleY),
+    x: Math.max(0, Math.min(pageW, Math.round(x))),
+    y: Math.max(0, Math.min(pageH, Math.round(y))),
   };
 }
 
-// ── Mouse events ─────────────────────────────────────────────────────────────
-wrap.addEventListener("click", (e) => {
-  if (!focused) { focused = true; wrap.style.outline = "2px solid #4af"; return; }
-  const {x, y} = canvasCoords(e);
-  const btn = ["left","middle","right"][e.button] || "left";
-  send({ type: "click", x, y, button: btn });
+// Cursor overlay — track position relative to wrap (so it renders over margins too)
+wrap.addEventListener("mousemove", (e) => {
+  const rect = wrap.getBoundingClientRect();
+  cursorEl.style.left = (e.clientX - rect.left) + "px";
+  cursorEl.style.top  = (e.clientY - rect.top)  + "px";
+  if (!focused) return;
+  // Only send mouse_move if pointer is within the canvas bounds
+  const cRect = canvas.getBoundingClientRect();
+  if (e.clientX >= cRect.left && e.clientX <= cRect.right &&
+      e.clientY >= cRect.top  && e.clientY <= cRect.bottom) {
+    const {x, y} = canvasCoords(e);
+    send({ type: "mouse_move", x, y });
+  }
 });
 
-wrap.addEventListener("mousemove", (e) => {
+// Mouse interaction events — use canvas (not wrap) to avoid margin click issues
+canvas.addEventListener("mousedown", (e) => {
+  if (!focused) return;
+  e.preventDefault();
+  // Ripple effect at cursor position within wrap
+  const wRect = wrap.getBoundingClientRect();
+  ripple.style.left = (e.clientX - wRect.left) + "px";
+  ripple.style.top  = (e.clientY - wRect.top)  + "px";
+  ripple.className = "";
+  void ripple.offsetWidth;   // restart animation
+  ripple.className = "pop";
+  // Send mousedown
+  const {x, y} = canvasCoords(e);
+  send({ type: "mousedown", x, y, button: ["left","middle","right"][e.button] || "left" });
+});
+
+canvas.addEventListener("mouseup", (e) => {
+  if (!focused) return;
+  e.preventDefault();
+  const {x, y} = canvasCoords(e);
+  send({ type: "mouseup", x, y, button: ["left","middle","right"][e.button] || "left" });
+});
+
+canvas.addEventListener("click", (e) => {
   if (!focused) return;
   const {x, y} = canvasCoords(e);
-  send({ type: "mouse_move", x, y });
+  send({ type: "click", x, y, button: ["left","middle","right"][e.button] || "left" });
 });
 
-wrap.addEventListener("contextmenu", (e) => {
+canvas.addEventListener("dblclick", (e) => {
+  if (!focused) return;
+  e.preventDefault();
+  const {x, y} = canvasCoords(e);
+  send({ type: "dblclick", x, y });
+});
+
+canvas.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   if (!focused) return;
   const {x, y} = canvasCoords(e);
@@ -500,22 +785,15 @@ wrap.addEventListener("wheel", (e) => {
   send({ type: "scroll", deltaX: e.deltaX, deltaY: e.deltaY });
 }, { passive: false });
 
-// ── Keyboard events ───────────────────────────────────────────────────────────
 document.addEventListener("keydown", (e) => {
   if (!focused) return;
-  if (e.key === "Escape") {
-    focused = false;
-    wrap.style.outline = "";
-    return;
-  }
+  if (e.key === "Escape") { setFocused(false); return; }
   e.preventDefault();
   const mods = [];
   if (e.ctrlKey)  mods.push("Control");
   if (e.altKey)   mods.push("Alt");
   if (e.shiftKey) mods.push("Shift");
   if (e.metaKey)  mods.push("Meta");
-
-  // For printable characters, use type; for special keys, use key press
   if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
     send({ type: "type", text: e.key });
   } else {
@@ -523,12 +801,7 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-// ── Mode change ───────────────────────────────────────────────────────────────
-modesel.addEventListener("change", () => {
-  if (ws) ws.close();  // reconnect with new mode
-});
-
-// ── Start ─────────────────────────────────────────────────────────────────────
+modesel.addEventListener("change", () => { if (ws) ws.close(); });
 connect();
 </script>
 </body>
@@ -545,19 +818,27 @@ async def observe_session(
     """Live browser session observation + remote control WebSocket.
 
     Query params:
-      mode    — observation mode: screenshot | cdp_screencast | dom_stream
+      mode    — observation mode: screenshot | cdp_screencast | dom_stream |
+                                  cdp_dom_snapshot | dom_overlay
       token   — Bearer token (fallback for WS auth where headers are limited)
 
     Server → client message types:
-      {"type":"connected",   "session_id":"...", "mode":"..."}
-      {"type":"frame",       "mode":"screenshot", "jpeg_b64":"..."}
-      {"type":"dom_event",   "event":{...rrweb event...}}
-      {"type":"action_log",  "action":"click", "node_id":"...", ...}
+      {"type":"connected",           "session_id":"...", "mode":"..."}
+      {"type":"frame",               "mode":"screenshot", "jpeg_b64":"..."}
+      {"type":"dom_event",           "event":{...rrweb event...}}
+      {"type":"dom_snapshot",        "snapshot":{...DOMSnapshot...}}
+      {"type":"dom_overlay",         "elements":[...], "count":N}
+      {"type":"interaction_ack",     "action":"click", "success":true}
+      {"type":"interaction_blocked", "reason":"run_active", "detail":"..."}
+      {"type":"action_log",          "action":"click", "node_id":"...", ...}
       {"type":"keepalive"}
 
     Client → server message types:
       {"type":"mouse_move",       "x":450,"y":230}
+      {"type":"mousedown",        "x":450,"y":230,"button":"left"}
+      {"type":"mouseup",          "x":450,"y":230,"button":"left"}
       {"type":"click",            "x":450,"y":230,"button":"left"}
+      {"type":"dblclick",         "x":450,"y":230}
       {"type":"key",              "key":"Enter","modifiers":[]}
       {"type":"type",             "text":"hello"}
       {"type":"scroll",           "deltaX":0,"deltaY":300}
@@ -580,9 +861,13 @@ async def observe_session(
 
     try:
         # Validate session (best-effort — WS has no HTTP session middleware)
-        # We do a quick direct DB check using the pool from app state
+        # Skip DB check for manually-attached sessions: they are registered in
+        # _attached_browsers by the POST /xioview/attach endpoint (which does its own
+        # auth check), and have no row in browser_sessions. Querying the DB for them
+        # always returns 404 and immediately closes the WebSocket — Bug 1 fix.
+        _is_attached_session = session_id in _attached_browsers
         db: OrmSession | None = getattr(websocket.state, "org_session", None)
-        if db:
+        if db and not _is_attached_session:
             try:
                 _assert_session_visible(session_id, org_id, db)
             except HTTPException as e:
@@ -590,13 +875,16 @@ async def observe_session(
                 await websocket.close(code=4403)
                 return
 
-        # Register client in registry — starts capture task if first client
+        # Register client in registry — starts capture task if first client.
+        # Only pass page_getter for screenshot mode to prevent _capture_loop
+        # from running concurrently with CDP screencast or DOM stream (RC-8).
+        _needs_capture = mode == MODE_SCREENSHOT
         entry = reg.add_client(
             session_id=session_id,
             org_id=org_id,
             mode=mode,
             queue=queue,
-            page_getter=lambda: _get_playwright_page(session_id),
+            page_getter=lambda: _get_playwright_page(session_id) if _needs_capture else None,
         )
 
         # Send connected confirmation + last good frame immediately
@@ -614,15 +902,20 @@ async def observe_session(
                 "jpeg_b64": base64.b64encode(entry.last_frame).decode(),
             })
 
-        # Push session_info (current page URL) so viewer URL bar updates immediately
+        # Push session_info (current page URL + viewport dims) so viewer updates immediately
         try:
             _page = await _get_playwright_page(session_id)
             if _page:
+                _vp = await _page.evaluate("() => ({ w: window.innerWidth, h: window.innerHeight })")
+                _sw = entry.stream_width
+                _sh = entry.stream_height
+                entry.viewport_width = _vp.get("w", _sw)
+                entry.viewport_height = _vp.get("h", _sh)
                 await websocket.send_json({
                     "type": "session_info",
                     "url": _page.url,
-                    "width": 1920,
-                    "height": 1080,
+                    "width": _sw,
+                    "height": _sh,
                 })
         except Exception:
             pass
@@ -638,6 +931,33 @@ async def observe_session(
             asyncio.create_task(
                 _inject_rrweb(session_id, queue),
                 name=f"xioview-rrweb-{session_id[:8]}",
+            )
+        elif mode == MODE_CDP_DOM_SNAPSHOT:
+            from xiosync.subsystems.xioview.modes.cdp_dom_snapshot import (  # noqa: PLC0415
+                cdp_dom_snapshot_loop,
+            )
+            asyncio.create_task(
+                cdp_dom_snapshot_loop(
+                    session_id, queue,
+                    get_page=lambda: _get_playwright_page(session_id),
+                ),
+                name=f"xioview-domsnapshot-{session_id[:8]}",
+            )
+        elif mode == MODE_DOM_OVERLAY:
+            # DOM Overlay = CDP screencast (visual) + DOM element hitboxes (semantic)
+            cdp_task = asyncio.create_task(
+                _cdp_screencast_loop(session_id, queue),
+                name=f"xioview-cdp-{session_id[:8]}",
+            )
+            from xiosync.subsystems.xioview.modes.dom_overlay import (  # noqa: PLC0415
+                dom_overlay_loop,
+            )
+            asyncio.create_task(
+                dom_overlay_loop(
+                    session_id, queue,
+                    get_page=lambda: _get_playwright_page(session_id),
+                ),
+                name=f"xioview-domoverlay-{session_id[:8]}",
             )
 
         # Concurrent: send queued frames to client + receive control commands
@@ -673,7 +993,7 @@ async def _sender(websocket: WebSocket, queue: asyncio.Queue) -> None:
         try:
             msg = await asyncio.wait_for(queue.get(), timeout=30.0)
             await websocket.send_text(msg)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # send_text (not send_json) for consistency — client decodes all messages uniformly
             await websocket.send_text(_keepalive)
         except (WebSocketDisconnect, RuntimeError):
@@ -758,61 +1078,185 @@ async def _set_run_state(
 async def _dispatch_control(
     msg_type: str, msg: dict[str, Any], session_id: str, org_id: str
 ) -> None:
-    """Route incoming operator commands to Playwright page actions."""
-    page = await _get_playwright_page(session_id)
-    if page is None and msg_type not in ("pause_workflow", "resume_workflow", "set_fps"):
-        logger.warning("xioview.no_page_for_control", extra={"session_id": session_id})
-        return
+    """Route incoming operator commands to remote Chrome via raw CDP.
 
-    if msg_type == "mouse_move":
-        await page.mouse.move(msg["x"], msg["y"])
-
-    elif msg_type == "click":
-        button = msg.get("button", "left")
-        await page.mouse.click(msg["x"], msg["y"], button=button)
-
-    elif msg_type == "key":
-        key = msg.get("key", "")
-        mods = msg.get("modifiers", [])
-        for mod in mods:
-            await page.keyboard.down(mod)
-        await page.keyboard.press(key)
-        for mod in reversed(mods):
-            await page.keyboard.up(mod)
-
-    elif msg_type == "type":
-        await page.keyboard.type(msg.get("text", ""))
-
-    elif msg_type == "scroll":
-        await page.mouse.wheel(msg.get("deltaX", 0), msg.get("deltaY", 0))
-
-    elif msg_type == "pause_workflow":
+    Uses CDP Input.dispatchMouseEvent / Input.dispatchKeyEvent for isTrusted=true
+    events that pass bot detection, matching the pattern used by xiorun_agent.py.
+    Replaces the previous Playwright page.mouse/keyboard API calls which caused
+    RC-1 (coordinate mismatch) and RC-3 (no isTrusted events).
+    """
+    # Non-page commands (workflow control, FPS) are always allowed
+    if msg_type == "pause_workflow":
         run_id = msg.get("run_id")
         if run_id:
             await _set_run_state(run_id, org_id, "PAUSED", ("RUNNING", "PENDING"))
-
+        return
     elif msg_type == "resume_workflow":
         run_id = msg.get("run_id")
         if run_id:
             await _set_run_state(run_id, org_id, "PENDING", ("PAUSED",))
-
+        return
     elif msg_type == "set_fps":
         fps = float(msg.get("fps", 5.0))
         reg = get_registry()
         entry = reg._sessions.get(session_id)
         if entry:
             entry.fps = max(0.1, min(15.0, fps))
+        return
+
+    # Get page — required for all interaction commands
+    page = await _get_playwright_page(session_id)
+    if page is None:
+        logger.warning("xioview.no_page_for_control", extra={"session_id": session_id})
+        return
+
+    # Block manual interactions while any run is executing (script or DAG — Q2)
+    if msg_type in ("click", "mousedown", "mouseup", "dblclick", "type", "key",
+                     "scroll", "mouse_move") and _is_run_active(session_id):
+        get_registry().push_event(session_id, {
+            "type": "interaction_blocked",
+            "reason": "run_active",
+            "detail": "Interactions are blocked while a workflow is executing. "
+                      "Pause or wait for the run to complete to interact manually.",
+        })
+        return
+
+    reg = get_registry()
+    ack_event: dict[str, Any] | None = None
+
+    try:
+        if msg_type == "mouse_move":
+            x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
+            cdp = await _get_or_create_cdp_session(session_id, page)
+            await cdp.send("Input.dispatchMouseEvent", {
+                "type": "mouseMoved", "x": x, "y": y,
+            })
+
+        elif msg_type == "mousedown":
+            x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
+            cdp = await _get_or_create_cdp_session(session_id, page)
+            button = msg.get("button", "left")
+            await cdp.send("Input.dispatchMouseEvent", {
+                "type": "mousePressed", "button": button,
+                "clickCount": 1, "x": x, "y": y,
+            })
+            ack_event = {"type": "interaction_ack", "action": "mousedown",
+                         "x": msg["x"], "y": msg["y"], "success": True}
+
+        elif msg_type == "mouseup":
+            x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
+            cdp = await _get_or_create_cdp_session(session_id, page)
+            button = msg.get("button", "left")
+            await cdp.send("Input.dispatchMouseEvent", {
+                "type": "mouseReleased", "button": button,
+                "clickCount": 1, "x": x, "y": y,
+            })
+            ack_event = {"type": "interaction_ack", "action": "mouseup",
+                         "x": msg["x"], "y": msg["y"], "success": True}
+
+        elif msg_type == "click":
+            # Full click lifecycle: mousePressed → short delay → mouseReleased
+            x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
+            cdp = await _get_or_create_cdp_session(session_id, page)
+            button = msg.get("button", "left")
+            await cdp.send("Input.dispatchMouseEvent", {
+                "type": "mousePressed", "button": button,
+                "clickCount": 1, "x": x, "y": y,
+            })
+            await asyncio.sleep(0.05)  # realistic press-release gap
+            await cdp.send("Input.dispatchMouseEvent", {
+                "type": "mouseReleased", "button": button,
+                "clickCount": 1, "x": x, "y": y,
+            })
+            ack_event = {"type": "interaction_ack", "action": "click",
+                         "x": msg["x"], "y": msg["y"], "success": True}
+
+        elif msg_type == "dblclick":
+            x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
+            cdp = await _get_or_create_cdp_session(session_id, page)
+            for click_count in (1, 2):
+                await cdp.send("Input.dispatchMouseEvent", {
+                    "type": "mousePressed", "button": "left",
+                    "clickCount": click_count, "x": x, "y": y,
+                })
+                await asyncio.sleep(0.04)
+                await cdp.send("Input.dispatchMouseEvent", {
+                    "type": "mouseReleased", "button": "left",
+                    "clickCount": click_count, "x": x, "y": y,
+                })
+                if click_count == 1:
+                    await asyncio.sleep(0.08)  # inter-click gap
+            ack_event = {"type": "interaction_ack", "action": "dblclick",
+                         "x": msg["x"], "y": msg["y"], "success": True}
+
+        elif msg_type == "key":
+            key = msg.get("key", "")
+            mods = msg.get("modifiers", [])
+            cdp = await _get_or_create_cdp_session(session_id, page)
+            # Use Playwright for key combos — it handles modifier mapping correctly
+            for mod in mods:
+                await page.keyboard.down(mod)
+            await page.keyboard.press(key)
+            for mod in reversed(mods):
+                await page.keyboard.up(mod)
+            ack_event = {"type": "interaction_ack", "action": "key",
+                         "key": key, "success": True}
+
+        elif msg_type == "type":
+            text = msg.get("text", "")
+            # Type char-by-char via CDP for isTrusted=true key events
+            cdp = await _get_or_create_cdp_session(session_id, page)
+            for char in text:
+                await cdp.send("Input.dispatchKeyEvent", {
+                    "type": "keyDown", "text": char, "key": char,
+                    "code": f"Key{char.upper()}" if char.isalpha() else "",
+                })
+                await cdp.send("Input.dispatchKeyEvent", {
+                    "type": "keyUp", "key": char,
+                    "code": f"Key{char.upper()}" if char.isalpha() else "",
+                })
+                await asyncio.sleep(0.02)  # realistic typing cadence
+            ack_event = {"type": "interaction_ack", "action": "type",
+                         "text_len": len(text), "success": True}
+
+        elif msg_type == "scroll":
+            cdp = await _get_or_create_cdp_session(session_id, page)
+            # CDP mouseWheel needs an x,y origin — use center of viewport
+            x, y = 960, 540  # sensible default
+            await cdp.send("Input.dispatchMouseEvent", {
+                "type": "mouseWheel", "x": x, "y": y,
+                "deltaX": msg.get("deltaX", 0),
+                "deltaY": msg.get("deltaY", 0),
+            })
+
+    except Exception as exc:
+        logger.warning("xioview.control_dispatch_failed", extra={
+            "session_id": session_id, "msg_type": msg_type, "error": str(exc),
+        })
+        ack_event = {"type": "interaction_ack", "action": msg_type,
+                     "success": False, "error": str(exc)}
+
+    # Send interaction acknowledgement to viewer
+    if ack_event is not None:
+        reg.push_event(session_id, ack_event)
 
 
 # ── CDP Screencast mode ────────────────────────────────────────────────────────
 
 async def _cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
-    """Activate Chrome DevTools Protocol screencast for GPU-accelerated streaming.
+    """Capture and stream Chrome frames via CDP.
 
-    Delivers JPEG frames via CDP Page.screencastFrame events — more efficient
-    than polling page.screenshot() at equivalent FPS. Chromium-only.
+    Two-phase auto-detection:
+
+    Phase 1 — CDP Page.startScreencast (event-driven, preferred):
+      Chrome pushes JPEG frames. Works when GPU compositor is active.
+      Falls back after 3s if no frames arrive — happens on UC Chrome launched
+      via undetected-chromedriver on Xvfb where the compositor does not push.
+
+    Phase 2 — Polled Page.captureScreenshot (~3 fps):
+      Raw CDP call that always works on any Chrome regardless of compositor.
+      Proven on UC Chrome 131 + Xvfb + SwiftShader.
     """
-    import base64
     import json as _json
 
     page = await _get_playwright_page(session_id)
@@ -820,44 +1264,139 @@ async def _cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
         logger.warning("xioview.cdp_no_page", extra={"session_id": session_id})
         return
 
+    STREAM_W, STREAM_H = 1920, 1080
+    try:
+        queue.put_nowait(_json.dumps({
+            "type": "session_info",
+            "url": page.url,
+            "width": STREAM_W,
+            "height": STREAM_H,
+        }))
+    except asyncio.QueueFull:
+        pass
+
     try:
         cdp = await page.context.new_cdp_session(page)
+    except Exception as exc:
+        logger.warning("xioview.cdp_session_failed", extra={
+            "session_id": session_id, "error": str(exc)
+        })
+        return
 
-        def on_frame(event: dict[str, Any]) -> None:
-            data = event.get("data", "")
-            msg = _json.dumps({
-                "type": "frame",
-                "mode": "cdp_screencast",
-                "jpeg_b64": data,
-            })
-            try:
-                queue.put_nowait(msg)
-            except asyncio.QueueFull:
-                pass
+    # Phase 1: event-driven screencast
+    _frames: list[int] = [0]
 
-        cdp.on("Page.screencastFrame", on_frame)
+    def on_frame(event: dict[str, Any]) -> None:
+        data = event.get("data", "")
+        frame_no = event.get("sessionId", 0)
+        _frames[0] += 1
+        try:
+            queue.put_nowait(_json.dumps({
+                "type": "frame", "mode": "cdp_screencast", "jpeg_b64": data,
+            }))
+        except asyncio.QueueFull:
+            pass
+        try:
+            asyncio.get_running_loop().create_task(
+                cdp.send("Page.screencastFrameAck", {"sessionId": frame_no})
+            )
+        except RuntimeError:
+            pass
+
+    cdp.on("Page.screencastFrame", on_frame)
+    try:
         await cdp.send("Page.startScreencast", {
-            "format": "jpeg",
-            "quality": 65,
-            "maxWidth": 1280,
-            "maxHeight": 800,
+            "format": "jpeg", "quality": 70,
+            "maxWidth": STREAM_W, "maxHeight": STREAM_H,
             "everyNthFrame": 1,
         })
+        logger.info("xioview.cdp_screencast_started", extra={
+            "session_id": session_id, "res": f"{STREAM_W}x{STREAM_H}"
+        })
+    except Exception as exc:
+        logger.warning("xioview.cdp_screencast_start_failed", extra={
+            "session_id": session_id, "error": str(exc)
+        })
 
-        # Keep alive until cancelled
-        while True:
-            await asyncio.sleep(60)
-
+    # Wait 3s for frames
+    try:
+        await asyncio.sleep(3.0)
     except asyncio.CancelledError:
         try:
             await cdp.send("Page.stopScreencast")
             await cdp.detach()
         except Exception:
             pass
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("xioview.cdp_screencast_error", extra={
-            "session_id": session_id, "error": str(exc)
+        return
+
+    if _frames[0] > 0:
+        # Screencast working — keep alive
+        logger.info("xioview.cdp_screencast_live", extra={
+            "session_id": session_id, "frames_3s": _frames[0]
         })
+        try:
+            while True:
+                await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            try:
+                await cdp.send("Page.stopScreencast")
+                await cdp.detach()
+            except Exception:
+                pass
+        return
+
+    # Phase 2: no frames — fall back to polling Page.captureScreenshot
+    logger.info("xioview.cdp_screencast_poll_fallback", extra={
+        "session_id": session_id,
+        "reason": "0 frames in 3s — UC Chrome/Xvfb, falling back to poll",
+    })
+    try:
+        await cdp.send("Page.stopScreencast")
+    except Exception:
+        pass
+
+    POLL_INTERVAL = 0.35  # ~3 fps
+    try:
+        while True:
+            try:
+                result = await cdp.send("Page.captureScreenshot", {
+                    "format": "jpeg", "quality": 70,
+                    "fromSurface": True, "captureBeyondViewport": False,
+                })
+                jpeg_b64 = result.get("data", "")
+                if jpeg_b64:
+                    try:
+                        queue.put_nowait(_json.dumps({
+                            "type": "frame", "mode": "cdp_screencast",
+                            "jpeg_b64": jpeg_b64,
+                        }))
+                    except asyncio.QueueFull:
+                        pass
+                    _frames[0] += 1
+                    # Refresh URL every ~10s
+                    if _frames[0] % 30 == 0:
+                        try:
+                            queue.put_nowait(_json.dumps({
+                                "type": "session_info",
+                                "url": page.url,
+                                "width": STREAM_W, "height": STREAM_H,
+                            }))
+                        except asyncio.QueueFull:
+                            pass
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("xioview.poll_screenshot_error", extra={
+                    "session_id": session_id, "error": str(exc)
+                })
+            await asyncio.sleep(POLL_INTERVAL)
+    except asyncio.CancelledError:
+        try:
+            await cdp.detach()
+        except Exception:
+            pass
 
 
 # ── rrweb DOM stream mode ──────────────────────────────────────────────────────

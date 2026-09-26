@@ -3013,6 +3013,184 @@ def _run_uc_login_sync(
     # NOTE: no finally quit — on success the driver is kept in _uc_drivers
 
 
+# ── CDP Port Exposure (Tailscale-accessible) ──────────────────────────────────
+# Chrome remote-debugging binds to 127.0.0.1 only (chromedriver security default).
+# These endpoints expose CDP via port 9300 so XIOSYNC can connect from Mac Mini.
+
+_cdp_forwarders: dict[str, asyncio.Task] = {}  # session_id → running forwarder task
+_cdp_expose_ports: dict[str, int] = {}         # session_id → public port
+
+
+class CDPExposeRequest(BaseModel):
+    session_id: str
+    local_port:  int           # Chrome CDP port on 127.0.0.1
+    public_port: int = 0       # 0 = auto-pick a free port
+
+
+@app.post("/cdp-expose")
+async def cdp_expose(req: CDPExposeRequest) -> dict:
+    """Start a TCP forwarder: Tailscale IP:public_port → 127.0.0.1:local_port.
+
+    This makes the UC Chrome CDP port accessible to the XIOSYNC Mac Mini via
+    Tailscale. Call after run-uc-login to get a Tailscale-accessible cdp_http_url.
+
+    Returns the public_port to use in cdp_ws_url:
+        ws://<tailscale_ip>:<public_port>
+    """
+    import socket as _sock
+
+    sid = req.session_id
+    local_port = req.local_port
+    public_port = req.public_port
+
+    # Cancel any existing forwarder for this session
+    old_task = _cdp_forwarders.pop(sid, None)
+    if old_task:
+        old_task.cancel()
+
+    # Auto-pick a free port if not specified
+    if public_port == 0:
+        s = _sock.socket()
+        s.bind(("", 0))
+        public_port = s.getsockname()[1]
+        s.close()
+
+    tailscale_ip = _my_tailscale_ip()
+
+    async def _forward_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            up_r, up_w = await asyncio.open_connection("127.0.0.1", local_port)
+        except Exception:
+            writer.close()
+            return
+
+        async def _pipe(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+            try:
+                while True:
+                    data = await r.read(65536)
+                    if not data:
+                        break
+                    w.write(data)
+                    await w.drain()
+            except Exception:
+                pass
+            finally:
+                try:
+                    w.close()
+                except Exception:
+                    pass
+
+        await asyncio.gather(_pipe(reader, up_w), _pipe(up_r, writer), return_exceptions=True)
+
+    async def _run_forwarder() -> None:
+        try:
+            srv = await asyncio.start_server(
+                _forward_client, host="0.0.0.0", port=public_port
+            )
+            logger.info(f"cdp-expose: {tailscale_ip}:{public_port} → 127.0.0.1:{local_port}")
+            async with srv:
+                await srv.serve_forever()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.warning(f"cdp-expose forwarder died: {exc}")
+
+    task = asyncio.ensure_future(_run_forwarder())
+    _cdp_forwarders[sid] = task
+    _cdp_expose_ports[sid] = public_port
+
+    # Brief pause to let the server bind
+    await asyncio.sleep(0.5)
+
+    return {
+        "ok": True,
+        "session_id": sid,
+        "tailscale_ip": tailscale_ip,
+        "public_port": public_port,
+        "local_port": local_port,
+        "cdp_http_url": f"http://{tailscale_ip}:{public_port}",
+        "cdp_ws_url":   f"ws://{tailscale_ip}:{public_port}",
+    }
+
+
+class CDPProxyRequest(BaseModel):
+    session_id: str | None = None
+
+
+@app.websocket("/cdp-ws-proxy/{session_id}")
+async def cdp_ws_proxy(websocket, session_id: str) -> None:
+    """Transparent WebSocket proxy: XIOSYNC ↔ local Chrome CDP.
+
+    Allows patchright running on the Mac Mini to attach to UC Chrome on the
+    Colab worker without requiring the Chrome CDP port to be publicly bound.
+    patchright calls:
+        pw.chromium.connect_over_cdp("http://100.111.130.118:9300/cdp-proxy/{session_id}")
+    NOT YET: this WS endpoint proxies raw CDP frames bidirectionally.
+    """
+    from fastapi import WebSocket as _WS
+    import websockets as _wsl  # noqa: PLC0415
+
+    sess = _sessions.get(session_id, {})
+    local_port = sess.get("port")
+    if not local_port:
+        await websocket.close(code=4404, reason="session_not_found")
+        return
+
+    # Get the actual page WebSocket URL from Chrome
+    try:
+        import urllib.request as _ulr
+        import json as _json
+        targets = _json.loads(_ulr.urlopen(f"http://127.0.0.1:{local_port}/json", timeout=5).read())
+        page_ws_url = next(
+            (t["webSocketDebuggerUrl"] for t in targets if t.get("type") == "page"), None
+        )
+        if not page_ws_url:
+            await websocket.close(code=4404, reason="no_page_target")
+            return
+    except Exception as exc:
+        await websocket.close(code=4500, reason=str(exc))
+        return
+
+    await websocket.accept()
+
+    try:
+        async with _wsl.connect(page_ws_url) as chrome_ws:
+            async def _to_chrome():
+                async for msg in websocket.iter_text():
+                    await chrome_ws.send(msg)
+
+            async def _from_chrome():
+                async for msg in chrome_ws:
+                    await websocket.send_text(msg)
+
+            await asyncio.gather(_to_chrome(), _from_chrome(), return_exceptions=True)
+    except Exception:
+        pass
+    finally:
+        await websocket.close()
+
+
+@app.get("/cdp-proxy/{session_id}/json/version")
+async def cdp_proxy_version(session_id: str) -> dict:
+    """Return Chrome version info — makes this URL look like a real CDP HTTP endpoint."""
+    sess = _sessions.get(session_id, {})
+    local_port = sess.get("port")
+    if not local_port:
+        from fastapi import HTTPException as _HTTPExc  # noqa: PLC0415
+        raise _HTTPExc(404, detail="session_not_found")
+    import urllib.request as _ulr
+    import json as _json
+    try:
+        data = _json.loads(_ulr.urlopen(f"http://127.0.0.1:{local_port}/json/version", timeout=5).read())
+        # Override webSocketDebuggerUrl to point through this proxy
+        tailscale_ip = _my_tailscale_ip()
+        data["webSocketDebuggerUrl"] = f"ws://{tailscale_ip}:9300/cdp-ws-proxy/{session_id}"
+        return data
+    except Exception as exc:
+        from fastapi import HTTPException as _HTTPExc  # noqa: PLC0415
+        raise _HTTPExc(500, detail=str(exc)) from exc
+
+
 @app.post("/run-uc-login")
 async def run_uc_login(req: UCLoginRequest) -> dict:
     """
@@ -3193,14 +3371,13 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
             # ── Register session so /health and other endpoints can reference it ──
             _uc_port = result["uc_port"]
             _tailscale_ip = _my_tailscale_ip()
-            _cdp_ws = f"ws://{_tailscale_ip}:{_uc_port}"
             _sessions[req.session_id] = {
                 "browser":     None,   # UC Chrome — Selenium manages it, not patchright
                 "context":     None,
                 "pw":          None,
                 "pid":         0,
                 "port":        _uc_port,
-                "cdp_ws_url":  _cdp_ws,
+                "cdp_ws_url":  f"ws://{_tailscale_ip}:{_uc_port}",  # placeholder
                 "proxy_url":   proxy_url,
                 "profile_dir": _profile_dir,
                 "chrome_proc": None,
@@ -3208,11 +3385,30 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
                 "timezone":    _tz,
                 "exit_node_ip": _exit_ip,
             }
+
+            # ── Auto-expose: make Chrome CDP accessible on Tailscale via TCP forwarder ──
+            # UC Chrome binds remote-debugging to 127.0.0.1 only (chromedriver security
+            # default). Use our asyncio TCP forwarder to punch it through to Tailscale.
+            try:
+                _expose_req = CDPExposeRequest(session_id=req.session_id, local_port=_uc_port)
+                _expose_result = await cdp_expose(_expose_req)
+                _cdp_ws = _expose_result["cdp_ws_url"]
+                _sessions[req.session_id]["cdp_ws_url"] = _cdp_ws
+                logger.info(
+                    f"run-uc-login: CDP exposed session={req.session_id} "
+                    f"tailscale={_expose_result['cdp_http_url']}"
+                )
+            except Exception as _expose_exc:
+                _cdp_ws = f"ws://{_tailscale_ip}:{_uc_port}"
+                logger.warning(f"run-uc-login: cdp-expose failed: {_expose_exc} — using direct URL")
+
             result["cdp_ws_url"] = _cdp_ws
+            result["cdp_http_url"] = _cdp_ws.replace("ws://", "http://")
             logger.info(
                 f"run-uc-login: session registered session={req.session_id} port={_uc_port} "
                 f"cdp_ws={_cdp_ws}"
             )
+
 
         # ── HITL pause on recoverable failure (XIOBR port) ───────────────────
         # If login failed with a recoverable error, create a HITL notice and
