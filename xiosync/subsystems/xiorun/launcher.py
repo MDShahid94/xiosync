@@ -204,7 +204,7 @@ class BrowserLauncher:
 
         # ── 3. Profile restore (Drive tar.gz — PRIMARY) ───────────────────
         self._node_client = XIORunNodeClient(worker_ts_ip)
-        profile_store     = ChromeProfileStore(self._engine)
+        ChromeProfileStore(self._engine)
 
         collab_profile_dir: str | None = None
         if self.identity_id:
@@ -229,7 +229,7 @@ class BrowserLauncher:
             proxy_url=proxy_url,
             profile_dir=collab_profile_dir,
             fingerprint=profile_dict,
-            headless=True,
+            headless=False,  # Headed under Xvfb — headless is a detection signal
         )
         cdp_ws_url = resp["cdp_ws_url"]
 
@@ -241,6 +241,36 @@ class BrowserLauncher:
 
         # ── 6. Fingerprint injection ───────────────────────────────────────
         if profile:
+            # ── 6a. Resolve exit-node geolocation (cached, low latency) ───
+            geo_lat, geo_lon = 0.0, 0.0
+            if proxy_url:
+                try:
+                    from xiosync.subsystems.xiorun.geo_lookup import lookup_geo  # noqa: PLC0415
+                    # Resolve exit node ID for caching
+                    exit_node_id = self._resolve_exit_node_id()
+                    # Get public IP from exit node for geo lookup
+                    public_ip = self._resolve_exit_node_public_ip()
+                    if public_ip:
+                        geo = await lookup_geo(
+                            public_ip,
+                            exit_node_id=exit_node_id,
+                            engine=self._engine,
+                        )
+                        geo_lat = geo.lat
+                        geo_lon = geo.lon
+                        logger.info("xiorun.launcher.geo_resolved", extra={
+                            "session_id": self.session_id,
+                            "city": geo.city,
+                            "timezone": geo.timezone,
+                            "lat": geo.lat,
+                            "lon": geo.lon,
+                        })
+                except Exception as exc:
+                    logger.warning("xiorun.launcher.geo_lookup_error", extra={
+                        "session_id": self.session_id, "error": str(exc),
+                    })
+
+            # ── 6b. CDP UA override ───────────────────────────────────────
             cdp_session = await self._context.new_cdp_session(self._page)
             try:
                 await cdp_session.send(
@@ -249,7 +279,42 @@ class BrowserLauncher:
                 )
             finally:
                 await cdp_session.detach()
-            await self._context.add_init_script(build_init_script(profile, chrome_ver))
+
+            # ── 6c. JS init script (26 layers via HTML Injection) ────────────────
+            _stealth_js = build_init_script(
+                profile, chrome_ver,
+                geo_lat=geo_lat, geo_lon=geo_lon,
+            )
+            if _stealth_js:
+                _inject_tag = f"<script>{_stealth_js}</script>"
+                async def _stealth_route_handler(route):
+                    try:
+                        resp = await route.fetch()
+                        ct = resp.headers.get("content-type", "")
+                        if "text/html" in ct:
+                            body = await resp.text()
+                            injected = False
+                            for marker in ("<head>", "<HEAD>"):
+                                if marker in body:
+                                    body = body.replace(marker, marker + _inject_tag, 1)
+                                    injected = True
+                                    break
+                            if not injected:
+                                import re as _re
+                                m = _re.search(r'(<head[^>]*>)', body, _re.IGNORECASE)
+                                if m:
+                                    pos = m.end()
+                                    body = body[:pos] + _inject_tag + body[pos:]
+                                elif _re.search(r'<html[^>]*>', body, _re.IGNORECASE):
+                                    body = _re.sub(r'(<html[^>]*>)', r'\1' + _inject_tag, body, count=1, flags=_re.IGNORECASE)
+                                else:
+                                    body = _inject_tag + body
+                            await route.fulfill(status=resp.status, headers=dict(resp.headers), body=body)
+                        else:
+                            await route.fulfill(response=resp)
+                    except Exception:
+                        await route.continue_()
+                await self._context.route("**/*", _stealth_route_handler)
 
         # ── 7. Cookie fallback (only if no Drive profile) ─────────────────
         if self.identity_id and not self._had_drive_profile:
@@ -327,13 +392,15 @@ class BrowserLauncher:
         if self.identity_id and not self._had_drive_profile:
             try:
                 state = await self._context.storage_state()
-                SessionStateIO(self._engine).save(  # noqa: PLC0415 (lazy import)
+                from xiosync.subsystems.xiorun.session_state import SessionStateIO  # noqa: PLC0415
+                SessionStateIO(self._engine).save(
                     self.identity_id, self.org_id, state, page_url=page_url
                 )
             except Exception as exc:
                 logger.warning("xiorun.launcher.cookie_save_error", extra={
                     "session_id": self.session_id, "error": str(exc)
                 })
+
 
         # ── 4. Terminate Chromium on Colab ────────────────────────────────
         if self._node_client:
@@ -419,3 +486,40 @@ class BrowserLauncher:
             _unregister_page(self.session_id)
         except Exception:
             pass
+
+    def _resolve_exit_node_id(self) -> str | None:
+        """Resolve the PPPoE exit node UUID linked to this session."""
+        try:
+            from sqlalchemy import text  # noqa: PLC0415
+            from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
+            with OrmSession(self._engine) as sess:
+                row = sess.execute(
+                    text("SELECT pppoe_exit_node_id FROM browser_sessions WHERE id = :sid LIMIT 1"),
+                    {"sid": self.session_id},
+                ).scalar()
+                return str(row) if row else None
+        except Exception:
+            return None
+
+    def _resolve_exit_node_public_ip(self) -> str | None:
+        """Resolve the public IP of the PPPoE exit node linked to this session."""
+        try:
+            from sqlalchemy import text  # noqa: PLC0415
+            from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
+            with OrmSession(self._engine) as sess:
+                row = sess.execute(
+                    text("""
+                        SELECT n.public_ip
+                        FROM xiogrid_pppoe_exit_nodes n
+                        JOIN browser_sessions s ON s.pppoe_exit_node_id = n.id
+                        WHERE s.id = :sid
+                        LIMIT 1
+                    """),
+                    {"sid": self.session_id},
+                ).scalar()
+                return str(row) if row else None
+        except Exception:
+            return None
+
