@@ -1247,18 +1247,11 @@ async def _dispatch_control(
 
         elif msg_type == "type":
             text = msg.get("text", "")
-            # Type char-by-char via CDP for isTrusted=true key events
-            cdp = await _get_or_create_cdp_session(session_id, page)
-            for char in text:
-                await cdp.send("Input.dispatchKeyEvent", {
-                    "type": "keyDown", "text": char, "key": char,
-                    "code": f"Key{char.upper()}" if char.isalpha() else "",
-                })
-                await cdp.send("Input.dispatchKeyEvent", {
-                    "type": "keyUp", "key": char,
-                    "code": f"Key{char.upper()}" if char.isalpha() else "",
-                })
-                await asyncio.sleep(0.02)  # realistic typing cadence
+            # Use Playwright keyboard.type() — fires keyDown + char + keyUp with
+            # correct isTrusted=true events that React's onChange recognizes.
+            # Raw CDP keyDown/keyUp alone miss the synthetic "char" event that
+            # Google/React forms need to detect real user input.
+            await page.keyboard.type(text, delay=20)
             ack_event = {"type": "interaction_ack", "action": "type",
                          "text_len": len(text), "success": True}
 
