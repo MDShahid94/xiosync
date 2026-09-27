@@ -763,43 +763,45 @@ wrap.addEventListener("mousemove", (e) => {
   }
 });
 
-// Mouse interaction events — use canvas (not wrap) to avoid margin click issues
-canvas.addEventListener("mousedown", (e) => {
-  if (!focused) return;
+// Mouse interaction events — on WRAP (not canvas) so clicks work even before
+// the first frame arrives (canvas is 300×150 by default until a frame sets its size).
+// canvasCoords() clamps to [0..pageW, 0..pageH] so out-of-canvas clicks are safe.
+wrap.addEventListener("mousedown", (e) => {
+  setFocused(true);   // any mousedown activates control
+  cursorEl.classList.add("visible");
   e.preventDefault();
-  // Ripple effect at cursor position within wrap
+  // Ripple effect
   const wRect = wrap.getBoundingClientRect();
   ripple.style.left = (e.clientX - wRect.left) + "px";
   ripple.style.top  = (e.clientY - wRect.top)  + "px";
   ripple.className = "";
-  void ripple.offsetWidth;   // restart animation
+  void ripple.offsetWidth;
   ripple.className = "pop";
-  // Send mousedown
   const {x, y} = canvasCoords(e);
   send({ type: "mousedown", x, y, button: ["left","middle","right"][e.button] || "left" });
 });
 
-canvas.addEventListener("mouseup", (e) => {
+wrap.addEventListener("mouseup", (e) => {
   if (!focused) return;
   e.preventDefault();
   const {x, y} = canvasCoords(e);
   send({ type: "mouseup", x, y, button: ["left","middle","right"][e.button] || "left" });
 });
 
-canvas.addEventListener("click", (e) => {
+wrap.addEventListener("click", (e) => {
   if (!focused) return;
   const {x, y} = canvasCoords(e);
   send({ type: "click", x, y, button: ["left","middle","right"][e.button] || "left" });
 });
 
-canvas.addEventListener("dblclick", (e) => {
+wrap.addEventListener("dblclick", (e) => {
   if (!focused) return;
   e.preventDefault();
   const {x, y} = canvasCoords(e);
   send({ type: "dblclick", x, y });
 });
 
-canvas.addEventListener("contextmenu", (e) => {
+wrap.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   if (!focused) return;
   const {x, y} = canvasCoords(e);
