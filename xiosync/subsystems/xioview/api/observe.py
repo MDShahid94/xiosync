@@ -642,12 +642,11 @@ wrap.addEventListener("mousedown", () => {
   }
 });
 
-wrap.addEventListener("mouseleave", (e) => {
-  // Only release if the mouse left to a non-child element
-  if (!wrap.contains(e.relatedTarget)) {
-    cursorEl.classList.remove("visible");
-    setFocused(false);
-  }
+wrap.addEventListener("mouseleave", () => {
+  // Hide cursor when mouse leaves but DON'T clear focused —
+  // moving to browser chrome (scrollbar, address bar) should not drop control.
+  // Only Esc explicitly releases control.
+  cursorEl.classList.remove("visible");
 });
 
 // Interaction feedback flash
