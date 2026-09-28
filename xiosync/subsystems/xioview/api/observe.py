@@ -57,17 +57,28 @@ async def _get_or_create_cdp_session(session_id: str, page: Any) -> Any:
     """Get or create a cached CDP session for dispatching interactions.
 
     Reuses the same CDP session across interactions to avoid the 1-3s overhead
-    of a Runtime.evaluate health check on every click/keystroke.
+    of a health check on every click/keystroke.
 
-    The session is only recreated if the previous dispatch call raised an
-    exception (handled in _dispatch_control's except → pop the session).
+    The session is only recreated when:
+    - No cached session exists (first call or after invalidation)
+    - The cached session was created for a different page object (after navigation)
+    - The dispatch call fails (handled in _dispatch_control except → pop cache)
     """
-    cdp = _interaction_cdp_sessions.get(session_id)
-    if cdp is not None:
-        return cdp  # trust the cache; if stale, dispatch will raise → cleared below
+    entry = _interaction_cdp_sessions.get(session_id)
+    if entry is not None:
+        cdp, cached_page = entry if isinstance(entry, tuple) else (entry, None)
+        # If same page object, trust the cached session
+        if cached_page is page:
+            return cdp
+        # Page changed (navigation) — invalidate and recreate
+        _interaction_cdp_sessions.pop(session_id, None)
+        try:
+            await cdp.detach()
+        except Exception:
+            pass
 
     cdp = await page.context.new_cdp_session(page)
-    _interaction_cdp_sessions[session_id] = cdp
+    _interaction_cdp_sessions[session_id] = (cdp, page)  # store (session, page) tuple
     logger.debug("xioview.cdp_session_created", extra={"session_id": session_id})
     return cdp
 
@@ -379,38 +390,50 @@ async def attach_session(body: AttachRequest) -> dict[str, Any]:
     # Register in runtime_pool so _get_playwright_page() finds it
     get_runtime_pool()._register(session_id, page, None)
 
-    # ── Warm CDP session + inject DOM cursor (no extra cost per interaction) ───
-    _DOM_CURSOR_JS = (
-        "(function(){"
-        "if(document.getElementById('__xio_cur'))return;"
-        "var el=document.createElement('div');"
-        "el.id='__xio_cur';"
-        "el.style.cssText='position:fixed;left:0;top:0;width:22px;height:22px;"
-        "pointer-events:none;z-index:2147483647;transform:translate(0,0);"
-        "will-change:transform;transition:none;display:block';"
-        "el.innerHTML='<svg width=\"22\" height=\"22\" viewBox=\"0 0 22 22\" "
-        "xmlns=\"http://www.w3.org/2000/svg\">"
-        "<filter id=\"xs\"><feDropShadow dx=\"1\" dy=\"1\" stdDeviation=\"1\" "
-        "flood-opacity=\"0.5\"/></filter>"
-        "<path d=\"M2 2 L2 17 L6 13 L9 20 L12 19 L9 12 L14 12 Z\" "
-        "fill=\"#fff\" stroke=\"#000\" stroke-width=\"1\" filter=\"url(#xs)\"/>"
-        "</svg>';"
-        "document.documentElement.appendChild(el);"
-        "document.addEventListener('mousemove',function(e){"
-        "el.style.transform='translate('+e.clientX+'px,'+e.clientY+'px)';"
-        "},{passive:true,capture:true});"
-        "})()"
-    )
+    # ── DOM cursor: inject via raw CDP + persist across navigations ───────────
+    _DOM_CURSOR_JS = """(function(){
+  if(document.getElementById('__xio_cur'))return;
+  var el=document.createElement('div');
+  el.id='__xio_cur';
+  /* Use top/left (not transform) — forces raster repaint on SwiftShader/Xvfb
+     so the cursor appears in CDP screencasted frames. */
+  el.style.cssText='position:fixed;left:0px;top:0px;width:22px;height:22px;pointer-events:none;z-index:2147483647;transition:none;';
+  el.innerHTML='<svg width="22" height="22" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg"><filter id="xs"><feDropShadow dx="1" dy="1" stdDeviation="1.2" flood-opacity="0.6"/></filter><path d="M2 2 L2 18 L6 14 L9.5 21 L12 20 L8.5 13 L14 13 Z" fill="#fff" stroke="#000" stroke-width="1" filter="url(#xs)"/></svg>';
+  document.documentElement.appendChild(el);
+  document.addEventListener('mousemove',function(e){
+    el.style.left=e.clientX+'px';
+    el.style.top=e.clientY+'px';
+  },{passive:true,capture:true});
+})();"""
     try:
+        # ── Warm CDP session via raw patchright CDP (works on UC Chrome) ─────
         cdp = await page.context.new_cdp_session(page)
-        _interaction_cdp_sessions[session_id] = cdp
-        # Persist cursor across page navigations
-        await cdp.send("Page.addScriptToEvaluateOnNewDocument",
-                       {"source": _DOM_CURSOR_JS})
-        # Inject into current page now
-        await cdp.send("Runtime.evaluate",
-                       {"expression": _DOM_CURSOR_JS, "returnByValue": False})
+        _interaction_cdp_sessions[session_id] = (cdp, page)
         logger.info("xioview.cdp_session_warmed", extra={"session_id": session_id})
+
+        # Persist cursor script across ALL future navigations (CDP-level, not page-level)
+        await cdp.send("Page.addScriptToEvaluateOnNewDocument", {"source": _DOM_CURSOR_JS})
+        # Inject into current page immediately
+        await cdp.send("Runtime.evaluate", {"expression": _DOM_CURSOR_JS, "returnByValue": False})
+        logger.info("xioview.dom_cursor_injected", extra={"session_id": session_id})
+
+        # On navigation: clear stale viewport cache (new page dimensions may differ)
+        async def _on_load():
+            att = _attached_browsers.get(session_id, {})
+            att.pop("_viewport_w", None)
+            att.pop("_viewport_h", None)
+            # Re-inject cursor (addScriptToEvaluateOnNewDocument handles full navigations,
+            # but this covers in-page SPA transitions that don't reload the frame)
+            try:
+                cur_entry = _interaction_cdp_sessions.get(session_id)
+                if cur_entry:
+                    cur_cdp = cur_entry[0] if isinstance(cur_entry, tuple) else cur_entry
+                    await cur_cdp.send("Runtime.evaluate",
+                                       {"expression": _DOM_CURSOR_JS, "returnByValue": False})
+            except Exception:
+                pass
+        page.on("load", lambda: asyncio.create_task(_on_load()))
+
     except Exception as warm_exc:
         logger.warning("xioview.cdp_warmup_failed",
                        extra={"session_id": session_id, "error": str(warm_exc)})
@@ -432,9 +455,10 @@ async def detach_session(session_id: str) -> dict[str, Any]:
     """Close the CDP connection for an attached session."""
     from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
     old = _attached_browsers.pop(session_id, None)
-    # Clean up cached CDP interaction session
-    cdp = _interaction_cdp_sessions.pop(session_id, None)
-    if cdp:
+    # Clean up cached CDP interaction session (stored as (cdp, page) tuple)
+    entry = _interaction_cdp_sessions.pop(session_id, None)
+    if entry is not None:
+        cdp = entry[0] if isinstance(entry, tuple) else entry
         try:
             await cdp.detach()
         except Exception:
@@ -1229,6 +1253,15 @@ async def _dispatch_control(
                 await cdp.send("Input.dispatchMouseEvent", {
                     "type": "mouseMoved", "x": x, "y": y,
                 })
+                # Also update DOM cursor directly (CSS top/left forces raster repaint
+                # → cursor appears in Phase-2 polled screenshots at 8fps even on static pages)
+                await cdp.send("Runtime.evaluate", {
+                    "expression": (
+                        f"(function(){{var e=document.getElementById('__xio_cur');"
+                        f"if(e){{e.style.left='{x}px';e.style.top='{y}px';}}}})()"
+                    ),
+                    "returnByValue": False,
+                })
                 break  # mouse_move never sends ack — just break
 
             elif msg_type == "mousedown":
@@ -1413,13 +1446,20 @@ async def _cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
     except asyncio.QueueFull:
         pass
 
-    try:
-        cdp = await page.context.new_cdp_session(page)
-    except Exception as exc:
-        logger.warning("xioview.cdp_session_failed", extra={
-            "session_id": session_id, "error": str(exc)
-        })
-        return
+    # Reuse the shared interaction CDP session warmed on attach.
+    # Same session → Runtime.evaluate DOM cursor updates visible in captureScreenshot.
+    cached = _interaction_cdp_sessions.get(session_id)
+    if cached is not None:
+        cdp = cached[0] if isinstance(cached, tuple) else cached
+        logger.info("xioview.cdp_screencast_reuse_session", extra={"session_id": session_id})
+    else:
+        try:
+            cdp = await page.context.new_cdp_session(page)
+        except Exception as exc:
+            logger.warning("xioview.cdp_session_failed", extra={
+                "session_id": session_id, "error": str(exc)
+            })
+            return
 
     # Phase 1: event-driven screencast
     _frames: list[int] = [0]
@@ -1467,8 +1507,9 @@ async def _cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
             pass
         return
 
-    if _frames[0] > 0:
-        # Screencast working — keep alive
+    if _frames[0] > 3:
+        # Genuine event-driven screencast working (not just the initial load frame)
+        # Keep alive — Chrome will push frames on every paint
         logger.info("xioview.cdp_screencast_live", extra={
             "session_id": session_id, "frames_3s": _frames[0]
         })
@@ -1480,7 +1521,7 @@ async def _cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
         finally:
             try:
                 await cdp.send("Page.stopScreencast")
-                await cdp.detach()
+                # Do NOT detach — cdp is the shared interaction session
             except Exception:
                 pass
         return
@@ -1495,7 +1536,7 @@ async def _cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
     except Exception:
         pass
 
-    POLL_INTERVAL = 0.35  # ~3 fps
+    POLL_INTERVAL = 0.13  # ~8 fps — smooth enough for manual interaction
     try:
         while True:
             try:
