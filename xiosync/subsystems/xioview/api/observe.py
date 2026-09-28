@@ -379,6 +379,42 @@ async def attach_session(body: AttachRequest) -> dict[str, Any]:
     # Register in runtime_pool so _get_playwright_page() finds it
     get_runtime_pool()._register(session_id, page, None)
 
+    # ── Warm CDP session + inject DOM cursor (no extra cost per interaction) ───
+    _DOM_CURSOR_JS = (
+        "(function(){"
+        "if(document.getElementById('__xio_cur'))return;"
+        "var el=document.createElement('div');"
+        "el.id='__xio_cur';"
+        "el.style.cssText='position:fixed;left:0;top:0;width:22px;height:22px;"
+        "pointer-events:none;z-index:2147483647;transform:translate(0,0);"
+        "will-change:transform;transition:none;display:block';"
+        "el.innerHTML='<svg width=\"22\" height=\"22\" viewBox=\"0 0 22 22\" "
+        "xmlns=\"http://www.w3.org/2000/svg\">"
+        "<filter id=\"xs\"><feDropShadow dx=\"1\" dy=\"1\" stdDeviation=\"1\" "
+        "flood-opacity=\"0.5\"/></filter>"
+        "<path d=\"M2 2 L2 17 L6 13 L9 20 L12 19 L9 12 L14 12 Z\" "
+        "fill=\"#fff\" stroke=\"#000\" stroke-width=\"1\" filter=\"url(#xs)\"/>"
+        "</svg>';"
+        "document.documentElement.appendChild(el);"
+        "document.addEventListener('mousemove',function(e){"
+        "el.style.transform='translate('+e.clientX+'px,'+e.clientY+'px)';"
+        "},{passive:true,capture:true});"
+        "})()"
+    )
+    try:
+        cdp = await page.context.new_cdp_session(page)
+        _interaction_cdp_sessions[session_id] = cdp
+        # Persist cursor across page navigations
+        await cdp.send("Page.addScriptToEvaluateOnNewDocument",
+                       {"source": _DOM_CURSOR_JS})
+        # Inject into current page now
+        await cdp.send("Runtime.evaluate",
+                       {"expression": _DOM_CURSOR_JS, "returnByValue": False})
+        logger.info("xioview.cdp_session_warmed", extra={"session_id": session_id})
+    except Exception as warm_exc:
+        logger.warning("xioview.cdp_warmup_failed",
+                       extra={"session_id": session_id, "error": str(warm_exc)})
+
     current_url = page.url
     logger.info("xioview.attached", extra={"session_id": session_id, "url": current_url,
                                             "mode": body.mode})
@@ -732,17 +768,24 @@ function send(msg) {
   }
 }
 
-// Coordinate mapping: translate viewer pixel coordinates to remote page coordinates.
-// Uses the canvas rect (not wrap rect) to avoid letterbox/pillarbox margin errors (RC-5).
-function canvasCoords(e) {
-  const rect = canvas.getBoundingClientRect();
-  const x = (e.clientX - rect.left) * pageW / rect.width;
-  const y = (e.clientY - rect.top)  * pageH / rect.height;
+// Coordinate mapping: translate viewer pixel → remote page pixel.
+// All event handlers are on #wrap; we project through the canvas rect
+// so letterbox/pillarbox areas map to the nearest page edge.
+function canvasCoords(clientX, clientY) {
+  const cRect = canvas.getBoundingClientRect();
+  // Clamp to canvas bounds (handles letterbox clicks)
+  const cx = Math.max(cRect.left, Math.min(cRect.right,  clientX));
+  const cy = Math.max(cRect.top,  Math.min(cRect.bottom, clientY));
+  const scaleX = cRect.width  > 0 ? pageW / cRect.width  : 1;
+  const scaleY = cRect.height > 0 ? pageH / cRect.height : 1;
   return {
-    x: Math.max(0, Math.min(pageW, Math.round(x))),
-    y: Math.max(0, Math.min(pageH, Math.round(y))),
+    x: Math.max(0, Math.min(pageW, Math.round((cx - cRect.left) * scaleX))),
+    y: Math.max(0, Math.min(pageH, Math.round((cy - cRect.top)  * scaleY))),
   };
 }
+
+// Throttle mouse_move to max 20/s (50ms) — avoids flooding the server
+let _lastMoveSent = 0;
 
 // Cursor overlay — always track position relative to wrap
 wrap.addEventListener("mousemove", (e) => {
@@ -750,18 +793,16 @@ wrap.addEventListener("mousemove", (e) => {
   cursorEl.style.left = (e.clientX - wRect.left) + "px";
   cursorEl.style.top  = (e.clientY - wRect.top)  + "px";
   if (!focused) return;
-  const cRect = canvas.getBoundingClientRect();
-  if (canvas.width > 0 &&
-      e.clientX >= cRect.left && e.clientX <= cRect.right &&
-      e.clientY >= cRect.top  && e.clientY <= cRect.bottom) {
-    const {x, y} = canvasCoords(e);
-    send({ type: "mouse_move", x, y });
-  }
+  const now = Date.now();
+  if (now - _lastMoveSent < 50) return;  // throttle
+  _lastMoveSent = now;
+  const {x, y} = canvasCoords(e.clientX, e.clientY);
+  send({ type: "mouse_move", x, y });
 });
 
 // Mouse interaction events — on WRAP (not canvas) so clicks work even before
 // the first frame arrives (canvas is 300×150 by default until a frame sets its size).
-// canvasCoords() clamps to [0..pageW, 0..pageH] so out-of-canvas clicks are safe.
+// canvasCoords() clamps letterbox clicks to canvas boundary automatically.
 wrap.addEventListener("mousedown", (e) => {
   setFocused(true);   // any mousedown activates control
   cursorEl.classList.add("visible");
@@ -773,35 +814,40 @@ wrap.addEventListener("mousedown", (e) => {
   ripple.className = "";
   void ripple.offsetWidth;
   ripple.className = "pop";
-  const {x, y} = canvasCoords(e);
+  const {x, y} = canvasCoords(e.clientX, e.clientY);
   send({ type: "mousedown", x, y, button: ["left","middle","right"][e.button] || "left" });
 });
 
 wrap.addEventListener("mouseup", (e) => {
   if (!focused) return;
   e.preventDefault();
-  const {x, y} = canvasCoords(e);
+  const {x, y} = canvasCoords(e.clientX, e.clientY);
   send({ type: "mouseup", x, y, button: ["left","middle","right"][e.button] || "left" });
 });
 
 wrap.addEventListener("click", (e) => {
   if (!focused) return;
-  const {x, y} = canvasCoords(e);
+  const {x, y} = canvasCoords(e.clientX, e.clientY);
   send({ type: "click", x, y, button: ["left","middle","right"][e.button] || "left" });
 });
 
 wrap.addEventListener("dblclick", (e) => {
   if (!focused) return;
   e.preventDefault();
-  const {x, y} = canvasCoords(e);
+  const {x, y} = canvasCoords(e.clientX, e.clientY);
   send({ type: "dblclick", x, y });
 });
 
+// Right-click: prevent browser menu, send right-click to remote
 wrap.addEventListener("contextmenu", (e) => {
   e.preventDefault();
+  e.stopPropagation();
   if (!focused) return;
-  const {x, y} = canvasCoords(e);
-  send({ type: "click", x, y, button: "right" });
+  const {x, y} = canvasCoords(e.clientX, e.clientY);
+  // Send full press→release sequence for right-click
+  send({ type: "mousedown", x, y, button: "right" });
+  setTimeout(() => send({ type: "mouseup",  x, y, button: "right" }), 60);
+  setTimeout(() => send({ type: "click",    x, y, button: "right" }), 70);
 });
 
 wrap.addEventListener("wheel", (e) => {
@@ -1172,113 +1218,126 @@ async def _dispatch_control(
 
     reg = get_registry()
     ack_event: dict[str, Any] | None = None
+    _last_exc: Exception | None = None
 
-    try:
-        if msg_type == "mouse_move":
-            x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
-            cdp = await _get_or_create_cdp_session(session_id, page)
-            await cdp.send("Input.dispatchMouseEvent", {
-                "type": "mouseMoved", "x": x, "y": y,
-            })
-
-        elif msg_type == "mousedown":
-            x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
-            cdp = await _get_or_create_cdp_session(session_id, page)
-            button = msg.get("button", "left")
-            await cdp.send("Input.dispatchMouseEvent", {
-                "type": "mousePressed", "button": button,
-                "clickCount": 1, "x": x, "y": y,
-            })
-            ack_event = {"type": "interaction_ack", "action": "mousedown",
-                         "x": msg["x"], "y": msg["y"], "success": True}
-
-        elif msg_type == "mouseup":
-            x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
-            cdp = await _get_or_create_cdp_session(session_id, page)
-            button = msg.get("button", "left")
-            await cdp.send("Input.dispatchMouseEvent", {
-                "type": "mouseReleased", "button": button,
-                "clickCount": 1, "x": x, "y": y,
-            })
-            ack_event = {"type": "interaction_ack", "action": "mouseup",
-                         "x": msg["x"], "y": msg["y"], "success": True}
-
-        elif msg_type == "click":
-            # Full click lifecycle: mousePressed → short delay → mouseReleased
-            x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
-            cdp = await _get_or_create_cdp_session(session_id, page)
-            button = msg.get("button", "left")
-            await cdp.send("Input.dispatchMouseEvent", {
-                "type": "mousePressed", "button": button,
-                "clickCount": 1, "x": x, "y": y,
-            })
-            await asyncio.sleep(0.05)  # realistic press-release gap
-            await cdp.send("Input.dispatchMouseEvent", {
-                "type": "mouseReleased", "button": button,
-                "clickCount": 1, "x": x, "y": y,
-            })
-            ack_event = {"type": "interaction_ack", "action": "click",
-                         "x": msg["x"], "y": msg["y"], "success": True}
-
-        elif msg_type == "dblclick":
-            x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
-            cdp = await _get_or_create_cdp_session(session_id, page)
-            for click_count in (1, 2):
+    # Retry once: if CDP session is stale, clear it and recreate on second attempt
+    for _attempt in range(2):
+        try:
+            if msg_type == "mouse_move":
+                x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
+                cdp = await _get_or_create_cdp_session(session_id, page)
                 await cdp.send("Input.dispatchMouseEvent", {
-                    "type": "mousePressed", "button": "left",
-                    "clickCount": click_count, "x": x, "y": y,
+                    "type": "mouseMoved", "x": x, "y": y,
                 })
-                await asyncio.sleep(0.04)
+                break  # mouse_move never sends ack — just break
+
+            elif msg_type == "mousedown":
+                x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
+                cdp = await _get_or_create_cdp_session(session_id, page)
+                button = msg.get("button", "left")
                 await cdp.send("Input.dispatchMouseEvent", {
-                    "type": "mouseReleased", "button": "left",
-                    "clickCount": click_count, "x": x, "y": y,
+                    "type": "mousePressed", "button": button,
+                    "clickCount": 1, "x": x, "y": y,
                 })
-                if click_count == 1:
-                    await asyncio.sleep(0.08)  # inter-click gap
-            ack_event = {"type": "interaction_ack", "action": "dblclick",
-                         "x": msg["x"], "y": msg["y"], "success": True}
+                ack_event = {"type": "interaction_ack", "action": "mousedown",
+                             "x": msg["x"], "y": msg["y"], "success": True}
+                break
 
-        elif msg_type == "key":
-            key = msg.get("key", "")
-            mods = msg.get("modifiers", [])
-            cdp = await _get_or_create_cdp_session(session_id, page)
-            # Use Playwright for key combos — it handles modifier mapping correctly
-            for mod in mods:
-                await page.keyboard.down(mod)
-            await page.keyboard.press(key)
-            for mod in reversed(mods):
-                await page.keyboard.up(mod)
-            ack_event = {"type": "interaction_ack", "action": "key",
-                         "key": key, "success": True}
+            elif msg_type == "mouseup":
+                x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
+                cdp = await _get_or_create_cdp_session(session_id, page)
+                button = msg.get("button", "left")
+                await cdp.send("Input.dispatchMouseEvent", {
+                    "type": "mouseReleased", "button": button,
+                    "clickCount": 1, "x": x, "y": y,
+                })
+                ack_event = {"type": "interaction_ack", "action": "mouseup",
+                             "x": msg["x"], "y": msg["y"], "success": True}
+                break
 
-        elif msg_type == "type":
-            text = msg.get("text", "")
-            # Use Playwright keyboard.type() — fires keyDown + char + keyUp with
-            # correct isTrusted=true events that React's onChange recognizes.
-            # Raw CDP keyDown/keyUp alone miss the synthetic "char" event that
-            # Google/React forms need to detect real user input.
-            await page.keyboard.type(text, delay=20)
-            ack_event = {"type": "interaction_ack", "action": "type",
-                         "text_len": len(text), "success": True}
+            elif msg_type == "click":
+                x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
+                cdp = await _get_or_create_cdp_session(session_id, page)
+                button = msg.get("button", "left")
+                await cdp.send("Input.dispatchMouseEvent", {
+                    "type": "mousePressed", "button": button,
+                    "clickCount": 1, "x": x, "y": y,
+                })
+                await asyncio.sleep(0.05)
+                await cdp.send("Input.dispatchMouseEvent", {
+                    "type": "mouseReleased", "button": button,
+                    "clickCount": 1, "x": x, "y": y,
+                })
+                ack_event = {"type": "interaction_ack", "action": "click",
+                             "x": msg["x"], "y": msg["y"], "success": True}
+                break
 
-        elif msg_type == "scroll":
-            cdp = await _get_or_create_cdp_session(session_id, page)
-            # CDP mouseWheel needs an x,y origin — use center of viewport
-            x, y = 960, 540  # sensible default
-            await cdp.send("Input.dispatchMouseEvent", {
-                "type": "mouseWheel", "x": x, "y": y,
-                "deltaX": msg.get("deltaX", 0),
-                "deltaY": msg.get("deltaY", 0),
+            elif msg_type == "dblclick":
+                x, y = await _scale_coords(session_id, page, msg["x"], msg["y"])
+                cdp = await _get_or_create_cdp_session(session_id, page)
+                for click_count in (1, 2):
+                    await cdp.send("Input.dispatchMouseEvent", {
+                        "type": "mousePressed", "button": "left",
+                        "clickCount": click_count, "x": x, "y": y,
+                    })
+                    await asyncio.sleep(0.04)
+                    await cdp.send("Input.dispatchMouseEvent", {
+                        "type": "mouseReleased", "button": "left",
+                        "clickCount": click_count, "x": x, "y": y,
+                    })
+                    if click_count == 1:
+                        await asyncio.sleep(0.08)
+                ack_event = {"type": "interaction_ack", "action": "dblclick",
+                             "x": msg["x"], "y": msg["y"], "success": True}
+                break
+
+            elif msg_type == "key":
+                key = msg.get("key", "")
+                mods = msg.get("modifiers", [])
+                for mod in mods:
+                    await page.keyboard.down(mod)
+                await page.keyboard.press(key)
+                for mod in reversed(mods):
+                    await page.keyboard.up(mod)
+                ack_event = {"type": "interaction_ack", "action": "key",
+                             "key": key, "success": True}
+                break
+
+            elif msg_type == "type":
+                text = msg.get("text", "")
+                await page.keyboard.type(text, delay=20)
+                ack_event = {"type": "interaction_ack", "action": "type",
+                             "text_len": len(text), "success": True}
+                break
+
+            elif msg_type == "scroll":
+                cdp = await _get_or_create_cdp_session(session_id, page)
+                x, y = 960, 540
+                await cdp.send("Input.dispatchMouseEvent", {
+                    "type": "mouseWheel", "x": x, "y": y,
+                    "deltaX": msg.get("deltaX", 0),
+                    "deltaY": msg.get("deltaY", 0),
+                })
+                break
+
+            else:
+                break  # unknown msg_type — don't retry
+
+        except Exception as exc:
+            _last_exc = exc
+            # Invalidate stale session → next attempt creates fresh one
+            _interaction_cdp_sessions.pop(session_id, None)
+            if _attempt == 0:
+                logger.debug("xioview.dispatch_retry",
+                             extra={"session_id": session_id, "msg_type": msg_type,
+                                    "error": str(exc)})
+                continue
+            # Second attempt also failed — send failure ack
+            logger.warning("xioview.control_dispatch_failed", extra={
+                "session_id": session_id, "msg_type": msg_type, "error": str(exc),
             })
-
-    except Exception as exc:
-        # Invalidate the cached CDP session — it may be stale; next call will recreate it
-        _interaction_cdp_sessions.pop(session_id, None)
-        logger.warning("xioview.control_dispatch_failed", extra={
-            "session_id": session_id, "msg_type": msg_type, "error": str(exc),
-        })
-        ack_event = {"type": "interaction_ack", "action": msg_type,
-                     "success": False, "error": str(exc)}
+            ack_event = {"type": "interaction_ack", "action": msg_type,
+                         "success": False, "error": str(exc)}
 
     # Send interaction acknowledgement to viewer
     if ack_event is not None:
