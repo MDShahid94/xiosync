@@ -56,18 +56,15 @@ _interaction_cdp_sessions: dict[str, Any] = {}
 async def _get_or_create_cdp_session(session_id: str, page: Any) -> Any:
     """Get or create a cached CDP session for dispatching interactions.
 
-    Reuses the same CDP session across multiple interactions to avoid
-    the overhead of opening a new session for every mouse move / click.
-    Falls back to creating a new session if the cached one is dead.
+    Reuses the same CDP session across interactions to avoid the 1-3s overhead
+    of a Runtime.evaluate health check on every click/keystroke.
+
+    The session is only recreated if the previous dispatch call raised an
+    exception (handled in _dispatch_control's except → pop the session).
     """
     cdp = _interaction_cdp_sessions.get(session_id)
     if cdp is not None:
-        try:
-            # Quick health check — if this fails, session is dead
-            await cdp.send("Runtime.evaluate", {"expression": "1", "returnByValue": True})
-            return cdp
-        except Exception:
-            _interaction_cdp_sessions.pop(session_id, None)
+        return cdp  # trust the cache; if stale, dispatch will raise → cleared below
 
     cdp = await page.context.new_cdp_session(page)
     _interaction_cdp_sessions[session_id] = cdp
@@ -1276,6 +1273,8 @@ async def _dispatch_control(
             })
 
     except Exception as exc:
+        # Invalidate the cached CDP session — it may be stale; next call will recreate it
+        _interaction_cdp_sessions.pop(session_id, None)
         logger.warning("xioview.control_dispatch_failed", extra={
             "session_id": session_id, "msg_type": msg_type, "error": str(exc),
         })
