@@ -4250,6 +4250,8 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
 
             result["cdp_ws_url"] = _cdp_ws
             result["cdp_http_url"] = _cdp_ws.replace("ws://", "http://")
+            result["session_id"] = req.session_id          # fix: mjs reads ucResult.session_id
+            result["profile_dir"] = _login_profile_dir     # fix: mjs reads ucResult.profile_dir
             logger.info(
                 f"run-uc-login: session registered session={req.session_id} port={_uc_port} "
                 f"cdp_ws={_cdp_ws}"
