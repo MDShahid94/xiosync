@@ -155,6 +155,13 @@ def _assemble_worker_config(
     ts_exit_ip = _safe_get("platform/tailscale_exit_ip")
     ssh_authorized_key = _safe_get("platform/ssh_authorized_key")
 
+    # SSH SOCKS5 exit-node proxy credentials
+    # proxy_ssh_host = Mac Tailscale IP (100.86.149.127) — traffic exits via Mac's residential ISP
+    # proxy_ssh_key  = Ed25519 private key stored in vault — written to /root/.ssh/xio_proxy_key
+    proxy_ssh_host = _safe_get("platform/proxy_ssh_host")
+    proxy_ssh_user = _safe_get("platform/proxy_ssh_user", "karmareturns")
+    proxy_ssh_key  = _safe_get("platform/proxy_ssh_key")    # full PEM private key
+
     # R2 credentials — stored as JSON blob at storage/r2_primary
     _r2_blob = _safe_get("storage/r2_primary")
     try:
@@ -209,6 +216,11 @@ def _assemble_worker_config(
         "tailscale_auth_key":       ts_auth_key,
         "default_exit":             ts_exit_ip,
         "ssh_authorized_key":       ssh_authorized_key,
+        # ── SSH SOCKS5 exit-node — routes Chrome through Mac residential IP ──
+        "proxy_ssh_host":           proxy_ssh_host,   # 100.86.149.127 (Mac TS IP)
+        "proxy_ssh_user":           proxy_ssh_user,   # karmareturns
+        "proxy_ssh_key":            proxy_ssh_key,    # Ed25519 PEM private key
+        # ─────────────────────────────────────────────────────────────────────
         "r2_endpoint":              r2_row["endpoint"] if r2_row else "",
         "r2_bucket":                r2_row["bucket"]   if r2_row else "xio-profiles",
         "r2_access_key":            r2_access_key,
@@ -219,9 +231,31 @@ def _assemble_worker_config(
         "drive_folder_id":          _drive_folder_id,
         "drive_shortcut_name":      _drive_shortcut_name,
         "drive_fs_root":            _drive_fs_root,
+        # ── PPPoE SOCKS5 proxy — read active assigned slot from DB ───────────
+        # xiorun_agent WS bridge uses this to route Chrome traffic via exit VM.
+        "pppoe_proxy":              _get_active_pppoe_proxy(session),
         **extra_config,
     }
     return config
+
+
+def _get_active_pppoe_proxy(session) -> str:
+    """Return HOST:PORT of the currently active PPPoE SOCKS5 proxy, or default."""
+    from sqlalchemy import text as _t  # noqa: PLC0415
+    try:
+        row = session.execute(_t("""
+            SELECT proxy_url FROM xiogrid_pppoe_exit_nodes
+            WHERE state = 'assigned' AND proxy_state = 'active'
+            ORDER BY (proxy_url IS NULL) LIMIT 1
+        """)).mappings().first()
+        if row and row["proxy_url"]:
+            # proxy_url is like "socks5://100.106.81.15:10001" — extract HOST:PORT
+            url = row["proxy_url"].replace("socks5://", "").replace("socks4://", "")
+            return url.strip()
+    except Exception:
+        pass
+    return "100.106.81.15:10001"  # fallback default
+
 
 
 def _get_xiosync_base(request: Request) -> str:
@@ -347,7 +381,7 @@ def fetch_bootstrap_config(token: str, request: Request) -> dict:
     """
     from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
     from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
-    from xiosync.subsystems.vault.service import VaultService, VaultNotFoundError  # noqa: PLC0415
+    from xiosync.subsystems.vault.service import VaultService  # noqa: PLC0415
 
 
     token_hash = _hash_token(token)
@@ -492,6 +526,59 @@ def serve_xiorun_agent():
 
 
 @router.get(
+    "/workers/google-signin.mjs",
+    summary="[Public] Download the latest google-signin.mjs workflow",
+    include_in_schema=True,
+)
+def serve_google_signin_mjs():
+    """Serve google-signin.mjs from XIOSYNC."""
+    import pathlib
+    from fastapi.responses import PlainTextResponse
+    _root = pathlib.Path(__file__).parent.parent.parent.parent
+    js_path = _root / "tools" / "workflows" / "google-signin.mjs"
+    if not js_path.exists():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="google-signin.mjs not found on server")
+    return PlainTextResponse(js_path.read_text())
+
+
+@router.get(
+    "/workers/hotpatch-agy.py",
+    summary="[Public] Hot-patch running xiorun_agent with AI endpoints (no restart needed)",
+    include_in_schema=True,
+)
+def serve_hotpatch_agy():
+    """Serve hotpatch_agy.py — run in a Colab cell to inject /ai/* endpoints live."""
+    import pathlib
+    from fastapi.responses import PlainTextResponse
+    _root = pathlib.Path(__file__).parent.parent.parent.parent
+    patch_path = _root / "colab" / "hotpatch_agy.py"
+    if not patch_path.exists():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="hotpatch_agy.py not found on server")
+    return PlainTextResponse(patch_path.read_text())
+
+
+@router.get(
+    "/workers/browser-profile-manager.py",
+    summary="[Public] Profile-aware anti-detection browser manager for Colab workers",
+    include_in_schema=True,
+)
+def serve_browser_profile_manager():
+    """Serve browser_profile_manager.py — fingerprint/stealth layer for Chrome profiles."""
+    import pathlib
+    from fastapi.responses import PlainTextResponse
+    _root = pathlib.Path(__file__).parent.parent.parent.parent
+    bpm_path = _root / "colab" / "browser_profile_manager.py"
+    if not bpm_path.exists():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="browser_profile_manager.py not found")
+    return PlainTextResponse(bpm_path.read_text())
+
+
+
+
+@router.get(
     "/workers/xio-drive-fs.py",
     summary="[Public] Download xio_drive_fs.py — Drive FUSE accessor utility",
     include_in_schema=True,
@@ -511,6 +598,28 @@ def serve_xio_drive_fs():
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="xio_drive_fs.py not found on server")
     return PlainTextResponse(fs_path.read_text())
+
+
+@router.get(
+    "/workers/patchright-boot.py",
+    summary="[Public] Download patchright_boot.py — Patchright Chromium setup helper",
+    include_in_schema=True,
+)
+def serve_patchright_boot():
+    """Serve patchright_boot.py from XIOSYNC.
+
+    Workers fetch this at Phase 3b to download and cache the Patchright
+    patched Chromium binary (~350 MB, cached to Drive).
+    No auth required — the file contains no secrets.
+    """
+    import pathlib
+    from fastapi.responses import PlainTextResponse
+    _root = pathlib.Path(__file__).parent.parent.parent.parent
+    pb_path = _root / "colab" / "patchright_boot.py"
+    if not pb_path.exists():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="patchright_boot.py not found on server")
+    return PlainTextResponse(pb_path.read_text())
 
 
 @router.get(
@@ -555,7 +664,6 @@ def serve_notebook_hash():
     download the full notebook. No auth required.
     """
     import pathlib, hashlib, datetime  # noqa: PLC0415
-    from fastapi.responses import JSONResponse  # noqa: PLC0415
     from fastapi import HTTPException  # noqa: PLC0415
     _root = pathlib.Path(__file__).parent.parent.parent.parent
     nb_path = _root / "colab" / "xiosync-worker.ipynb"
@@ -564,7 +672,7 @@ def serve_notebook_hash():
     data = nb_path.read_bytes()
     sha  = hashlib.sha256(data).hexdigest()
     mtime = datetime.datetime.fromtimestamp(
-        nb_path.stat().st_mtime, tz=datetime.timezone.utc
+        nb_path.stat().st_mtime, tz=datetime.UTC
     ).isoformat()
     return JSONResponse({"sha256": sha, "updated_at": mtime, "name": "xiosync-worker.ipynb"})
 
@@ -595,7 +703,6 @@ def self_enroll(payload: _SelfEnrollReq):
     import os, json as _json, secrets as _sec  # noqa: PLC0415
     from sqlalchemy import text  # noqa: PLC0415
     from sqlalchemy.orm import Session as _OrmSession  # noqa: PLC0415
-    from fastapi import HTTPException  # noqa: PLC0415
     from fastapi.responses import JSONResponse as _JR  # noqa: PLC0415
     from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
     from xiosync.platform.ids import new_id  # noqa: PLC0415
@@ -705,7 +812,138 @@ def self_enroll(payload: _SelfEnrollReq):
     }
 
 
-# ── TS State endpoints — Drive-backed, served via XIOSYNC ─────────────────────
+# ── Mesh identity — stable node serial per Colab Google account ───────────────
+
+class _MeshIdentityReq(_S):
+    colab_account: str          # e.g. "etathyaghar" (local-part of Google account)
+    runtime_type:  str = "colab_cpu"
+
+
+@router.post(
+    "/workers/mesh-identity",
+    summary="[Public] Resolve or allocate a stable MESH serial for a Colab account",
+    include_in_schema=True,
+)
+def resolve_mesh_identity(payload: _MeshIdentityReq, request: Request):
+    """Return or create a stable MESH-{serial} binding for this Colab Google account.
+
+    Authenticates via X-Worker-Org-Secret header (same as self-enroll).
+    On first call: allocates a new mesh_node + binding. Subsequent calls return
+    the existing serial → same TS hostname every boot.
+    """
+    import os as _os  # noqa: PLC0415
+    from sqlalchemy import text  # noqa: PLC0415
+    from sqlalchemy.orm import Session as _OrmSession  # noqa: PLC0415
+    from fastapi.responses import JSONResponse as _JR  # noqa: PLC0415
+    from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
+    from xiosync.platform.ids import new_id  # noqa: PLC0415
+
+    # Auth: X-Worker-Org-Secret header
+    expected_secret = _os.environ.get("XIOSYNC_WORKER_ORG_SECRET", "")
+    provided = request.headers.get("X-Worker-Org-Secret", "")
+    if not expected_secret or provided != expected_secret:
+        return _JR(status_code=401, media_type="application/problem+json", content={
+            "type": "https://xiosync.dev/problems/unauthorized",
+            "title": "Invalid worker org secret", "status": 401,
+        })
+
+    account = payload.colab_account.strip().lower()
+    if not account:
+        return _JR(status_code=422, media_type="application/problem+json", content={
+            "type": "https://xiosync.dev/problems/invalid_request",
+            "title": "colab_account is required", "status": 422,
+        })
+
+    with _OrmSession(get_engine()) as sess:
+        # Bypass RLS — set app.current_org GUC for this transaction
+        # (PostgreSQL SET does not accept bind params; use set_config instead)
+        sess.execute(text("SELECT set_config('app.current_org', :org, true)"),
+                     {"org": str(_ORG_ZERO)})
+
+        # Look up existing binding → get the mesh_node serial
+        existing = sess.execute(text("""
+            SELECT mn.serial
+            FROM mesh_node_bindings mnb
+            JOIN mesh_nodes mn ON mn.id = mnb.mesh_node_id
+            WHERE mnb.organization_id = :org AND mnb.colab_account = :account
+            LIMIT 1
+        """), {"org": str(_ORG_ZERO), "account": account}).one_or_none()
+
+        if existing:
+            serial = existing[0]
+            sess.execute(text("""
+                UPDATE mesh_node_bindings
+                SET last_used_at = now()
+                WHERE organization_id = :org AND colab_account = :account
+            """), {"org": str(_ORG_ZERO), "account": account})
+            sess.commit()
+        else:
+            # 1. Get or create a default mesh_network for Org Zero
+            net_row = sess.execute(text("""
+                SELECT id FROM mesh_networks
+                WHERE organization_id = :org LIMIT 1
+            """), {"org": str(_ORG_ZERO)}).one_or_none()
+
+            if net_row:
+                net_id = net_row[0]
+            else:
+                net_id = new_id()
+                sess.execute(text("""
+                    INSERT INTO mesh_networks
+                      (id, organization_id, name, network_type, state, created_at)
+                    VALUES (:id, :org, 'default', 'tailscale', 'active', now())
+                    ON CONFLICT DO NOTHING
+                """), {"id": str(net_id), "org": str(_ORG_ZERO)})
+                sess.flush()
+
+            # 2. Create the mesh_node — serial auto-assigned from sequence
+            node_id  = new_id()
+            actor_id = new_id()
+            sess.execute(text("""
+                INSERT INTO mesh_nodes
+                  (id, organization_id, network_id, node_id, address,
+                   runtime_type, created_at)
+                VALUES
+                  (:id, :org, :net, :node_id, :address, :rtype, now())
+            """), {
+                "id":      str(node_id),
+                "org":     str(_ORG_ZERO),
+                "net":     str(net_id),
+                "node_id": str(actor_id),
+                "address": f"colab/{account}",
+                "rtype":   payload.runtime_type,
+            })
+            sess.flush()
+
+            # 3. Read the auto-assigned serial back
+            serial = sess.execute(text(
+                "SELECT serial FROM mesh_nodes WHERE id = :id"
+            ), {"id": str(node_id)}).scalar()
+
+            # 4. Create the binding
+            sess.execute(text("""
+                INSERT INTO mesh_node_bindings
+                  (organization_id, colab_account, mesh_node_id, serial,
+                   created_at, last_used_at)
+                VALUES
+                  (:org, :account, :node_id, :serial, now(), now())
+                ON CONFLICT (organization_id, colab_account) DO UPDATE
+                  SET last_used_at = now()
+            """), {
+                "org":     str(_ORG_ZERO),
+                "account": account,
+                "node_id": str(node_id),
+                "serial":  serial,
+            })
+            sess.commit()
+
+    logger.info("worker_bootstrap.mesh_identity", extra={
+        "colab_account": account, "serial": serial, "runtime_type": payload.runtime_type,
+    })
+    return {"serial": serial, "mesh_name": f"MESH-{serial:03d}", "colab_account": account}
+
+
+
 # Workers fetch/save their Tailscale state through XIOSYNC.
 # XIOSYNC stores it in the default storage provider (Google Drive).
 # No R2 dependency after initial migration.
@@ -720,6 +958,10 @@ def get_ts_state(node_name: str):
 
     Public — no auth needed. The state file contains only a Tailscale device
     private key; it is useless without the corresponding Tailscale account.
+
+    node_name may be:
+      - A plain node name (e.g. "xiogrid--default--worker") → key: ts_states/TS_{node_name}.state
+      - An encoded account key (e.g. "ts_states__account__user_at_gmail_state") → decoded to original
     """
     import pathlib  # noqa: PLC0415
     from fastapi.responses import Response  # noqa: PLC0415
@@ -727,10 +969,21 @@ def get_ts_state(node_name: str):
     from sqlalchemy.orm import Session as _OrmSession  # noqa: PLC0415
     from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
 
+    # Decode: if node_name contains __ it was encoded by boot.py (new account-based key)
+    # e.g. "ts_states__account__user_at_gmail_com_state" → "ts_states/account/user_at_gmail_com.state"
+    if "__" in node_name:
+        # Direct decode: replace __ → /
+        _object_key = node_name.replace("__", "/")
+        _cache_name = node_name  # safe filename
+    else:
+        # Legacy: plain node name
+        _object_key = f"ts_states/TS_{node_name}.state"
+        _cache_name = f"TS_{node_name}"
+
     # Check local Drive-synced cache first
-    _cache = pathlib.Path("/tmp/xio_ts_states") / f"TS_{node_name}.state"
+    _cache = pathlib.Path("/tmp/xio_ts_states") / f"{_cache_name}.state"
     if _cache.exists():
-        return Response(content=_cache.read_bytes(), media_type="application/json")
+        return Response(content=_cache.read_bytes(), media_type="application/octet-stream")
 
     # Look up the stored file path in storage_objects
     from sqlalchemy import text  # noqa: PLC0415
@@ -742,10 +995,10 @@ def get_ts_state(node_name: str):
             WHERE so.object_key = :key
               AND so.organization_id = :org
             ORDER BY so.created_at DESC LIMIT 1
-        """), {"key": f"ts_states/TS_{node_name}.state", "org": str(_ORG_ZERO)}).mappings().first()
+        """), {"key": _object_key, "org": str(_ORG_ZERO)}).mappings().first()
 
     if not row:
-        raise HTTPException(status_code=404, detail=f"No saved TS state for node '{node_name}'")
+        raise HTTPException(status_code=404, detail=f"No saved TS state for '{node_name}'")
 
     # For Google Drive provider, serve via Drive file ID
     if row["provider_type"] == "google_drive":
@@ -754,9 +1007,11 @@ def get_ts_state(node_name: str):
         import urllib.request as _urq  # noqa: PLC0415
         url = f"https://drive.google.com/uc?export=download&id={file_id}"
         content = _urq.urlopen(url, timeout=15).read()
-        return Response(content=content, media_type="application/json")
+        return Response(content=content, media_type="application/octet-stream")
 
     raise HTTPException(status_code=503, detail="TS state provider not available")
+
+
 
 
 @router.put(
@@ -771,7 +1026,6 @@ async def put_ts_state(node_name: str, request: __import__("fastapi").Request):
     Uses XIOSYNC_WORKER_ORG_SECRET header for auth.
     """
     import os, pathlib  # noqa: PLC0415
-    from fastapi.responses import JSONResponse  # noqa: PLC0415
 
     # Minimal auth — worker org secret in header
     secret = request.headers.get("X-Worker-Secret", "")
@@ -783,16 +1037,25 @@ async def put_ts_state(node_name: str, request: __import__("fastapi").Request):
     if not body:
         return JSONResponse(status_code=400, content={"error": "Empty body"})
 
-    # Cache locally (always — serves as a fast-path for the same-host GET)
+    # Decode node_name → object key and cache filename (same logic as GET)
+    if "__" in node_name:
+        _object_key = node_name.replace("__", "/")
+        _cache_name = node_name
+    else:
+        _object_key = f"ts_states/TS_{node_name}.state"
+        _cache_name = f"TS_{node_name}"
+
+    # Cache locally (fast-path for same-host GET)
     _cache_dir = pathlib.Path("/tmp/xio_ts_states")
     _cache_dir.mkdir(exist_ok=True)
-    _local_path = _cache_dir / f"TS_{node_name}.state"
+    _local_path = _cache_dir / f"{_cache_name}.state"
     _local_path.write_bytes(body)
 
     # Upload to Drive and register in storage_objects so get_ts_state can
     # find the object by key across reboots and worker nodes.
-    _object_key = f"ts_states/TS_{node_name}.state"
+    # _object_key is already set above (decoded from node_name)
     _drive_note = "local-only"
+
     try:
         import uuid as _uuid  # noqa: PLC0415
         from sqlalchemy.orm import Session as _Session  # noqa: PLC0415
@@ -872,3 +1135,74 @@ async def put_ts_state(node_name: str, request: __import__("fastapi").Request):
         "size":      len(body),
         "drive":     _drive_note,
     }
+
+
+# ── WebSocket TCP relay — lets Colab reach PPPoE SOCKS5 via WSS ──────────────
+import asyncio as _asyncio
+from fastapi import WebSocket as _WebSocket, WebSocketDisconnect as _WSDisco
+
+
+@router.websocket("/workers/tcp-relay")
+async def tcp_relay_ws(
+    websocket: _WebSocket,
+    host: str = "100.106.81.15",
+    port: int = 10001,
+    secret: str = "",
+) -> None:
+    """WebSocket TCP relay — bridge Colab → XIOSYNC WSS → exit VM SOCKS5.
+
+    Query params:
+      host   — target TCP host (default: exit VM TS IP)
+      port   — target TCP port (default: 10001 = PPPoE slot 1)
+      secret — XIOSYNC_INTERNAL_SECRET value
+    """
+    expected = os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
+    if expected and secret != expected:
+        await websocket.close(code=4003, reason="invalid_secret")
+        return
+
+    await websocket.accept()
+    logger.info("tcp_relay.open", extra={"host": host, "port": port})
+
+    try:
+        reader, writer = await _asyncio.open_connection(host, port)
+    except Exception as exc:
+        logger.warning("tcp_relay.connect_failed",
+                       extra={"host": host, "port": port, "error": str(exc)})
+        await websocket.close(code=4004, reason=f"upstream_connect_failed: {exc}")
+        return
+
+    async def _ws_to_tcp() -> None:
+        try:
+            while True:
+                data = await websocket.receive_bytes()
+                writer.write(data)
+                await writer.drain()
+        except (_WSDisco, Exception):
+            pass
+        finally:
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    async def _tcp_to_ws() -> None:
+        try:
+            while True:
+                chunk = await reader.read(8192)
+                if not chunk:
+                    break
+                await websocket.send_bytes(chunk)
+        except (_WSDisco, Exception):
+            pass
+
+    ws_task  = _asyncio.create_task(_ws_to_tcp())
+    tcp_task = _asyncio.create_task(_tcp_to_ws())
+    await _asyncio.wait([ws_task, tcp_task], return_when=_asyncio.FIRST_COMPLETED)
+    for t in [ws_task, tcp_task]:
+        t.cancel()
+    try:
+        await websocket.close()
+    except Exception:
+        pass
+    logger.info("tcp_relay.closed", extra={"host": host, "port": port})

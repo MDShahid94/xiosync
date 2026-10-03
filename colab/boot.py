@@ -187,6 +187,12 @@ if not str(_node_ver).strip().startswith("v2"):
 else:
     _p(f"  ✅ Node.js OK: {str(_node_ver).strip()}")
 
+_run("npm install -g npm@latest >/dev/null 2>&1", silent=True)
+_run("mkdir -p /opt/xio_workflows", silent=True)
+_run("npm install --prefix /opt/xio_workflows patchright otpauth >/dev/null 2>&1", silent=True)
+_run(f"curl -sf {ASSET_BASE}/api/v1/workers/google-signin.mjs -o /opt/xio_workflows/google-signin.mjs", silent=True)
+_p("  ✅ Node.js workflows & patchright ready")
+
 # ── SSH setup (pubkey-only, root login via Tailscale) ─────────────────────────
 _MAC_PUBKEY = C.get("ssh_authorized_key", "")
 os.makedirs("/root/.ssh", mode=0o700, exist_ok=True)
@@ -675,6 +681,25 @@ _p(f"  {'✅' if rc == 0 else '⚠️ '} pip install {'OK' if rc == 0 else 'had 
 
 
 # ════════════════════════════════════════════════════════════════════════════════
+# PHASE 2.5: Antigravity Auth Restore
+# ════════════════════════════════════════════════════════════════════════════════
+_p("\n" + "═" * 60)
+_p("  Phase 2.5: Antigravity Auth Restore")
+_p("═" * 60)
+
+_agy_tar = _run("ls /content/drive/MyDrive/XIOSYNC-Shared/agy_auth/AGY_*.tar.gz 2>/dev/null | tail -1", capture=True, silent=True)
+if _agy_tar and _agy_tar.strip():
+    _run(f"tar xzf {_agy_tar.strip()} -C /root/")
+    _agy_test = _run("agy --version 2>&1", capture=True, silent=True)
+    if "authentication required" not in str(_agy_test):
+        _p("  ✅ agy auth restored")
+    else:
+        _p("  ⚠️  agy auth restore failed or invalid")
+else:
+    _p("  ⚠️  no agy auth found")
+
+
+# ════════════════════════════════════════════════════════════════════════════════
 # PHASE 3: Browser readiness check (UC uses system Chrome — no download needed)
 # ════════════════════════════════════════════════════════════════════════════════
 _p("\n" + "═" * 60)
@@ -972,6 +997,24 @@ def _watchdog_loop() -> None:
 
 _wd_thread = threading.Thread(target=_watchdog_loop, daemon=True, name="xiorun-watchdog")
 _wd_thread.start()
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PHASE 6: Post-boot Antigravity setup
+# ════════════════════════════════════════════════════════════════════════════════
+_p("\n" + "═" * 60)
+_p("  Phase 6: Post-boot Antigravity setup")
+_p("═" * 60)
+_agy_test = _run("agy --version 2>&1", capture=True, silent=True)
+if "authentication required" in str(_agy_test):
+    _p("  ⚠️  agy auth missing — triggering browser login flow via /ai/install-agy")
+    try:
+        import urllib.request as _urq
+        req = _urq.Request("http://127.0.0.1:9300/ai/install-agy", method="POST")
+        _urq.urlopen(req, timeout=10)
+    except Exception as e:
+        _p(f"  ⚠️  Failed to trigger /ai/install-agy: {e}")
+else:
+    _p("  ✅ agy already authenticated")
 
 _p(f"\n" + "═" * 60)
 _p(f"  Boot complete ✅")

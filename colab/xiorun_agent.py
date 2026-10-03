@@ -3728,6 +3728,12 @@ def _run_uc_login_sync(
             "final_url":   final_url,
             "profile_dir": user_data_dir,
             "uc_port":     0,   # Chrome is quit — no CDP port to expose
+            "canvas_seed": _uc_canvas_seed if '_uc_canvas_seed' in locals() else 0,
+            "audio_seed":  _uc_audio_seed if '_uc_audio_seed' in locals() else 0,
+            "webgl_seed":  0,
+            "ua_string":   _ua_str if '_ua_str' in locals() else "",
+            "timezone":    _uc_timezone if '_uc_timezone' in locals() else "UTC",
+            "locale":      _uc_locale if '_uc_locale' in locals() else "en-US",
         }
 
     except Exception as exc:
@@ -4249,6 +4255,29 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
                 f"cdp_ws={_cdp_ws}"
             )
 
+            # Write fingerprint JSON for this profile
+            try:
+                import json as _json, datetime as _dt
+                _prfl_id = req.identity_id.replace("-", "")[:16] if (hasattr(req, "identity_id") and req.identity_id) else req.email.split("@")[0]
+                _fp_data = {
+                    "profile_id": _prfl_id,
+                    "email": req.email,
+                    "canvas_seed": result.get("canvas_seed", 0),
+                    "audio_seed": result.get("audio_seed", 0),
+                    "webgl_seed": result.get("webgl_seed", 0),
+                    "ua": result.get("ua_string", ""),
+                    "timezone": result.get("timezone", "UTC"),
+                    "locale": result.get("locale", "en-US"),
+                    "created_at": _dt.datetime.now(datetime.UTC).isoformat(),
+                }
+                _fp_path = f"/content/drive/MyDrive/XIOSYNC-Shared/profiles/PRFL_{_prfl_id}.fingerprint.json"
+                os.makedirs(os.path.dirname(_fp_path), exist_ok=True)
+                with open(_fp_path, 'w') as _ff:
+                    _json.dump(_fp_data, _ff, indent=2)
+                logger.info(f"run-uc-login: fingerprint saved → {_fp_path}")
+            except Exception as _fe:
+                logger.warning(f"run-uc-login: fingerprint save failed: {_fe}")
+
 
         # ── HITL pause on recoverable failure (XIOBR port) ───────────────────
         # If login failed with a recoverable error, create a HITL notice and
@@ -4302,22 +4331,10 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
                     _hitl_event = _hitl_store._events.get(_notice.id)
                     if _hitl_event:
                         logger.info("run-uc-login: pausing — waiting for HITL resume...")
-                        _hitl_loop = _hitl_asyncio.get_event_loop()
-
-                        async def _wait_hitl():
-                            try:
-                                await _hitl_asyncio.wait_for(
-                                    asyncio.shield(_hitl_asyncio.wrap_future(
-                                        _hitl_loop.run_in_executor(None, _hitl_event.wait)
-                                    )),
-                                    timeout=300.0,
-                                )
-                            except _hitl_asyncio.TimeoutError:
-                                pass
-
-                        # Run wait in thread (we're in a thread executor already)
-                        import threading as _hitl_thr
-                        _hitl_event.wait(timeout=300)
+                        try:
+                            await _hitl_asyncio.wait_for(_hitl_event.wait(), timeout=300.0)
+                        except _hitl_asyncio.TimeoutError:
+                            pass
 
                         _resumed_notice = _hitl_store._notices.get(_notice.id)
                         if _resumed_notice and _resumed_notice.state == HITLState.RESUMED:
