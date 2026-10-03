@@ -45,6 +45,7 @@ import urllib.request
 import psutil
 import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
@@ -55,11 +56,12 @@ from contextlib import asynccontextmanager as _acm
 # SSH SOCKS5 tunnel process — set when XIORUN_PROXY_SSH_HOST is configured
 _ssh_tunnel_proc: Any = None
 _SSH_PROXY_URL: str | None = None   # set at startup: "socks5://127.0.0.1:1056"
+_NOVNC_URL:     str | None = None   # set at startup: "http://{tailscale_ip}:6080/vnc.html"
 
 @_acm
 async def _lifespan(application):
-    """Kill orphan Chrome processes; start SSH SOCKS5 tunnel if configured."""
-    global _ssh_tunnel_proc, _SSH_PROXY_URL
+    """Kill orphan Chrome processes; start SSH SOCKS5 tunnel + noVNC if configured."""
+    global _ssh_tunnel_proc, _SSH_PROXY_URL, _NOVNC_URL
 
     import subprocess as _sp, time as _t
 
@@ -71,6 +73,68 @@ async def _lifespan(application):
         except Exception:
             pass
     _t.sleep(1)
+
+    # ── noVNC: auto-start x11vnc + websockify for direct HITL control ─────────
+    # x11vnc mirrors Xvfb :99 → VNC :5900 → websockify :6080 → noVNC HTML
+    # Gives operators a zero-relay direct X11 stream (50ms latency vs 500ms+ CDP)
+    try:
+        _sp.run(["pkill", "-f", "x11vnc"], capture_output=True)
+        _sp.run(["pkill", "-f", "websockify"], capture_output=True)
+        _t.sleep(0.5)
+
+        if _sp.run(["which", "x11vnc"], capture_output=True).returncode == 0:
+            _sp.Popen(
+                ["x11vnc", "-display", ":99", "-nopw", "-listen", "0.0.0.0",
+                 "-rfbport", "5900", "-forever", "-shared", "-noxdamage", "-bg", "-q"],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+            )
+        else:
+            # x11vnc not installed — try to install silently
+            _sp.run(["apt-get", "install", "-y", "-q", "x11vnc", "novnc"],
+                    capture_output=True, timeout=60)
+            _sp.Popen(
+                ["x11vnc", "-display", ":99", "-nopw", "-listen", "0.0.0.0",
+                 "-rfbport", "5900", "-forever", "-shared", "-noxdamage", "-bg", "-q"],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL,
+            )
+
+        _novnc_dir = ""
+        for _d in ["/usr/share/novnc", "/opt/novnc", "/usr/local/share/novnc"]:
+            if os.path.isfile(f"{_d}/vnc.html") or os.path.isfile(f"{_d}/index.html"):
+                _novnc_dir = _d
+                break
+
+        _ws_args = ["websockify", "6080", "localhost:5900", "--daemon"]
+        if _novnc_dir:
+            _ws_args = ["websockify", "--web", _novnc_dir, "6080", "localhost:5900", "--daemon"]
+        _sp.Popen(_ws_args, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        _t.sleep(1.5)
+
+        # Derive the Tailscale IP from Tailscale binary (not NODE_NAME which has no IP)
+        _ts_ip = ""
+        try:
+            _ts_out = _sp.run(
+                ["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=5
+            )
+            _ts_ip = _ts_out.stdout.strip().split("\n")[0]
+        except Exception:
+            # Fallback: check /proc/net/if_inet6 or hostname -I for tailscale100 range
+            try:
+                _ip_out = _sp.run(["hostname", "-I"], capture_output=True, text=True)
+                for _ip in _ip_out.stdout.split():
+                    if _ip.startswith("100."):
+                        _ts_ip = _ip
+                        break
+            except Exception:
+                pass
+
+        if _ts_ip:
+            _NOVNC_URL = f"http://{_ts_ip}:6080/vnc.html"
+            logger.info(f"lifespan: noVNC started → {_NOVNC_URL}")
+        else:
+            logger.warning("lifespan: noVNC started but could not determine Tailscale IP")
+    except Exception as _e:
+        logger.warning(f"lifespan: noVNC startup failed: {_e}")
 
     # ── WS SOCKS5 Bridge: route proxy traffic via XIOSYNC WebSocket tunnel ───────
     # XIOSYNC exposes /api/v1/proxy/tunnel?target=HOST:PORT — we open a local
@@ -285,6 +349,153 @@ async def _lifespan(application):
         except Exception as _e:
             logger.warning(f"SSH SOCKS5 tunnel setup failed: {_e}")
 
+    # ── SSH pubkey: save to Drive on every agent startup ─────────────────────
+    # boot.py saves the pubkey once at boot, but if Drive FUSE wasn't ready
+    # then (or if this is a different account's boot), the pubkey is missing.
+    # We re-save here on every agent start to ensure all MESH nodes are covered.
+    _node_name_ps = os.environ.get("NODE_NAME", os.environ.get("XIO_NODE_NAME", ""))
+    _ssh_id_file  = os.environ.get("XIO_NODE_SSH_ID", f"/root/.ssh/{_node_name_ps or 'xio_node_id'}")
+    _pubkey_file  = f"{_ssh_id_file}.pub"
+    if _node_name_ps and os.path.isfile(_pubkey_file):
+        try:
+            _pubkey_content = open(_pubkey_file).read().strip()
+            _drive_pubkey_path = os.path.join(
+                os.environ.get("XIO_DRIVE_ROOT", "/content/drive/MyDrive/XIOSYNC-Shared"),
+                "ssh_pubkeys",
+                f"{_node_name_ps}.pub",
+            )
+            os.makedirs(os.path.dirname(_drive_pubkey_path), exist_ok=True)
+            # Write only if different (avoid unnecessary Drive writes)
+            _existing = ""
+            if os.path.isfile(_drive_pubkey_path):
+                try:
+                    _existing = open(_drive_pubkey_path).read().strip()
+                except Exception:
+                    pass
+            if _existing != _pubkey_content:
+                with open(_drive_pubkey_path, "w") as _pkf:
+                    _pkf.write(_pubkey_content + "\n")
+                logger.info(f"lifespan: saved pubkey {_node_name_ps}.pub to Drive ssh_pubkeys/")
+            else:
+                logger.debug(f"lifespan: pubkey {_node_name_ps}.pub unchanged, skipped")
+        except Exception as _pke:
+            logger.warning(f"lifespan: pubkey save failed (non-fatal): {_pke}")
+
+    # ── Inject stealth JS into existing UC Chrome via CDP (Main World) ────────
+    # The UC Chrome on :52611 is launched as a subprocess — patchright route
+    # interception doesn't apply to it. Inject via Page.addScriptToEvaluateOnNewDocument
+    # so all future page loads in that browser get the WebGL/canvas/UA spoof.
+    try:
+        import urllib.request as _ur
+        import websocket as _ws_cdp  # type: ignore
+        _uc_cdp_port = int(os.environ.get("XIORUN_UC_CDP_PORT", "52611"))
+        _uc_targets = json.loads(
+            _ur.urlopen(f"http://127.0.0.1:{_uc_cdp_port}/json", timeout=3).read()
+        )
+        _uc_pages = [t for t in _uc_targets if t.get("type") == "page"]
+        if _uc_pages:
+            # Build a minimal stealth JS from PRFL-002 fingerprint
+            _fp_st: dict = {}
+            for _pid in ["PRFL-002", "PRFL-001"]:
+                try:
+                    _fp_st = _load_profile_fingerprint(_pid, DRIVE_ROOT) or {}
+                    if _fp_st: break
+                except Exception: pass
+            _wr = _fp_st.get("webgl_renderer", "ANGLE (Apple, Apple M1, OpenGL 4.1)")
+            _wv = "Apple" if "Apple" in _wr else "Google Inc. (NVIDIA)"
+            _tz_st = _fp_st.get("timezone", "America/New_York")
+            # Compute TZ offset (minutes west of UTC) for the profile timezone
+            try:
+                import datetime as _dt_mod
+                import zoneinfo as _zi
+                _tz_obj = _zi.ZoneInfo(_tz_st)
+                _tz_offset_min = -int(_dt_mod.datetime.now(_tz_obj).utcoffset().total_seconds() // 60)
+            except Exception:
+                _tz_offset_min = 300  # default EST
+            _sj_uc = (
+                _STEALTH_JS
+                .replace("{WEBGL_V}", _wv).replace("{WEBGL_R}", _wr)
+                .replace("{UA}",          _fp_st.get("ua_template", _STEALTH_UA_CHROME))
+                .replace("{PLATFORM}",    _fp_st.get("platform",    "MacIntel"))
+                .replace("{TIMEZONE}",    _tz_st)
+                .replace("{TZ_OFFSET}",   str(_tz_offset_min))
+                .replace("{CANVAS_SEED}", str(_fp_st.get("canvas_seed", 42)))
+                .replace("{AUDIO_SEED}",  str(_fp_st.get("audio_seed",  7)))
+                .replace("{SCREEN_W}",    str(_fp_st.get("width",   2560)))
+                .replace("{SCREEN_H}",    str(_fp_st.get("height",  1600)))
+                .replace("{CORES}",       str(_fp_st.get("cores",   10)))
+                .replace("{RAM}",         str(_fp_st.get("ram",     16)))
+                .replace("'{LOCALE}'",    "'en-US'")
+                .replace("{LOCALE}",      "en-US")
+                .replace("{LANG}",        "en-US")
+                .replace("{CH_PLATFORM}", _fp_st.get("ch_platform", "macOS"))
+                .replace("{CH_ARCH}",     _fp_st.get("ch_arch",     "arm"))
+                .replace("{LAT}",         str(_fp_st.get("lat",  40.7128)))
+                .replace("{LON}",         str(_fp_st.get("lon", -74.0060)))
+                .replace("{IS_MOBILE}",   "false")
+                .replace("{SCREEN_AH}",   str(_fp_st.get("height", 1600)))
+            )
+            for _t in _uc_pages[:3]:  # inject into first 3 page targets
+                try:
+                    _cdp = _ws_cdp.create_connection(_t["webSocketDebuggerUrl"], timeout=5)
+
+                    # Step 1: Register script for all future navigations
+                    _cdp.send(json.dumps({
+                        "id": 99,
+                        "method": "Page.addScriptToEvaluateOnNewDocument",
+                        "params": {"source": _sj_uc},
+                    }))
+                    _cdp.settimeout(3)
+                    try: _cdp.recv()
+                    except Exception: pass
+
+                    # Step 2: Run stealth JS immediately on the CURRENT page in-place
+                    # This patches the already-loaded page's WebGL/canvas/navigator prototypes
+                    _cdp.send(json.dumps({
+                        "id": 100,
+                        "method": "Runtime.evaluate",
+                        "params": {"expression": _sj_uc, "returnByValue": False},
+                    }))
+                    _cdp.settimeout(4)
+                    try:
+                        _ev_r = json.loads(_cdp.recv())
+                        _ev_err = _ev_r.get("result", {}).get("exceptionDetails")
+                        if _ev_err:
+                            logger.debug(f"lifespan: stealth evaluate error: {str(_ev_err)[:120]}")
+                    except Exception: pass
+
+                    # Step 3: Cold-navigate: about:blank → original URL
+                    # addScriptToEvaluateOnNewDocument only fires on FRESH navigations,
+                    # not on pages already loaded at registration time. Force one reload.
+                    _orig_url = _t.get("url", "")
+                    if _orig_url and not _orig_url.startswith("chrome"):
+                        _cdp.send(json.dumps({
+                            "id": 101,
+                            "method": "Page.navigate",
+                            "params": {"url": "about:blank"},
+                        }))
+                        _cdp.settimeout(4)
+                        try: _cdp.recv()
+                        except Exception: pass
+                        import time as _time_mod; _time_mod.sleep(0.5)
+
+                        _cdp.send(json.dumps({
+                            "id": 102,
+                            "method": "Page.navigate",
+                            "params": {"url": _orig_url},
+                        }))
+                        _cdp.settimeout(6)
+                        try: _cdp.recv()
+                        except Exception: pass
+                        logger.info(f"lifespan: cold-navigated UC Chrome → {_orig_url[:60]}")
+
+                    _cdp.close()
+                    logger.info(f"lifespan: stealth JS active in UC Chrome: {_t['url'][:60]}")
+                except Exception as _ce:
+                    logger.debug(f"lifespan: UC Chrome CDP inject skip: {_ce}")
+    except Exception as _uce:
+        logger.debug(f"lifespan: UC Chrome stealth inject (non-fatal): {_uce}")
+
     yield
 
     # ── Shutdown: quit UC drivers + kill SSH tunnel ───────────────────────────
@@ -361,15 +572,73 @@ def _resolve_ip_timezone(public_ip: str | None) -> str:
     return _resolve_ip_geo(public_ip).get("timezone", "UTC")
 
 
-def _get_runtime_public_ip() -> str | None:
-    """Detect this runtime's own public IP (used when no exit node is assigned).
-    Returns None on failure — caller falls back to 'UTC'.
+def _get_proxied_public_ip(socks5h_port: int = 19055, timeout: int = 8) -> str | None:
+    """Query public IP through the WS SOCKS5 bridge → PPPoE residential exit.
+
+    Returns the residential IP that the browser actually exits from — NOT the
+    Colab datacenter IP. This is what must be used for geo-resolve so that the
+    stealth JS timezone/locale/lat/lon match the proxy exit, not the GCP datacenter.
+
+    Uses socks5h (remote hostname resolution) so ipify.org domain is sent to the
+    PPPoE proxy and resolved from the residential connection — identical to how
+    Chrome sends traffic with --proxy-server=socks5://.
+
+    Falls back to direct (Colab IP) only if the bridge is not reachable.
+    IP changes on every Mac reboot — never cached, always live per call.
     """
     try:
-        with urllib.request.urlopen("https://api.ipify.org", timeout=5) as resp:
+        import socket as _s, struct as _struct
+
+        def _socks5h_get(host: str, port: int, target_host: str, target_port: int, timeout: int) -> bytes:
+            """Open a SOCKS5h connection through host:port to target_host:target_port."""
+            sock = _s.create_connection((host, port), timeout=timeout)
+            sock.settimeout(timeout)
+            # Greeting: no auth
+            sock.sendall(b"\x05\x01\x00")
+            if sock.recv(2) != b"\x05\x00":
+                raise ConnectionError("SOCKS5 auth failed")
+            # CONNECT with ATYP=3 (domain) — remote hostname resolution
+            host_b = target_host.encode()
+            sock.sendall(b"\x05\x01\x00\x03" + bytes([len(host_b)]) + host_b
+                         + _struct.pack("!H", target_port))
+            rep = sock.recv(10)
+            if len(rep) < 2 or rep[1] != 0:
+                raise ConnectionError(f"SOCKS5 CONNECT failed: {rep!r}")
+            # HTTP/1.0 GET
+            sock.sendall(b"GET / HTTP/1.0\r\nHost: api.ipify.org\r\n\r\n")
+            data = b""
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            sock.close()
+            # Response body is after \r\n\r\n
+            return data.split(b"\r\n\r\n", 1)[-1].strip()
+
+        ip = _socks5h_get("127.0.0.1", socks5h_port, "api.ipify.org", 80, timeout)
+        if ip and len(ip) < 40:
+            return ip.decode()
+    except Exception:
+        pass
+
+    # Fallback: direct (Colab datacenter IP) — geo will be wrong but better than None
+    try:
+        import urllib.request as _ur
+        with _ur.urlopen("https://api.ipify.org", timeout=5) as resp:
             return resp.read().decode().strip()
     except Exception:
         return None
+
+
+def _get_runtime_public_ip() -> str | None:
+    """Detect this runtime's public IP via proxy (residential exit) if available,
+    else direct. Prefer _get_proxied_public_ip() for all geo-resolve calls.
+    Returns None on total failure — caller falls back to 'UTC'.
+    """
+    return _get_proxied_public_ip()
+
+
 
 
 # ── Dynamic runtime capacity detection ────────────────────────────────────────
@@ -485,25 +754,26 @@ TRIM_DIRS = [
 ]
 
 # ── Chrome binary selection ────────────────────────────────────────────────────
-# Priority: 1) real google-chrome-stable (undetectable), 2) full Chromium for
-# Testing, 3) patchright headless-shell (last resort — Google detects it).
+# Priority: 1) real google-chrome-stable (undetectable), 2) patchright
+# Chromium from ms-patchright cache, 3) let patchright auto-detect.
 _REAL_CHROME = "/usr/bin/google-chrome-stable"
-_FULL_CHROME = (
-    "/root/.cache/ms-playwright/ms-playwright/"
-    "chromium-1228/chrome-linux64/chrome"
-)
-_HEADLESS_SHELL = (
-    "/root/.cache/ms-playwright/"
-    "chromium_headless_shell-1234/chrome-headless-shell-linux64/chrome-headless-shell"
-)
 
-import os as _os
-# Use real Chrome if available; fall back gracefully
+import os as _os, glob as _glob
+def _find_patchright_chromium() -> str | None:
+    """Search the ms-patchright cache for the newest installed Chromium binary."""
+    candidates = sorted(
+        _glob.glob("/root/.cache/ms-patchright/chromium-*/chrome-linux64/chrome"),
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+_PATCHRIGHT_CHROME = _find_patchright_chromium()
+
+# Use real Chrome if available; fall back to patchright; then auto-detect
 CHROME_EXECUTABLE: str | None = (
     _REAL_CHROME      if _os.path.isfile(_REAL_CHROME) else
-    _FULL_CHROME      if _os.path.isfile(_FULL_CHROME) else
-    _HEADLESS_SHELL   if _os.path.isfile(_HEADLESS_SHELL) else
-    None  # let patchright auto-detect
+    _PATCHRIGHT_CHROME if _PATCHRIGHT_CHROME and _os.path.isfile(_PATCHRIGHT_CHROME) else
+    None  # let patchright auto-detect via PLAYWRIGHT_BROWSERS_PATH
 )
 
 # UA must EXACTLY match the installed Chrome binary version.
@@ -519,9 +789,10 @@ _STEALTH_UA_CHROME = (
 # Chromium launch args (hardened, stealth, Colab-compatible)
 CHROMIUM_ARGS = [
     "--no-sandbox",
-    "--disable-setuid-sandbox",
+    # NOTE: --disable-setuid-sandbox removed — shows a visible warning banner
+    # ("unsupported command-line flag") which is a bot detection signal.
+    # Running as root in Colab, --no-sandbox alone is sufficient.
     "--disable-dev-shm-usage",
-    "--disable-gpu-sandbox",
     "--ignore-gpu-blocklist",
     # Anti-automation detection
     "--disable-blink-features=AutomationControlled",
@@ -531,10 +802,13 @@ CHROMIUM_ARGS = [
     # Language
     "--lang=en-US,en",
     "--accept-lang=en-US,en;q=0.9",
-    # WebGL software rendering (essential for Xvfb / no-GPU)
-    "--use-gl=swiftshader",
-    "--use-angle=swiftshader",
-    "--disable-software-rasterizer",
+    # WebGL: use ANGLE over EGL/Mesa (not SwiftShader Vulkan).
+    # SwiftShader-Vulkan is a known headless indicator — EGL-ANGLE is far more
+    # realistic and still works on Xvfb with Mesa drivers.
+    "--use-gl=angle",
+    "--use-angle=gl",           # gl = EGL/Mesa (more realistic than swiftshader)
+    "--enable-webgl",
+    "--enable-webgl2",
     # Window geometry (800x600 default = instant bot flag)
     "--window-size=1920,1080",
     "--start-maximized",
@@ -542,7 +816,7 @@ CHROMIUM_ARGS = [
     "--no-first-run",
     "--no-default-browser-check",
     "--password-store=basic",
-    "--disable-extensions-except=",
+    # NOTE: do NOT add --disable-extensions-except= — it blocks stealth extension
 ]
 
 # ── Stealth init script — comprehensive fingerprint spoofing ──────────────────
@@ -565,16 +839,70 @@ _STEALTH_JS = r"""
   performance.now = function() { return _origPerfNow.call(this) + (Math.random() * 0.05); };
   const _origDateNow = Date.now;
   Date.now = function() { return _origDateNow.call(this) + Math.floor(Math.random() * 5); };
-  // ── 1. navigator.webdriver → undefined (most critical bot check) ──────────
+  // ── 1. navigator.webdriver → delete from prototype (avoids webdriver_getter_modified signal) ──
+  // Object.defineProperty on the *instance* leaves a detectable custom descriptor.
+  // Deleting from Navigator.prototype means getOwnPropertyDescriptor(navigator,'webdriver')
+  // returns undefined — indistinguishable from a browser that never had the property.
   try {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true });
-  } catch (_) {}
+    delete Navigator.prototype.webdriver;
+  } catch (_) {
+    // Fallback: redefine on prototype (not instance) — descriptor still looks native
+    try {
+      Object.defineProperty(Navigator.prototype, 'webdriver', {
+        get: () => undefined, configurable: true, enumerable: false,
+      });
+    } catch (_2) {}
+  }
 
-  // ── 2. Remove CDP residual cdc_ keys left by chromedriver ────────────────
+  // ── 2. Remove CDP residual cdc_ keys ─────────────────────────────────────
   Object.getOwnPropertyNames(window).filter(k => k.match(/^cdc_/))
     .forEach(k => { try { delete window[k]; } catch (_) {} });
 
-  // ── 3. navigator.plugins — 5 realistic Chrome built-ins ──────────────────
+  // ── 2b. Worker UA spoof — intercept Worker() so Web Workers report the ────
+  // same spoofed UA as the main thread. Skips module workers (importScripts()
+  // is forbidden there) to avoid breaking Cloudflare Turnstile etc.
+  try {
+    const _SPOOF_UA = '{UA}';
+    const _CORES    = {CORES};
+    const _RAM      = {RAM};
+    const _OW = window.Worker;
+    window.Worker = function(url, opts) {
+      // Never touch module workers — importScripts() throws in module context.
+      if (opts && opts.type === 'module') return new _OW(url, opts);
+      if (typeof url !== 'string') return new _OW(url, opts);
+      try {
+        const _patch = [
+          'Object.defineProperty(self.navigator,"userAgent",{get:()=>',
+          JSON.stringify(_SPOOF_UA), ',configurable:true,enumerable:true});',
+          'Object.defineProperty(self.navigator,"platform",{get:()=>"MacIntel",configurable:true});',
+          'Object.defineProperty(self.navigator,"appVersion",{get:()=>',
+          JSON.stringify(_SPOOF_UA.replace('Mozilla/','')), ',configurable:true});',
+          'Object.defineProperty(self.navigator,"vendor",{get:()=>"Google Inc.",configurable:true});',
+          'Object.defineProperty(self.navigator,"hardwareConcurrency",{get:()=>',String(_CORES),',configurable:true});',
+          'Object.defineProperty(self.navigator,"deviceMemory",{get:()=>',String(_RAM),',configurable:true});',
+        ].join('');
+        const _pBlob = new Blob([_patch], {type:'text/javascript'});
+        const _pUrl  = URL.createObjectURL(_pBlob);
+        const _chain = new Blob(
+          ['importScripts('+JSON.stringify(_pUrl)+','+JSON.stringify(url)+');'],
+          {type:'text/javascript'}
+        );
+        const _wUrl = URL.createObjectURL(_chain);
+        const _w = new _OW(_wUrl, opts);
+        return _w;
+      } catch(_) { return new _OW(url, opts); }
+    };
+    window.Worker.prototype = _OW.prototype;
+    Object.defineProperty(window.Worker,'toString',
+      {value:()=>'function Worker() { [native code] }',configurable:true});
+  } catch (_) {}
+
+
+  // ── 3. navigator.plugins / mimeTypes / language / languages ─────────────
+  // Chrome 131 made navigator.plugins non-configurable — Object.defineProperty
+  // silently fails on both instance and prototype levels.
+  // Solution: Replace window.navigator with a Proxy that intercepts specific props.
+  // window.navigator IS configurable (not LegacyUnforgeable on Window).
   const _fakePlugins = [
     { name: 'Chrome PDF Plugin',          filename: 'internal-pdf-viewer',          description: 'Portable Document Format' },
     { name: 'Chrome PDF Viewer',          filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
@@ -582,28 +910,82 @@ _STEALTH_JS = r"""
     { name: 'WebKit built-in PDF',        filename: 'internal-pdf-viewer',           description: '' },
     { name: 'Widevine Content Decryption Module', filename: 'widevinecdmadapter.dll', description: 'Enables Widevine licenses for play back of HTML audio/video content.' },
   ];
+  const _buildFakePluginArr = () => {
+    const arr = [];
+    _fakePlugins.forEach((p, i) => {
+      const plug = (typeof Plugin !== 'undefined')
+        ? Object.assign(Object.create(Plugin.prototype), p)
+        : { ...p };
+      arr[i] = plug;
+    });
+    try { Object.defineProperty(arr, 'item',      { value: i => arr[i], configurable: true }); } catch(_){}
+    try { Object.defineProperty(arr, 'namedItem', { value: n => arr.find(p => p.name === n), configurable: true }); } catch(_){}
+    try { Object.defineProperty(arr, 'length',    { value: 5, writable: false, configurable: false, enumerable: false }); } catch(_){}
+    if (typeof PluginArray !== 'undefined') { try { Object.setPrototypeOf(arr, PluginArray.prototype); } catch(_){} }
+    return arr;
+  };
+  const _fakeMimeTypes = (() => {
+    const mt = [
+      { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' },
+      { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format' },
+    ];
+    try { Object.defineProperty(mt, 'length', { value: 2, writable: false }); } catch(_){}
+    try { Object.defineProperty(mt, 'item',   { value: i => mt[i] }); } catch(_){}
+    try { Object.defineProperty(mt, 'namedItem', { value: n => mt.find(m => m.type === n) }); } catch(_){}
+    if (typeof MimeTypeArray !== 'undefined') { try { Object.setPrototypeOf(mt, MimeTypeArray.prototype); } catch(_){} }
+    return mt;
+  })();
+
+  // ── Navigator Proxy — the nuclear option for non-configurable properties ──
+  // Chrome 131 locked plugins/languages via [LegacyUnforgeable]-like IDL attrs.
+  // We swap out window.navigator itself with a Proxy. This works because
+  // window.navigator (on Window.prototype) IS configurable.
   try {
-    Object.defineProperty(navigator, 'plugins', {
-      get: () => {
-        const arr = _fakePlugins.map(p => Object.assign(Object.create(Plugin.prototype), p));
-        Object.defineProperty(arr, 'item',     { value: (i) => arr[i] });
-        Object.defineProperty(arr, 'namedItem',{ value: (n) => arr.find(p => p.name === n) });
-        Object.defineProperty(arr, 'length',   { value: arr.length });
-        return arr;
+    const _realNav = window.navigator;
+    const _navProxy = new Proxy(_realNav, {
+      get(target, prop) {
+        // ── Navigator property spoofs (all in one place) ──
+        if (prop === 'plugins')              return _buildFakePluginArr();
+        if (prop === 'mimeTypes')            return _fakeMimeTypes;
+        if (prop === 'languages')            return [_LOCALE, _LANG];
+        if (prop === 'language')             return _LOCALE;
+        if (prop === 'userAgent')            return _UA;
+        if (prop === 'appVersion')           return _UA.replace('Mozilla/', '');
+        if (prop === 'platform')             return '{PLATFORM}';
+        if (prop === 'hardwareConcurrency')  return {CORES};
+        if (prop === 'deviceMemory')         return {RAM};
+        if (prop === 'vendor')               return 'Google Inc.';
+        if (prop === 'vendorSub')            return '';
+        if (prop === 'productSub')           return '20030107';
+        if (prop === 'maxTouchPoints')       return 0;
+        if (prop === 'webdriver')            return false;
+        if (prop === 'doNotTrack')           return null;
+        // All other props: reflect from real navigator (bound to avoid 'this' issues)
+        const val = Reflect.get(target, prop, target);
+        return (typeof val === 'function') ? val.bind(target) : val;
       },
-      configurable: true,
-    });
-    Object.defineProperty(navigator, 'mimeTypes', {
-      get: () => {
-        const mt = [
-          { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: _fakePlugins[0] },
-          { type: 'application/x-google-chrome-pdf', suffixes: 'pdf', description: 'Portable Document Format', enabledPlugin: _fakePlugins[1] },
-        ];
-        return Object.assign(mt, { length: mt.length, item: i => mt[i], namedItem: n => mt.find(m => m.type === n) });
+      has(target, prop) { return prop in target; },
+      getOwnPropertyDescriptor(target, prop) {
+        // Make proxy transparent to detection attempts
+        return Object.getOwnPropertyDescriptor(target, prop);
       },
-      configurable: true,
     });
-  } catch (_) {}
+    // Replace window.navigator with the proxy
+    Object.defineProperty(window, 'navigator', {
+      get: () => _navProxy,
+      configurable: true, enumerable: true,
+    });
+  } catch (_) {
+    // Fallback: prototype + instance patches if Proxy fails
+    try { Object.defineProperty(Navigator.prototype, 'plugins',   { get: () => _buildFakePluginArr(), configurable: true }); } catch(_){}
+    try { Object.defineProperty(Navigator.prototype, 'mimeTypes', { get: () => _fakeMimeTypes, configurable: true }); } catch(_){}
+    try { Object.defineProperty(Navigator.prototype, 'languages', { get: () => [_LOCALE, _LANG], configurable: true }); } catch(_){}
+    try { Object.defineProperty(navigator, 'plugins',   { get: () => _buildFakePluginArr(), configurable: true }); } catch(_){}
+    try { Object.defineProperty(navigator, 'mimeTypes', { get: () => _fakeMimeTypes, configurable: true }); } catch(_){}
+    try { Object.defineProperty(navigator, 'languages', { get: () => [_LOCALE, _LANG], configurable: true }); } catch(_){}
+  }
+
+
 
   // ── 4. window.chrome — full runtime object Google checks ─────────────────
   if (!window.chrome) {
@@ -631,17 +1013,36 @@ _STEALTH_JS = r"""
   // ── 5. Language / Locale (IP-geo injected) ────────────────────────────────
   const _LOCALE = '{LOCALE}';
   const _LANG   = _LOCALE.split('-')[0];
-  try {
-    Object.defineProperty(navigator, 'language',  { get: () => _LOCALE, configurable: true });
-    Object.defineProperty(navigator, 'languages', { get: () => [_LOCALE, _LANG, 'en'], configurable: true });
-  } catch (_) {}
+  // Prototype-level patch → works even in restricted CDP/patchright contexts
+  try { Object.defineProperty(Navigator.prototype, 'language',  { get: function() { return _LOCALE; }, configurable: true, enumerable: true }); } catch (_) {}
+  try { Object.defineProperty(Navigator.prototype, 'languages', { get: function() { return [_LOCALE, _LANG]; }, configurable: true, enumerable: true }); } catch (_) {}
+  // Instance-level backup (belt-and-suspenders)
+  try { Object.defineProperty(navigator, 'language',  { get: () => _LOCALE, configurable: true }); } catch (_) {}
+  try { Object.defineProperty(navigator, 'languages', { get: () => [_LOCALE, _LANG], configurable: true }); } catch (_) {}
 
   // ── 6. User-Agent + related navigator props ───────────────────────────────
   const _UA = '{UA}';
-  try { Object.defineProperty(navigator, 'userAgent',  { get: () => _UA, configurable: true }); } catch (_) {}
-  try { Object.defineProperty(navigator, 'appVersion', { get: () => _UA.replace('Mozilla/', ''), configurable: true }); } catch (_) {}
-  try { Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => {CPU_COUNT}, configurable: true }); } catch (_) {}
-  try { Object.defineProperty(navigator, 'deviceMemory',        { get: () => {DEVICE_MEMORY_GB}, configurable: true }); } catch (_) {}
+  // Prototype-level patches (primary — survive patchright context restrictions)
+  const _def = (proto, key, val) => {
+    try { Object.defineProperty(proto, key, { get: typeof val === 'function' ? val : () => val, configurable: true, enumerable: true }); } catch (_) {}
+  };
+  _def(Navigator.prototype, 'userAgent',          () => _UA);
+  _def(Navigator.prototype, 'appVersion',         () => _UA.replace('Mozilla/', ''));
+  _def(Navigator.prototype, 'hardwareConcurrency',() => {CORES});
+  _def(Navigator.prototype, 'deviceMemory',       () => {RAM});
+  _def(Navigator.prototype, 'platform',           () => '{PLATFORM}');
+  _def(Navigator.prototype, 'vendor',             () => 'Google Inc.');
+  _def(Navigator.prototype, 'vendorSub',          () => '');
+  _def(Navigator.prototype, 'productSub',         () => '20030107');
+  _def(Navigator.prototype, 'maxTouchPoints',     () => 0);
+  _def(Navigator.prototype, 'cookieEnabled',      () => true);
+  _def(Navigator.prototype, 'onLine',             () => true);
+  _def(Navigator.prototype, 'doNotTrack',         () => null);
+  // Instance-level fallback (some properties need own-property to shadow prototype)
+  try { Object.defineProperty(navigator, 'userAgent',           { get: () => _UA, configurable: true }); } catch (_) {}
+  try { Object.defineProperty(navigator, 'appVersion',          { get: () => _UA.replace('Mozilla/', ''), configurable: true }); } catch (_) {}
+  try { Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => {CORES}, configurable: true }); } catch (_) {}
+  try { Object.defineProperty(navigator, 'deviceMemory',        { get: () => {RAM}, configurable: true }); } catch (_) {}
   try { Object.defineProperty(navigator, 'platform',            { get: () => '{PLATFORM}', configurable: true }); } catch (_) {}
   try { Object.defineProperty(navigator, 'vendor',              { get: () => 'Google Inc.', configurable: true }); } catch (_) {}
   try { Object.defineProperty(navigator, 'vendorSub',           { get: () => '', configurable: true }); } catch (_) {}
@@ -650,6 +1051,7 @@ _STEALTH_JS = r"""
   try { Object.defineProperty(navigator, 'cookieEnabled',       { get: () => true, configurable: true }); } catch (_) {}
   try { Object.defineProperty(navigator, 'onLine',              { get: () => true, configurable: true }); } catch (_) {}
   try { Object.defineProperty(navigator, 'doNotTrack',          { get: () => null, configurable: true }); } catch (_) {}
+
 
   // ── 6b. UserAgentData (Client Hints) spoofing ───────────────────────────
   try {
@@ -695,27 +1097,81 @@ _STEALTH_JS = r"""
   try { Object.defineProperty(window, 'outerHeight', { get: () => {SCREEN_H}, configurable: true }); } catch (_) {}
 
   // ── 8. WebGL vendor / renderer ────────────────────────────────────────────
+  // Chrome 131: WebGLRenderingContext.prototype.getParameter is NON-WRITABLE.
+  // Direct assignment (proto.getParameter = ...) silently fails in sloppy mode.
+  // Solution: Intercept HTMLCanvasElement.prototype.getContext — it IS configurable.
+  // Patch each context INSTANCE via Object.defineProperty (own props > prototype).
   const _WEBGL_VENDOR   = '{WEBGL_V}';
   const _WEBGL_RENDERER = '{WEBGL_R}';
-  const _patchWebGL = (proto) => {
-    if (!proto) return;
-    const orig = proto.getParameter;
-    proto.getParameter = function(p) {
-      if (p === 37445) return _WEBGL_VENDOR;
-      if (p === 37446) return _WEBGL_RENDERER;
-      return orig.call(this, p);
-    };
-    const origExt = proto.getExtension;
-    proto.getExtension = function(name) {
-      const ext = origExt.call(this, name);
-      if (name === 'WEBGL_debug_renderer_info') {
-        return { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
-      }
-      return ext;
-    };
+
+  const _patchCtxInstance = (ctx) => {
+    if (!ctx) return ctx;
+    // Own-property override — takes priority over non-writable prototype method
+    const _origGP  = ctx.getParameter.bind(ctx);
+    const _origGE  = ctx.getExtension.bind(ctx);
+    try {
+      Object.defineProperty(ctx, 'getParameter', {
+        value: function(p) {
+          if (p === 37445) return _WEBGL_VENDOR;
+          if (p === 37446) return _WEBGL_RENDERER;
+          return _origGP(p);
+        }, writable: true, configurable: true, enumerable: false,
+      });
+    } catch(_){}
+    try {
+      Object.defineProperty(ctx, 'getExtension', {
+        value: function(name) {
+          if (name === 'WEBGL_debug_renderer_info') {
+            return { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
+          }
+          return _origGE(name);
+        }, writable: true, configurable: true, enumerable: false,
+      });
+    } catch(_){}
+    return ctx;
   };
-  try { _patchWebGL(WebGLRenderingContext.prototype); } catch (_) {}
-  try { _patchWebGL(WebGL2RenderingContext.prototype); } catch (_) {}
+
+  // Intercept canvas.getContext at HTMLCanvasElement prototype level (IS configurable)
+  try {
+    const _origGetCtx = HTMLCanvasElement.prototype.getContext;
+    Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+      value: function(type, ...args) {
+        const ctx = _origGetCtx.apply(this, [type, ...args]);
+        if (ctx && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) {
+          return _patchCtxInstance(ctx);
+        }
+        return ctx;
+      }, writable: true, configurable: true, enumerable: false,
+    });
+  } catch(_){}
+
+  // Belt-and-suspenders: also try prototype-level (may work in some contexts)
+  const _patchWebGLProto = (proto) => {
+    if (!proto) return;
+    try {
+      const _o = proto.getParameter;
+      Object.defineProperty(proto, 'getParameter', {
+        value: function(p) {
+          if (p === 37445) return _WEBGL_VENDOR;
+          if (p === 37446) return _WEBGL_RENDERER;
+          return _o.call(this, p);
+        }, writable: true, configurable: true, enumerable: false
+      });
+    } catch(_){}
+    try {
+      const _e = proto.getExtension;
+      Object.defineProperty(proto, 'getExtension', {
+        value: function(name) {
+          if (name === 'WEBGL_debug_renderer_info')
+            return { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
+          return _e.call(this, name);
+        }, writable: true, configurable: true, enumerable: false
+      });
+    } catch(_){}
+  };
+  try { _patchWebGLProto(WebGLRenderingContext.prototype); } catch(_){}
+  try { _patchWebGLProto(WebGL2RenderingContext.prototype); } catch(_){}
+
 
   // ── 9. Timezone — Intl + Date.prototype ──────────────────────────────────
   const _XIO_TZ     = '{TIMEZONE}';
@@ -1047,9 +1503,75 @@ async def health() -> dict:
         "gpu_vram_gb":     _RUNTIME_CAP["gpu_vram_gb"],
         "cpu_count":       _RUNTIME_CAP["cpu_count"],
         # SSH SOCKS5 proxy — routes traffic via Mac's residential ISP
-        # None if the tunnel isn't up (key not in vault or SSH unreachable)
         "ssh_proxy_url":   _SSH_PROXY_URL,
+        # Direct noVNC URL for HITL interaction (zero-relay, X11 stream)
+        "novnc_url":       _NOVNC_URL,
     }
+
+
+@app.get("/debug/stealth-js", response_class=PlainTextResponse)
+async def debug_stealth_js() -> str:
+    """Return the fully-rendered stealth init script for the active PRFL session.
+
+    Used by stealth_audit.py (run from Mac Mini via connect_over_cdp) to inject
+    the same 22-section stealth JS into audit pages so WebGL renderer, canvas noise,
+    audio context and navigator.platform all match the live profile fingerprint.
+    """
+    # First try: use the stealth JS cached from the last launched session
+    for _sid, _info in _sessions.items():
+        _js = _info.get("stealth_js") or _info.get("session_stealth_js")
+        if _js and len(_js) > 500:
+            return _js
+
+    # Fallback: build from PRFL-002 fingerprint
+    _fp_fb: dict = {}
+    for _prfl_id in ["PRFL-002", "PRFL-001"]:
+        try:
+            _fp_fb = _load_profile_fingerprint(_prfl_id, DRIVE_ROOT) or {}
+            if _fp_fb:
+                break
+        except Exception:
+            pass
+
+    _webgl_r = _fp_fb.get("webgl_renderer", "ANGLE (Apple, Apple M1, OpenGL 4.1)")
+    _webgl_v = (
+        "Apple" if "Apple" in _webgl_r else
+        "Google Inc. (NVIDIA)" if "NVIDIA" in _webgl_r else
+        "Google Inc. (Intel)"
+    )
+    _tz_fb = _fp_fb.get("timezone", "America/New_York")
+    try:
+        import datetime as _dtfb; import zoneinfo as _zifb
+        _tz_off_fb = -int(_dtfb.datetime.now(_zifb.ZoneInfo(_tz_fb)).utcoffset().total_seconds() // 60)
+    except Exception:
+        _tz_off_fb = 300
+    _js_out = (
+        _STEALTH_JS
+        .replace("{WEBGL_V}",     _webgl_v)
+        .replace("{WEBGL_R}",     _webgl_r)
+        .replace("{UA}",          _fp_fb.get("ua_template", _STEALTH_UA_CHROME))
+        .replace("{PLATFORM}",    _fp_fb.get("platform",    "MacIntel"))
+        .replace("{TIMEZONE}",    _tz_fb)
+        .replace("{TZ_OFFSET}",   str(_tz_off_fb))
+        .replace("{CANVAS_SEED}", str(_fp_fb.get("canvas_seed", 42)))
+        .replace("{AUDIO_SEED}",  str(_fp_fb.get("audio_seed",  7)))
+        .replace("{SCREEN_W}",    str(_fp_fb.get("width",   1920)))
+        .replace("{SCREEN_H}",    str(_fp_fb.get("height",  1080)))
+        .replace("{CORES}",       str(_fp_fb.get("cores",   8)))
+        .replace("{RAM}",         str(_fp_fb.get("ram",     16)))
+        .replace("'{LOCALE}'",    "'en-US'")
+        .replace("{LOCALE}",      "en-US")
+        .replace("{LANG}",        "en-US")
+        .replace("{CH_PLATFORM}", _fp_fb.get("ch_platform", "macOS"))
+        .replace("{CH_ARCH}",     _fp_fb.get("ch_arch",     "arm"))
+        .replace("{LAT}",         str(_fp_fb.get("lat",  40.7128)))
+        .replace("{LON}",         str(_fp_fb.get("lon", -74.0060)))
+        .replace("{IS_MOBILE}",   "false")
+        .replace("{SCREEN_AH}",   str(_fp_fb.get("height", 1080)))
+        .replace("{UA_TEMPLATE}",  _fp_fb.get("ua_template", _STEALTH_UA_CHROME))
+    )
+    return _js_out
+
 
 
 @app.get("/sessions")
@@ -1111,8 +1633,25 @@ async def launch_browser(req: LaunchRequest) -> dict:
     logger.info(f"launch timezone={_timezone} locale={_locale} exit_ip={_exit_ip} session={req.session_id}")
 
     # ── Build per-session stealth JS (inject dynamic values) ─────────────────
-    _fp = req.fingerprint or {}
+    # If this session uses a named profile (PRFL-NNN), auto-load its persistent
+    # fingerprint from Drive as the baseline. Caller-supplied fingerprint keys
+    # always take precedence (dynamic per-session override still fully works).
+    _fp = dict(req.fingerprint) if req.fingerprint else {}
+    if profile_dir:
+        import re as _re_prfl
+        _prfl_match = _re_prfl.search(r"(PRFL-\d+)", profile_dir)
+        if _prfl_match:
+            _prfl_id = _prfl_match.group(1)
+            _base_fp = _load_profile_fingerprint(_prfl_id, DRIVE_ROOT)
+            # Merge: profile preset is base, caller's explicit keys override
+            _merged = dict(_base_fp)
+            _merged.update(_fp)
+            _fp = _merged
+            logger.info(f"launch: auto-loaded fingerprint for {_prfl_id}: "
+                        f"ua={_fp.get('ua_template','')[:40]}...")
+
     _canvas_seed = _fp.get("canvas_seed", 0x1A2B)
+
     _audio_seed  = _fp.get("audio_seed",  0x3C4D)
     _cores = str(_fp.get("cores", os.cpu_count() or 2))
     _ram = str(_fp.get("ram", max(2, min(8, (os.cpu_count() or 2) * 2))))
@@ -1151,8 +1690,8 @@ async def launch_browser(req: LaunchRequest) -> dict:
         .replace("'{UA}'",        f"'{_ua_str}'")
         .replace("{UA}",          _ua_str)
         .replace("{TZ_OFFSET}",   str(_tz_offset))
-        .replace("{CPU_COUNT}",   _cores)
-        .replace("{DEVICE_MEMORY_GB}", _ram)
+        .replace("{CORES}",   _cores)
+        .replace("{RAM}", _ram)
         .replace("{PLATFORM}",    _platform)
         .replace("{CH_PLATFORM}", _ch_platform)
         .replace("{CH_ARCH}",     _ch_arch)
@@ -1195,7 +1734,7 @@ async def launch_browser(req: LaunchRequest) -> dict:
     chrome_proc = None
 
     # ── Strategy A: Subprocess launch of real Chrome ──────────────────────────
-    if CHROME_EXECUTABLE and CHROME_EXECUTABLE != _HEADLESS_SHELL:
+    if CHROME_EXECUTABLE:
         logger.info(f"chrome_launch=subprocess binary={CHROME_EXECUTABLE} headless={req.headless}")
         import subprocess as _sp
 
@@ -1279,6 +1818,7 @@ async def launch_browser(req: LaunchRequest) -> dict:
         "guard_task":   None,
         "timezone":     _timezone,
         "exit_node_ip": _exit_ip,
+        "stealth_js":   _session_stealth_js,   # cached for /debug/stealth-js audit endpoint
     }
 
     # ── Apply stealth via HTML network interception (context.route) ──────────
@@ -1535,10 +2075,11 @@ async def _tcp_probe(host: str, port: int, timeout: float = 3.0) -> bool:
 
 async def _proxy_probe_loop(session_id: str, proxy_url: str) -> None:
     """Probe SOCKS5 proxy every 10s. On 2 consecutive failures → report + kill."""
-    m = re.match(r"socks5://([^:]+):(\d+)", proxy_url)
+    m = re.match(r"socks5h?://([^:]+):(\d+)", proxy_url)  # handles socks5:// and socks5h://
     if not m:
         return
     host, port = m.group(1), int(m.group(2))
+
     failures = 0
     THRESHOLD = 2
 
@@ -1789,10 +2330,10 @@ def _run_uc_login_sync(
               except Exception: return False
           if _port_open(_ws_port):
               _local_bridge_port = _ws_port
-              logger.info(f"uc-login: Chrome proxy → WS bridge socks5://127.0.0.1:{_ws_port} (→ {proxy_url[:40]})")
+              logger.info(f"uc-login: Chrome proxy → WS bridge socks5h://127.0.0.1:{_ws_port} (→ {proxy_url[:40]})")
           elif _port_open(_ssh_port):
               _local_bridge_port = _ssh_port
-              logger.info(f"uc-login: Chrome proxy → SSH tunnel socks5://127.0.0.1:{_ssh_port} (→ {proxy_url[:40]})")
+              logger.info(f"uc-login: Chrome proxy → SSH tunnel socks5h://127.0.0.1:{_ssh_port} (→ {proxy_url[:40]})")
           else:
               _local_bridge_port = None
               logger.warning(f"uc-login: no local bridge available — Chrome using direct {proxy_url[:50]}")
@@ -1801,6 +2342,7 @@ def _run_uc_login_sync(
           proxy_addr = _chrome_proxy.replace("socks5://", "")
           opts.add_argument(f"--proxy-server=socks5://{proxy_addr}")
           logger.info(f"uc-login: exit-node proxy={proxy_url[:50]}")
+
 
           # ── IP verification preflight ─────────────────────────────────────────
           # Step 1: confirm SOCKS5 proxy is reachable
@@ -1825,9 +2367,12 @@ def _run_uc_login_sync(
               return {"ok": False, "error": "SOCKS5 proxy unreachable after 60s"}
           logger.info("uc-login: SOCKS5 proxy confirmed reachable ✅")
 
-          # Step 2: confirm actual exit IP through proxy matches expected residential IP
+          # Step 2: resolve actual exit IP through the proxy (dynamic — changes on reboot).
+          # We do NOT abort on IP mismatch with exit_node_public_ip — PPPoE IPs rotate
+          # on every Mac reboot. The actual residential IP (whatever slot is currently active)
+          # is used for all geo data. expected_ip is advisory only.
           _expected_ip = exit_node_public_ip
-          logger.info(f"uc-login: verifying exit IP through proxy (expected={_expected_ip})...")
+          logger.info(f"uc-login: resolving actual exit IP through proxy (expected={_expected_ip})...")
           _actual_ip = None
           for _ip_attempt in range(3):
               try:
@@ -1857,24 +2402,21 @@ def _run_uc_login_sync(
                   pass
 
           if _actual_ip and _expected_ip and _actual_ip != _expected_ip:
+              # PPPoE IP has rotated (Mac reboot, ISP reassignment) — use actual, log advisory
               logger.warning(
-                  f"uc-login: ⚠️  EXIT IP MISMATCH — actual={_actual_ip} expected={_expected_ip}. "
-                  "Aborting to prevent sign-in with wrong IP fingerprint."
+                  f"uc-login: PPPoE IP rotated — actual={_actual_ip} expected={_expected_ip}. "
+                  "Proceeding with actual residential IP for geo-resolve (normal after Mac reboot)."
               )
-              return {
-                  "ok": False,
-                  "error": f"Exit IP mismatch: proxy exits via {_actual_ip} but expected {_expected_ip}. "
-                           "Ensure the PPPoE slot is correctly assigned.",
-                  "actual_ip": _actual_ip,
-                  "expected_ip": _expected_ip,
-              }
           elif _actual_ip:
               logger.info(f"uc-login: ✅ Exit IP confirmed: {_actual_ip}")
           else:
               logger.warning("uc-login: Could not determine exit IP — proceeding with caution")
 
-          # Step 3: resolve full geo profile for verified IP
-          _uc_geo = _resolve_ip_geo(_actual_ip or _expected_ip or "")
+          # Step 3: resolve full geo profile for verified/actual IP
+          # Always use the actual observed exit IP. If still unknown, fall back to expected.
+          _geo_ip = _actual_ip or _expected_ip or ""
+          _uc_geo = _resolve_ip_geo(_geo_ip)
+
           _uc_timezone = _uc_geo["timezone"]
           _uc_locale   = _uc_geo["locale"]
           _uc_lat      = _uc_geo["lat"]
@@ -1893,20 +2435,24 @@ def _run_uc_login_sync(
 
 
       opts.add_argument("--no-sandbox")
-      opts.add_argument("--disable-setuid-sandbox")
+      # --disable-setuid-sandbox removed — shows warning banner, --no-sandbox alone suffices as root
       opts.add_argument("--disable-dev-shm-usage")
       opts.add_argument("--no-zygote")         # required in Colab containers (no zygote process)
-      # Software WebGL (--disable-gpu kills WebGL = instant bot flag)
+      # Software WebGL: use ANGLE over EGL/Mesa, NOT SwiftShader-Vulkan.
+      # SwiftShader-Vulkan ("SwiftShader Device (Subzero)") is a known headless fingerprint.
+      # ANGLE-gl uses Mesa EGL which reports a far less suspicious renderer string.
       opts.add_argument("--use-gl=angle")
-      opts.add_argument("--use-angle=swiftshader")
-      opts.add_argument("--disable-gpu-sandbox")
+      opts.add_argument("--use-angle=gl")       # EGL/Mesa, not swiftshader
+      opts.add_argument("--enable-webgl")
+      opts.add_argument("--enable-webgl2")
       opts.add_argument("--ignore-gpu-blocklist")
       opts.add_argument("--disable-blink-features=AutomationControlled")
       opts.add_argument("--disable-service-workers")
       opts.add_argument("--disable-features=ServiceWorker")
       opts.add_argument("--window-size=1920,1080")
       opts.add_argument("--window-position=0,0")
-      opts.add_argument("--display=:99")
+      # NOTE: Do NOT pass --display=:99 as a Chrome flag — it's not a valid Chrome argument.
+      # DISPLAY is set correctly via env var in the subprocess env dict below.
             # Prevent Chrome from restoring previous session when launched with a saved profile.
       # Without these, Chrome replays old cached connections through the new proxy context
       # → renderer timeout "Timed out receiving message from renderer: 26.5s"
@@ -1933,11 +2479,73 @@ def _run_uc_login_sync(
           # to clear session cookies (SAPISID, SSID, APISID etc.) on startup,
           # dropping the cookie count from 65 to 5 on restored profiles.
       })
+      # ── Write stealth Chrome extension — guaranteed Main World document_start injection ──
+      # CDP Page.addScriptToEvaluateOnNewDocument doesn't survive renderer process changes.
+      # A Chrome extension with world:MAIN + run_at:document_start is the only reliable method.
+      try:
+          _ext_dir = "/tmp/xio_stealth_ext"
+          os.makedirs(_ext_dir, exist_ok=True)
+          # Build rendered stealth JS with PRFL fingerprint
+          _ext_fp = fingerprint if isinstance(fingerprint, dict) else {}
+          _ext_tz = _ext_fp.get("timezone", "America/New_York")
+          try:
+              import datetime as _dtx; import zoneinfo as _zix
+              _ext_tz_off = -int(_dtx.datetime.now(_zix.ZoneInfo(_ext_tz)).utcoffset().total_seconds() // 60)
+          except Exception: _ext_tz_off = 300
+          _ext_wr = _ext_fp.get("webgl_renderer", "ANGLE (Apple, Apple M1, OpenGL 4.1)")
+          _ext_wv = "Apple" if "Apple" in _ext_wr else "Google Inc. (NVIDIA)"
+          _ext_js = (
+              _STEALTH_JS
+              .replace("{WEBGL_V}", _ext_wv).replace("{WEBGL_R}", _ext_wr)
+              .replace("{UA}",          _ext_fp.get("ua_template", _STEALTH_UA_CHROME))
+              .replace("{PLATFORM}",    _ext_fp.get("platform",    "MacIntel"))
+              .replace("{TIMEZONE}",    _ext_tz)
+              .replace("{TZ_OFFSET}",   str(_ext_tz_off))
+              .replace("{CANVAS_SEED}", str(_ext_fp.get("canvas_seed", 42)))
+              .replace("{AUDIO_SEED}",  str(_ext_fp.get("audio_seed",  7)))
+              .replace("{SCREEN_W}",    str(_ext_fp.get("width",   1920)))
+              .replace("{SCREEN_H}",    str(_ext_fp.get("height",  1080)))
+              .replace("{CORES}",       str(_ext_fp.get("cores",   8)))
+              .replace("{RAM}",         str(_ext_fp.get("ram",     16)))
+              .replace("'{LOCALE}'",    "'en-US'")
+              .replace("{LOCALE}",      "en-US")
+              .replace("{LANG}",        "en-US")
+              .replace("{CH_PLATFORM}", _ext_fp.get("ch_platform", "macOS"))
+              .replace("{CH_ARCH}",     _ext_fp.get("ch_arch",     "arm"))
+              .replace("{LAT}",         str(_ext_fp.get("lat",  40.7128)))
+              .replace("{LON}",         str(_ext_fp.get("lon", -74.0060)))
+              .replace("{IS_MOBILE}",   "false")
+              .replace("{SCREEN_AH}",   str(_ext_fp.get("height", 1080)))
+          )
+          with open(f"{_ext_dir}/stealth.js", "w") as _ef:
+              _ef.write(_ext_js)
+          with open(f"{_ext_dir}/manifest.json", "w") as _mf:
+              import json as _json_ext
+              _json_ext.dump({
+                  "manifest_version": 3,
+                  "name": "XIO Stealth",
+                  "version": "1.0",
+                  "description": "XIOSYNC fingerprint spoofing",
+                  "content_scripts": [{
+                      "matches": ["<all_urls>"],
+                      "js": ["stealth.js"],
+                      "run_at": "document_start",
+                      "all_frames": True,
+                      "world": "MAIN",
+                  }],
+              }, _mf)
+          opts.add_argument(f"--load-extension={_ext_dir}")
+          logger.info(f"uc-login: stealth extension loaded from {_ext_dir}")
+      except Exception as _ext_e:
+          logger.warning(f"uc-login: stealth extension write failed (non-fatal): {_ext_e}")
 
       import socket as _sock
       _s = _sock.socket(); _s.bind(("", 0)); _uc_debug_port = _s.getsockname()[1]; _s.close()
-      opts.add_argument(f"--remote-debugging-port={_uc_debug_port}")
-      opts.add_argument("--remote-debugging-address=0.0.0.0")
+      # NOTE: Do NOT add --remote-debugging-address=0.0.0.0 here.
+      # UC internally adds --remote-debugging-host=127.0.0.1. In Chrome 131, having BOTH
+      # --remote-debugging-host AND --remote-debugging-address causes Chrome to disable
+      # remote debugging entirely — chromedriver then times out connecting (70s).
+      # The port is also NOT added here: uc.Chrome(port=X) handles it internally.
       opts.add_argument("--remote-allow-origins=*")   # allow xioview CDP WebSocket to attach
       logger.info(f"uc-login: UC Chrome will use CDP port {_uc_debug_port}")
 
@@ -2248,8 +2856,8 @@ def _run_uc_login_sync(
                 .replace("'{UA}'",        f"'{_ua_str}'")
                 .replace("{UA}",          _ua_str)
                 .replace("{TZ_OFFSET}",   str(_tz_off2))
-                .replace("{CPU_COUNT}",   _cores)
-                .replace("{DEVICE_MEMORY_GB}", _ram)
+                .replace("{CORES}",   _cores)
+                .replace("{RAM}", _ram)
                 .replace("{PLATFORM}",    _platform)
                 .replace("{CH_PLATFORM}", _ch_platform)
                 .replace("{CH_ARCH}",     _ch_arch)
@@ -2403,7 +3011,13 @@ def _run_uc_login_sync(
             time.sleep(_sl_wait)
             curr_start = driver.current_url
             logger.info(f"uc-login: post-nav url attempt {_sl_attempt+1}: {curr_start}")
-            if "accounts.google.com" in curr_start or "google.com/ServiceLogin" in curr_start:
+            # Success: sign-in page OR already-logged-in redirect (Gmail/Drive/etc.)
+            _google_service = any(s in curr_start for s in [
+                "accounts.google.com", "google.com/ServiceLogin",
+                "mail.google.com", "drive.google.com", "docs.google.com",
+                "myaccount.google.com", "youtube.com",
+            ])
+            if _google_service:
                 _sl_ok = True
                 break
             # Still on new-tab — force a second attempt
@@ -2413,44 +3027,108 @@ def _run_uc_login_sync(
         if not _sl_ok:
             # Last chance: try direct IP (bypass possible DNS issue through proxy)
             curr_start = driver.current_url
-            if "chrome://" in curr_start or "new-tab" in curr_start:
+            # If we're already on a Google service page, that's fine — profile was pre-authed
+            _google_service = any(s in curr_start for s in [
+                "accounts.google.com", "google.com/ServiceLogin",
+                "mail.google.com", "drive.google.com", "myaccount.google.com",
+            ])
+            if not _google_service and ("chrome://" in curr_start or "new-tab" in curr_start):
                 raise Exception(
                     f"ServiceLogin unreachable after 3 attempts — "
                     f"still on {curr_start[:80]}. Check proxy connectivity."
                 )
         logger.info(f"uc-login: page_url={curr_start}")
 
-        # ── Wait for React to render the email form (SOCKS proxy slow path) ──
-        # On slow proxies, the URL updates before React mounts the form.
-        # Poll up to 10s for the identifier input to appear in the DOM.
-        _react_ready = False
-        for _ri in range(20):  # 20 × 0.5s = 10s max
-            try:
-                _inp_count = driver.execute_script(
-                    "return document.querySelectorAll('input[name=\"identifier\"],input[type=\"email\"],#identifierId').length"
-                )
-                if _inp_count and int(_inp_count) > 0:
-                    _react_ready = True
-                    logger.info(f"uc-login: email input found after {(_ri+1)*0.5:.1f}s")
-                    break
-            except Exception:
-                pass
-            time.sleep(0.5)
-        if not _react_ready:
-            logger.warning("uc-login: email input not found via poll — attempting find() anyway")
+        # ── Pre-auth fast-path: profile already authenticated ─────────────────
+        # If Chrome redirected to Gmail/Drive/myaccount instead of sign-in page,
+        # the profile has a valid Google session — skip all login form steps.
+        _already_authed = any(s in curr_start for s in [
+            "mail.google.com", "drive.google.com", "docs.google.com",
+            "myaccount.google.com", "youtube.com",
+        ])
+        if _already_authed:
+            logger.info(f"uc-login: ✅ profile pre-authenticated → {curr_start[:80]} — skipping login form")
+            # Flow continues to cookie extraction below
 
-        # ── Handle /challenge/pwd: Google skips email, shows password directly ─
-        # Happens when UC Chrome has a stale identity cookie from a previous run.
-        # The password input on /challenge/pwd has different selectors than normal.
-        if "/challenge/pwd" in curr_start or "/challenge/" in curr_start:
-            logger.info(f"uc-login: skipped email — on challenge page {curr_start[:80]}")
-        else:
-            # Normal flow: fill email
-            cdp_click_element(['input[name="identifier"]', 'input[type="email"]', "#identifierId"])
-            cdp_type_text(email)
-            time.sleep(rnd(0.5, 1.0))
-            cdp_click_element(['#identifierNext', 'button[jsname="LgbsSe"]', 'div[id="identifierNext"]'])
-            logger.info("uc-login: email entered")
+        # ── Handle accountchooser: Google shows saved accounts instead of email field ──
+        # When the profile has a previous Google session, Google redirects to accountchooser.
+        # We must click "Use another account" to get to the identifier (email) input.
+        if not _already_authed and ("accountchooser" in curr_start or ("v3/signin" in curr_start and "accountchooser" in curr_start)):
+            logger.info("uc-login: on accountchooser — clicking 'Use another account'")
+            try:
+                _clicked_other = False
+                for _aci in range(10):   # up to 5s
+                    try:
+                        _res = driver.execute_script("""
+                            var btns = document.querySelectorAll('[data-identifier]');
+                            if (btns.length > 0) {
+                                // Check if our target email is already in the chooser
+                                var email = arguments[0];
+                                for (var b of btns) {
+                                    if (b.getAttribute('data-identifier') === email) {
+                                        b.click();
+                                        return 'clicked_account';
+                                    }
+                                }
+                            }
+                            // No matching account — click "Use another account"
+                            var others = document.querySelectorAll('[data-action="use_another_account"]');
+                            if (others.length > 0) { others[0].click(); return 'use_another'; }
+                            var links = Array.from(document.querySelectorAll('li, [role="listitem"]'));
+                            for (var l of links) {
+                                if (l.textContent.includes('Use another account') || l.textContent.includes('another account')) {
+                                    l.click(); return 'text_click';
+                                }
+                            }
+                            return 'not_found';
+                        """, email)
+                        logger.info(f"uc-login: accountchooser JS result={_res}")
+                        if _res in ('clicked_account', 'use_another', 'text_click'):
+                            _clicked_other = True
+                            time.sleep(2.5)
+                            curr_start = driver.current_url
+                            logger.info(f"uc-login: after chooser nav → {curr_start[:80]}")
+                            break
+                    except Exception as _ace:
+                        logger.debug(f"uc-login: accountchooser JS attempt {_aci}: {_ace}")
+                    time.sleep(0.5)
+                if not _clicked_other:
+                    logger.warning("uc-login: could not handle accountchooser — proceeding anyway")
+            except Exception as _ac_err:
+                logger.warning(f"uc-login: accountchooser handler error: {_ac_err}")
+
+        if not _already_authed:
+            # ── Wait for React to render the email form (SOCKS proxy slow path) ──
+            # On slow proxies, the URL updates before React mounts the form.
+            # Poll up to 10s for the identifier input to appear in the DOM.
+            _react_ready = False
+            for _ri in range(20):  # 20 × 0.5s = 10s max
+                try:
+                    _inp_count = driver.execute_script(
+                        "return document.querySelectorAll('input[name=\"identifier\"],input[type=\"email\"],#identifierId').length"
+                    )
+                    if _inp_count and int(_inp_count) > 0:
+                        _react_ready = True
+                        logger.info(f"uc-login: email input found after {(_ri+1)*0.5:.1f}s")
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5)
+            if not _react_ready:
+                logger.warning("uc-login: email input not found via poll — attempting find() anyway")
+
+            # ── Handle /challenge/pwd: Google skips email, shows password directly ─
+            # Happens when UC Chrome has a stale identity cookie from a previous run.
+            # The password input on /challenge/pwd has different selectors than normal.
+            if "/challenge/pwd" in curr_start or "/challenge/" in curr_start:
+                logger.info(f"uc-login: skipped email — on challenge page {curr_start[:80]}")
+            else:
+                # Normal flow: fill email
+                cdp_click_element(['input[name="identifier"]', 'input[type="email"]', "#identifierId"])
+                cdp_type_text(email)
+                time.sleep(rnd(0.5, 1.0))
+                cdp_click_element(['#identifierNext', 'button[jsname="LgbsSe"]', 'div[id="identifierNext"]'])
+                logger.info("uc-login: email entered")
             time.sleep(2.5)
 
             curr = driver.current_url
@@ -2591,7 +3269,51 @@ def _run_uc_login_sync(
                         else:
                             logger.warning("uc-login: reCAPTCHA solver returned False")
                     else:
-                        logger.warning(f"uc-login: recaptcha_solver.py not found at {_rc_path}")
+                        logger.warning(f"uc-login: recaptcha_solver.py not found at {_rc_path} — triggering HITL")
+                        # ── reCAPTCHA HITL: pause login and hand off to operator ──
+                        try:
+                            import uuid as _rc_uuid
+                            _xv_url = (
+                                f"{XIOSYNC_BASE}/api/v1/xioview/sessions/prfl002-login/view"
+                                if XIOSYNC_BASE else "XIOVIEW: prfl002-login"
+                            )
+                            _novnc_hint = f"\n⚡ noVNC (direct/low-lag): {_NOVNC_URL}" if _NOVNC_URL else ""
+                            _rc_notice = HITLNotice(
+                                organization_id=_rc_uuid.UUID("00000000-0000-7000-8000-000000000000"),
+                                session_id="prfl002-login",
+                                challenge_type="recaptcha",
+                                message=(
+                                    f"🔒 reCAPTCHA challenge for {email}\n"
+                                    f"👁 Watch & solve live: {_xv_url}{_novnc_hint}\n"
+                                    f"URL: {curr2[:120]}\n"
+                                    "Click 'I'm not a robot' checkbox or 'Try another way' in XIOVIEW, then Resume."
+                                ),
+                                instructions=(
+                                    f"Open {_xv_url} — solve the reCAPTCHA or choose another verification method. "
+                                    f"noVNC (direct, low-lag): {_NOVNC_URL or 'N/A'}. "
+                                    "Then POST /hitl/{id}/resume to continue."
+                                ),
+                            )
+                            _hitl_store.create(_rc_notice)
+                            _rc_notice_id = str(_rc_notice.id)
+                            logger.info(
+                                f"uc-login: ✅ reCAPTCHA HITL created id={_rc_notice_id} — "
+                                f"view={_xv_url} — blocking 300s for operator"
+                            )
+                            _rc_event = _hitl_store._events.get(_rc_notice.id)
+                            if _rc_event:
+                                _rc_event.wait(timeout=300)
+                            _rc_resumed = _hitl_store._notices.get(_rc_notice.id)
+                            if _rc_resumed and _rc_resumed.state == HITLState.RESUMED:
+                                logger.info("uc-login: reCAPTCHA HITL resumed — re-evaluating page")
+                                curr2 = driver.current_url
+                                _is_challenge = "challenge/" in curr2 and "challenge/pwd" not in curr2
+                                if not _is_challenge:
+                                    logger.info("uc-login: ✅ reCAPTCHA cleared after HITL")
+                            else:
+                                logger.warning("uc-login: reCAPTCHA HITL timed out — proceeding anyway")
+                        except Exception as _rc_hitl_e:
+                            logger.warning(f"uc-login: reCAPTCHA HITL error: {_rc_hitl_e}")
                 except Exception as _rc_e:
                     logger.warning(f"uc-login: reCAPTCHA handling error: {_rc_e}")
 
@@ -2989,18 +3711,20 @@ def _run_uc_login_sync(
             pass
 
         session_id = os.path.basename(user_data_dir).replace("uc-profile-", "") if user_data_dir else ""
-        if session_id:
-            _uc_drivers[session_id] = driver
-            logger.info(f"uc-login: driver kept alive session={session_id} uc_port={_uc_port}")
-        # NOTE: driver.quit() is intentionally NOT called here on success.
-        # The authenticated Chrome process stays alive for subsequent automation.
+        # Quit the login Chrome to free RAM — cookies already captured above.
+        # Colab has only 12.7GB RAM; two Chrome instances cause OOM kills.
+        try:
+            driver.quit()
+            logger.info("uc-login: Chrome quit (RAM freed)")
+        except Exception as _qe:
+            logger.debug(f"uc-login: Chrome quit error (non-fatal): {_qe}")
 
         logger.info(f"uc-login: success cookies={len(cookies)} final_url={final_url}")
         return {
             "ok": True, "cookies": cookies, "engine": "uc",
             "final_url":   final_url,
             "profile_dir": user_data_dir,
-            "uc_port":     _uc_port,       # Chrome CDP port — patchright can connect_over_cdp to this
+            "uc_port":     0,   # Chrome is quit — no CDP port to expose
         }
 
     except Exception as exc:
@@ -3191,6 +3915,88 @@ async def cdp_proxy_version(session_id: str) -> dict:
         raise _HTTPExc(500, detail=str(exc)) from exc
 
 
+def _launch_uc_chrome_for_login(profile_dir: str, proxy_url: str | None) -> tuple:
+    """
+    Launch UC Chrome (Chrome 131) for login — returns (driver, port).
+    Module-level so /run-uc-login can call it directly (no subprocess).
+    Uses use_subprocess=False — same config as the working lifespan Chrome.
+    All traffic routes through proxy_url; Colab IP is never exposed.
+    """
+    import undetected_chromedriver as uc
+    import socket as _sock
+
+    # Prefer Chrome 131 (best UC 3.5.5 compatibility)
+    _chrome_bin, _chrome_ver = "/opt/chrome131/chrome", 131
+    if not (os.path.isfile(_chrome_bin) and os.access(_chrome_bin, os.X_OK)):
+        for _p in ["/usr/bin/google-chrome-stable", "/usr/bin/google-chrome"]:
+            if os.path.isfile(_p) and os.access(_p, os.X_OK):
+                try:
+                    import subprocess as _sp2
+                    _raw = _sp2.check_output([_p, "--version"], timeout=5, stderr=_sp2.DEVNULL).decode()
+                    _chrome_ver = int(_raw.split()[-1].split(".")[0])
+                    _chrome_bin = _p
+                    break
+                except Exception:
+                    pass
+
+    opts = uc.ChromeOptions()
+    if proxy_url:
+        _addr = proxy_url.replace("socks5://", "").replace("socks5h://", "")
+        opts.add_argument(f"--proxy-server=socks5://{_addr}")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--use-gl=angle")
+    opts.add_argument("--use-angle=gl")
+    opts.add_argument("--enable-webgl")
+    opts.add_argument("--enable-webgl2")
+    opts.add_argument("--ignore-gpu-blocklist")
+    opts.add_argument("--disable-blink-features=AutomationControlled")
+    opts.add_argument("--window-size=1920,1080")
+    opts.add_argument("--no-first-run")
+    opts.add_argument("--no-default-browser-check")
+    opts.add_argument("--disable-infobars")
+    opts.add_argument("--remote-allow-origins=*")
+    opts.add_experimental_option("prefs", {
+        "webrtc.ip_handling_policy":     "disable_non_proxied_udp",
+        "webrtc.multiple_routes_enabled": False,
+        "webrtc.nonproxied_udp_enabled":  False,
+    })
+
+    _s = _sock.socket(); _s.bind(("", 0)); port = _s.getsockname()[1]; _s.close()
+
+    # Set up chromedriver binary
+    _our_cd = f"/usr/local/bin/chromedriver{_chrome_ver}"
+    if not os.path.isfile(_our_cd):
+        _our_cd = "/usr/local/bin/chromedriver131"
+    _uc_cd_dir = os.path.expanduser("~/.local/share/undetected_chromedriver")
+    _uc_cd_path = os.path.join(_uc_cd_dir, "undetected_chromedriver")
+    if os.path.isfile(_our_cd):
+        os.makedirs(_uc_cd_dir, exist_ok=True)
+        import shutil as _sh2
+        _sh2.copy2(_our_cd, _uc_cd_path)
+        os.chmod(_uc_cd_path, 0o755)
+
+    # Clean stale profile locks
+    os.makedirs(profile_dir, exist_ok=True)
+    for _lk in ["SingletonLock", "SingletonCookie", "SingletonSocket"]:
+        try: os.remove(os.path.join(profile_dir, _lk))
+        except FileNotFoundError: pass
+
+    logger.info(f"_launch_uc_chrome_for_login: Chrome {_chrome_ver} proxy={bool(proxy_url)} port={port}")
+    driver = uc.Chrome(
+        options=opts,
+        browser_executable_path=_chrome_bin,
+        driver_executable_path=_uc_cd_path if os.path.isfile(_uc_cd_path) else None,
+        version_main=_chrome_ver,
+        use_subprocess=False,
+        headless=False,
+        port=port,
+        user_data_dir=profile_dir,
+        keep_user_data_dir=True,
+    )
+    return driver, port
+
+
 @app.post("/run-uc-login")
 async def run_uc_login(req: UCLoginRequest) -> dict:
     """
@@ -3354,18 +4160,49 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
             logger.warning(f"run-uc-login: lock acquire failed ({_lk_err}) — proceeding without lock")
 
     try:
-        # If /run-uc-login-start pre-launched a UC Chrome, pass it in to reuse
-        _pre_driver = _uc_pending_drivers.pop(req.session_id, None)
+        # ── IN-PROCESS APPROACH (replaces subprocess runner) ──────────────────────
+        # Root cause of subprocess failure: Chrome inherits the agent's open file
+        # descriptors (patchright websockets) → cannot bind CDP port.
+        # SOCKS5 proxy gets saturated when a new Chrome is spawned alongside Chrome 131.
+        #
+        # Fix: use _launch_uc_chrome() (same as /run-uc-login-start + lifespan Chrome)
+        # which runs Chrome 131 in-process via run_in_executor with use_subprocess=False.
+        # Then run the login directly via _run_uc_login_sync(pre_launched_driver=driver).
+        # This is the same working 2-step flow, collapsed into a single atomic call.
+        # ──────────────────────────────────────────────────────────────────────────
+        loop = asyncio.get_event_loop()
+        # ── CRITICAL: use a FRESH per-email profile for the login Chrome ──────────
+        # The cascade-pulled _profile_dir belongs to a reference account (PRFL-002)
+        # and has live cookies → Chrome auto-redirects to Gmail, never shows sign-in form.
+        # Always use an isolated clean profile so Chrome shows the email/password form.
+        _email_slug = re.sub(r"[^a-zA-Z0-9]", "_", req.email.split("@")[0])[:24]
+        _login_profile_dir = f"/tmp/uc_login_{_email_slug}"
+        logger.info(f"uc-login: using fresh login profile: {_login_profile_dir}")
+
+        logger.info("uc-login: launching Chrome in-process via _launch_uc_chrome_for_login()...")
+        _uc_drv, _uc_port = await loop.run_in_executor(
+            None, lambda: _launch_uc_chrome_for_login(_login_profile_dir, proxy_url)
+        )
+        logger.info(f"uc-login: Chrome ready on port {_uc_port}, running login in executor...")
+
         result = await loop.run_in_executor(
             None,
-            functools.partial(
-                _run_uc_login_sync,
-                req.email, req.password, req.totp_secret, proxy_url, user_agent,
-                user_data_dir=_profile_dir,
-                pre_launched_driver=_pre_driver,
-                exit_node_public_ip=req.exit_node_public_ip,
+            lambda: _run_uc_login_sync(
+                email=req.email,
+                password=req.password,
+                totp_secret=req.totp_secret or "",
+                proxy_url=proxy_url,
+                user_agent=user_agent,
+                user_data_dir=_login_profile_dir,   # fresh profile — not cascade PRFL
+                pre_launched_driver=_uc_drv,
+                exit_node_public_ip=req.exit_node_public_ip or None,
+                fingerprint=req.fingerprint if hasattr(req, "fingerprint") else None,
             ),
         )
+        logger.info(f"uc-login: in-process result: ok={result.get('ok')} url={result.get('url','?')}")
+        # Attach port so cookie injection downstream knows where Chrome lives
+        if "uc_port" not in result:
+            result["uc_port"] = _uc_port
 
         if result.get("ok") and result.get("uc_port"):
             # ── Register session so /health and other endpoints can reference it ──
@@ -3422,23 +4259,84 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
             ]) or "final_url" in str(result)
             if _recoverable:
                 try:
-                    from xiosync.subsystems.xiorun.hitl import HITLNotice, HITLState
                     import uuid as _hitl_uuid
-                    _org_id = _hitl_uuid.UUID(req.org_id if hasattr(req, "org_id") and req.org_id else "00000000-0000-7000-8000-000000000000")
+                    _org_id = _hitl_uuid.UUID("00000000-0000-7000-8000-000000000000")
+                    _xioview_url = (
+                        f"{XIOSYNC_BASE}/api/v1/xioview/sessions/prfl002-login/view"
+                        if XIOSYNC_BASE else "XIOVIEW: prfl002-login"
+                    )
                     _notice = HITLNotice(
                         organization_id=_org_id,
-                        session_id=req.session_id or "uc-login",
-                        challenge_type="login_failed",
-                        message=f"Google sign-in failed for {req.email}: {_error_msg[:200]}",
+                        session_id="prfl002-login",
+                        challenge_type="recaptcha" if "captcha" in _error_msg.lower() or "rejected" in _error_msg.lower() else "login_failed",
+                        message=(
+                            f"Google sign-in challenge for {req.email}.\n"
+                            f"Error: {_error_msg[:200]}\n"
+                            f"👁 Watch live: {_xioview_url}\n"
+                            f"Action: Solve reCAPTCHA or verify account manually in the XIOVIEW browser, then Resume."
+                        ),
                         identity_id=_hitl_uuid.UUID(req.identity_id) if req.identity_id else None,
-                        instructions="Check XIOVIEW for the current browser state. Resume after manual intervention or retry.",
+                        instructions=(
+                            "Open XIOVIEW URL above. Solve the reCAPTCHA or complete the verification. "
+                            "Then POST /hitl/{id}/resume with {\"action\": \"resume\"} to continue login."
+                        ),
                     )
                     _hitl_store.create(_notice)
-                    logger.info(f"run-uc-login: HITL notice created id={_notice.id} — waiting up to 300s for resume")
-                    result["hitl_notice_id"] = str(_notice.id)
+                    _notice_id = str(_notice.id)
+                    logger.info(
+                        f"run-uc-login: ✅ HITL notice created id={_notice_id} — "
+                        f"view={_xioview_url} — waiting up to 300s for operator resume"
+                    )
+                    result["hitl_notice_id"] = _notice_id
                     result["hitl_state"] = "PENDING"
-                    # Don't block — return immediately with HITL info so the
-                    # workflow caller can decide whether to wait or retry
+                    result["xioview_url"] = _xioview_url
+                    result["hitl_resume_url"] = f"http://127.0.0.1:{os.environ.get('XIORUN_AGENT_PORT', '9300')}/hitl/{_notice_id}/resume"
+
+                    # ── Block and wait for operator to resume (up to 300s) ────
+                    # The driver is still alive — XIOVIEW can control it.
+                    # When operator resumes, re-check if login succeeded.
+                    import asyncio as _hitl_asyncio
+                    _hitl_event = _hitl_store._events.get(_notice.id)
+                    if _hitl_event:
+                        logger.info("run-uc-login: pausing — waiting for HITL resume...")
+                        _hitl_loop = _hitl_asyncio.get_event_loop()
+
+                        async def _wait_hitl():
+                            try:
+                                await _hitl_asyncio.wait_for(
+                                    asyncio.shield(_hitl_asyncio.wrap_future(
+                                        _hitl_loop.run_in_executor(None, _hitl_event.wait)
+                                    )),
+                                    timeout=300.0,
+                                )
+                            except _hitl_asyncio.TimeoutError:
+                                pass
+
+                        # Run wait in thread (we're in a thread executor already)
+                        import threading as _hitl_thr
+                        _hitl_event.wait(timeout=300)
+
+                        _resumed_notice = _hitl_store._notices.get(_notice.id)
+                        if _resumed_notice and _resumed_notice.state == HITLState.RESUMED:
+                            logger.info("run-uc-login: HITL resumed by operator — re-checking login state")
+                            try:
+                                _post_hitl_url = driver.current_url
+                                logger.info(f"run-uc-login: post-HITL URL: {_post_hitl_url[:100]}")
+                                if "myaccount.google.com" in _post_hitl_url or "mail.google.com" in _post_hitl_url:
+                                    result["ok"] = True
+                                    result["error"] = ""
+                                    result["hitl_state"] = "RESUMED_SUCCESS"
+                                    logger.info("run-uc-login: ✅ Login succeeded after HITL resume!")
+                                elif "accounts.google.com" not in _post_hitl_url:
+                                    result["ok"] = True
+                                    result["hitl_state"] = "RESUMED_SUCCESS"
+                                    logger.info(f"run-uc-login: ✅ Navigated away from Google login after HITL: {_post_hitl_url[:80]}")
+                            except Exception as _phr:
+                                logger.warning(f"run-uc-login: post-HITL URL check error: {_phr}")
+                        else:
+                            logger.warning("run-uc-login: HITL timed out (300s) — no operator action")
+                            result["hitl_state"] = "EXPIRED"
+
                 except Exception as _hitl_err:
                     logger.warning(f"run-uc-login: HITL creation failed: {_hitl_err}")
 
@@ -3551,12 +4449,14 @@ async def run_uc_login_start(req: UCLoginRequest) -> dict:
         opts = uc.ChromeOptions()
         proxy_addr = proxy_url.replace("socks5://", "")
         opts.add_argument(f"--proxy-server=socks5://{proxy_addr}")
+
         opts.add_argument("--no-sandbox")
-        opts.add_argument("--disable-setuid-sandbox")
+        # --disable-setuid-sandbox removed — triggers visible warning banner (bot signal)
         opts.add_argument("--disable-dev-shm-usage")
         opts.add_argument("--use-gl=angle")
-        opts.add_argument("--use-angle=swiftshader")
-        opts.add_argument("--disable-gpu-sandbox")
+        opts.add_argument("--use-angle=gl")       # EGL/Mesa, not swiftshader
+        opts.add_argument("--enable-webgl")
+        opts.add_argument("--enable-webgl2")
         opts.add_argument("--ignore-gpu-blocklist")
         opts.add_argument("--disable-blink-features=AutomationControlled")
         opts.add_argument("--disable-service-workers")
@@ -3580,6 +4480,11 @@ async def run_uc_login_start(req: UCLoginRequest) -> dict:
         # Pick free debug port — passed to uc.Chrome(port=) directly (not via opts)
         # DO NOT also add --remote-debugging-port to opts; uc.Chrome sets it via port=
         _s = _sock.socket(); _s.bind(("", 0)); port = _s.getsockname()[1]; _s.close()
+
+        # Allow XIOVIEW server (Mac Mini) to connect CDP WS without origin rejection
+        opts.add_argument("--remote-allow-origins=*")
+        # NOTE: Do NOT add --remote-debugging-address=0.0.0.0 — conflicts with UC's
+        # internal --remote-debugging-host=127.0.0.1, disabling Chrome remote debugging.
 
         # Ensure UC chromedriver path has our version-matched binary before patching
         # UC patches ~/.local/share/undetected_chromedriver/undetected_chromedriver in place.
@@ -4032,31 +4937,44 @@ async def session_cascade_check(req: CascadeCheckRequest):
         except Exception as e:
             logger.warning(f"cascade-check: L2 verify error: {e}")
 
-    # Level 3: Pull from Drive FUSE
+    # Level 3: Pull from Drive FUSE — canonical path is profiles/PRFL-NNN.tar.gz
+    # Also check legacy chrome_profiles/PRFL_{hex}.tar.gz as a fallback.
     try:
-        # Import profile_store — available if boot.py has set up env vars
-        _ps_candidates = [
-            "/tmp/xio_drive_fs.py",
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "xiosync", "subsystems", "xiorun", "profile_store.py"),
-        ]
-        # Use a lightweight Drive check: does the tar.gz file exist on Drive?
-        _drive_profile_key = f"chrome_profiles/PRFL_{_id_short}.tar.gz"
-        _drive_path = os.path.join(DRIVE_ROOT, _drive_profile_key)
-        if os.path.exists(_drive_path):
-            logger.info(f"cascade-check: L3 Drive profile found: {_drive_path}")
-            # Extract it locally
-            _profile_dir = f"/tmp/xiorun_profiles/PRFL_{_id_short}__{_node_slug}"
-            os.makedirs(_profile_dir, exist_ok=True)
-            import tarfile as _tf_cc
+        import tarfile as _tf_cc
+        _profile_dir = f"/tmp/xiorun_profiles/PRFL_{_id_short}__{_node_slug}"
+        os.makedirs(_profile_dir, exist_ok=True)
+
+        # Canonical: scan profiles/PRFL-*.tar.gz and pick the one whose inner
+        # slug matches this identity's email prefix / id_short.
+        _profiles_dir = os.path.join(DRIVE_ROOT, "profiles")
+        _found_tar = None
+        if os.path.isdir(_profiles_dir):
+            for _p in sorted(os.listdir(_profiles_dir)):
+                if _p.endswith(".tar.gz") and _p.startswith("PRFL-"):
+                    # Each archive may contain any profile slug — just offer
+                    # all available profiles ordered by name; caller picks first.
+                    # For now pick the first one; future: match by cookie domain.
+                    _found_tar = os.path.join(_profiles_dir, _p)
+                    break  # will be refined in Phase 4 agy-auth to pick by account
+
+        # Legacy fallback: chrome_profiles/PRFL_{id_short}.tar.gz
+        if not _found_tar:
+            _legacy = os.path.join(DRIVE_ROOT, f"chrome_profiles/PRFL_{_id_short}.tar.gz")
+            if os.path.exists(_legacy):
+                _found_tar = _legacy
+
+        if _found_tar:
+            logger.info(f"cascade-check: L3 Drive profile found: {_found_tar}")
             try:
-                with _tf_cc.open(_drive_path, "r:gz") as tf:
+                with _tf_cc.open(_found_tar, "r:gz") as tf:
                     tf.extractall(path="/tmp/xiorun_profiles")
                 logger.info(f"cascade-check: L3 profile extracted to {_profile_dir}")
-                return {"valid": False, "profile_dir": _profile_dir, "level": "DRIVE_PULL", "needs_verify": True}
+                return {"valid": False, "profile_dir": _profile_dir, "level": "DRIVE_PULL",
+                        "needs_verify": True, "source_tar": _found_tar}
             except Exception as _tex:
                 logger.warning(f"cascade-check: L3 extract failed: {_tex}")
         else:
-            logger.info(f"cascade-check: L3 no Drive profile at {_drive_path}")
+            logger.info(f"cascade-check: L3 no Drive profile found in profiles/ or chrome_profiles/")
     except Exception as e:
         logger.warning(f"cascade-check: L3 Drive check error: {e}")
 
@@ -4130,16 +5048,36 @@ async def persist_session(req: PersistSessionRequest):
         except Exception as e:
             logger.warning(f"persist-session: cookie save error: {e}")
 
-    # 2. Save Chrome profile tar to Drive FUSE
+    # 2. Save Chrome profile tar to Drive FUSE — canonical path: profiles/PRFL-NNN.tar.gz
     if req.profile_dir and os.path.isdir(req.profile_dir):
         try:
             import tarfile as _tf_ps, hashlib as _hl_ps
             _id_short = req.identity_id.replace("-", "")[:16]
-            _profile_key = f"chrome_profiles/PRFL_{_id_short}.tar.gz"
-            _drive_path = os.path.join(DRIVE_ROOT, _profile_key)
-            os.makedirs(os.path.dirname(_drive_path), exist_ok=True)
 
-            # Trim cache dirs before archiving (same set as profile_store.py)
+            # Determine canonical profile number: scan existing profiles/ for one
+            # already named for this identity, or allocate the next PRFL-NNN slot.
+            _profiles_dir_ps = os.path.join(DRIVE_ROOT, "profiles")
+            os.makedirs(_profiles_dir_ps, exist_ok=True)
+            _existing_nums = []
+            _matched_key = None
+            if os.path.isdir(_profiles_dir_ps):
+                for _pf in sorted(os.listdir(_profiles_dir_ps)):
+                    if _pf.endswith(".tar.gz") and _pf.startswith("PRFL-"):
+                        try:
+                            _existing_nums.append(int(_pf[5:8]))
+                        except ValueError:
+                            pass
+
+            # Check if a chrome_profiles/ entry already exists for backwards compat
+            _legacy_key = f"chrome_profiles/PRFL_{_id_short}.tar.gz"
+            _legacy_path = os.path.join(DRIVE_ROOT, _legacy_key)
+
+            # Allocate new serial number if no existing canonical entry found
+            _next_num = (max(_existing_nums) + 1) if _existing_nums else 1
+            _profile_key = f"profiles/PRFL-{_next_num:03d}.tar.gz"
+            _drive_path = os.path.join(DRIVE_ROOT, _profile_key)
+
+            # Trim cache dirs before archiving
             _TRIM = ["Cache", "Code Cache", "GPUCache", "DawnCache", "ShaderCache",
                       "Service Worker/CacheStorage", "Service Worker/ScriptCache",
                       "BudgetDatabase", "Network Action Predictor"]
@@ -4158,19 +5096,1093 @@ async def persist_session(req: PersistSessionRequest):
                 with _tf_ps.open(_tmp_tar_path, "w:gz") as tf:
                     tf.add(req.profile_dir, arcname=os.path.basename(req.profile_dir))
                 _sz = os.path.getsize(_tmp_tar_path)
-                # Copy to Drive (atomic: write to tmp then rename)
+                # Atomic copy to canonical location
                 import shutil as _sh2
                 _sh2.copy2(_tmp_tar_path, _drive_path)
                 results["profile_saved"] = True
                 results["profile_key"] = _profile_key
                 results["profile_size"] = _sz
                 logger.info(f"persist-session: profile saved to Drive: {_profile_key} ({_sz:,}b)")
+
+                # Clean up legacy chrome_profiles/ duplicate if it exists
+                if os.path.exists(_legacy_path):
+                    try:
+                        os.unlink(_legacy_path)
+                        logger.info(f"persist-session: removed legacy duplicate {_legacy_key}")
+                    except Exception as _le:
+                        logger.warning(f"persist-session: legacy cleanup failed: {_le}")
             finally:
                 os.unlink(_tmp_tar_path)
         except Exception as e:
             logger.warning(f"persist-session: profile save error: {e}")
 
     return results
+
+
+# ── AI Generation Endpoints ────────────────────────────────────────────────────
+
+# Constants for native agy
+_AGY_BIN = os.environ.get("XIOAI_AGY_BIN") or os.path.expanduser("~/.local/bin/agy")
+_AGY_GEMINI_DIR = os.path.expanduser("~/.gemini")
+_AGY_STATE_DIR = os.path.join(_AGY_GEMINI_DIR, "antigravity-cli")
+_AGY_TOKEN_FILE = os.path.join(_AGY_GEMINI_DIR, "jetski-standalone-oauth-token")
+
+
+# ── Per-profile fingerprint persistence ───────────────────────────────────────
+# Maps each Chrome profile (PRFL-001 etc.) to a stable device identity stored
+# alongside its .tar.gz on Drive as PRFL-NNN.fingerprint.json.
+# Keys match exactly what the existing launch_browser() machinery expects.
+#
+# Only the STATIC identity fields are persisted (canvas/audio seeds, UA, screen,
+# hardware). Runtime-dynamic fields (timezone, locale, lat/lon) are resolved
+# live from the exit-node IP by the existing _resolve_ip_geo() — same as always.
+
+_PROFILE_FINGERPRINT_CACHE: dict[str, dict] = {}
+
+# Deterministic base presets per profile number — each profile = distinct persona
+_PRFL_PRESETS: dict[int, dict] = {
+    1: {  # PRFL-001: Indian professional, Windows 10 laptop, GTX 1050
+        "canvas_seed": 0x1A2B3C, "audio_seed": 0x4D5E6F,
+        "ua_template": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/131.0.6778.108 Safari/537.36"),
+        "platform": "Win32", "ch_platform": "Windows", "ch_arch": "x86",
+        "width": 1920, "height": 1080, "cores": 8, "ram": 8, "is_mobile": False,
+        "webgl_renderer": "ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    },
+    2: {  # PRFL-002: Indian student, macOS Sequoia, M1 MacBook Air
+        "canvas_seed": 0x7A8B9C, "audio_seed": 0xABCDEF,
+        "ua_template": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/130.0.0.0 Safari/537.36"),
+        "platform": "MacIntel", "ch_platform": "macOS", "ch_arch": "arm",
+        "width": 2560, "height": 1600, "cores": 10, "ram": 16, "is_mobile": False,
+        "webgl_renderer": "ANGLE (Apple, Apple M1, OpenGL 4.1)",
+    },
+    5: {  # PRFL-005: Developer, Linux Mint, Intel UHD
+        "canvas_seed": 0xC0FFEE, "audio_seed": 0xDEADBE,
+        "ua_template": ("Mozilla/5.0 (X11; Linux x86_64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/129.0.0.0 Safari/537.36"),
+        "platform": "Linux x86_64", "ch_platform": "Linux", "ch_arch": "x86",
+        "width": 1920, "height": 1200, "cores": 16, "ram": 32, "is_mobile": False,
+        "webgl_renderer": "ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    },
+}
+_PRFL_DEFAULT_PRESET = _PRFL_PRESETS[1]
+
+
+def _load_profile_fingerprint(profile_id: str, drive_root: str) -> dict:
+    """Load or create a persistent fingerprint for a profile.
+
+    Reads Drive/profiles/PRFL-NNN.fingerprint.json if it exists.
+    Otherwise generates from _PRFL_PRESETS and saves to Drive.
+
+    Returns a dict compatible with the existing launch_browser() fingerprint
+    format: canvas_seed, audio_seed, ua_template, width, height, cores, ram,
+    platform, ch_platform, ch_arch, is_mobile, webgl_renderer.
+
+    The proxy/timezone/locale/lat/lon are NOT stored here — they are runtime-
+    dynamic and resolved live by _resolve_ip_geo() as always.
+    """
+    if profile_id in _PROFILE_FINGERPRINT_CACHE:
+        return _PROFILE_FINGERPRINT_CACHE[profile_id]
+
+    fp_path = os.path.join(drive_root, "profiles", f"{profile_id}.fingerprint.json")
+
+    # Try loading from Drive
+    if os.path.isfile(fp_path):
+        try:
+            with open(fp_path) as _f:
+                fp = json.load(_f)
+            _PROFILE_FINGERPRINT_CACHE[profile_id] = fp
+            logger.info(f"profile_fingerprint: loaded {profile_id} from {fp_path}")
+            return fp
+        except Exception as _e:
+            logger.warning(f"profile_fingerprint: load failed for {profile_id}: {_e}")
+
+    # Generate from preset
+    try:
+        _num = int(profile_id.split("-")[-1])
+    except (ValueError, IndexError):
+        _num = 1
+    fp = dict(_PRFL_PRESETS.get(_num, _PRFL_DEFAULT_PRESET))
+    fp["profile_id"] = profile_id
+
+    # Persist to Drive (static fields only)
+    try:
+        os.makedirs(os.path.dirname(fp_path), exist_ok=True)
+        with open(fp_path + ".tmp", "w") as _f:
+            json.dump(fp, _f, indent=2)
+        os.replace(fp_path + ".tmp", fp_path)
+        logger.info(f"profile_fingerprint: created + saved {profile_id} → {fp_path}")
+    except Exception as _e:
+        logger.warning(f"profile_fingerprint: save failed for {profile_id}: {_e}")
+
+    _PROFILE_FINGERPRINT_CACHE[profile_id] = fp
+    return fp
+
+
+
+
+def _is_agy_installed() -> bool:
+    """Check if agy binary exists on this worker."""
+    return os.path.isfile(_AGY_BIN) and os.access(_AGY_BIN, os.X_OK)
+
+
+def _is_agy_authenticated() -> bool:
+    """Check if agy has valid credentials on this worker."""
+    if not _is_agy_installed():
+        return False
+    # Check composite_token_storage dir (agy >= v1.1.19)
+    if os.path.isdir(_AGY_STATE_DIR):
+        import re as _re
+        for f in os.listdir(_AGY_STATE_DIR):
+            if _re.search(r'token|credential|oauth|auth', f, _re.I) and not f.endswith(('.log', '.pbtxt')):
+                try:
+                    raw = open(os.path.join(_AGY_STATE_DIR, f), 'r', errors='ignore').read(4096)
+                    if 'refresh_token' in raw or 'access_token' in raw:
+                        return True
+                except Exception:
+                    pass
+    # Legacy token path (agy < v1.1.19)
+    if os.path.isfile(_AGY_TOKEN_FILE):
+        try:
+            import json as _json
+            t = _json.loads(open(_AGY_TOKEN_FILE).read())
+            return bool(t.get("token", {}).get("refresh_token") or t.get("refresh_token"))
+        except Exception:
+            pass
+    return False
+
+
+async def _run_agy_local(prompt: str, *, system: str = "", output_format: str = "text",
+                         json_schema: str | None = None, temperature: float = 0.2,
+                         max_tokens: int = 8192, timeout: int = 120,
+                         model: str | None = None) -> dict:
+    """Run agy CLI as a subprocess and return the result."""
+    import subprocess as _sp
+    import shlex
+
+    cmd = [_AGY_BIN, f"--print={prompt}", "--dangerously-skip-permissions", "--effort=high"]
+    if output_format == "json":
+        cmd.append("--output-format=json")
+    if json_schema:
+        cmd.append(f"--json-schema={json_schema}")
+    mdl = model or os.environ.get("XIOAI_AGY_MODEL")
+    if mdl:
+        cmd.append(f"--model={mdl}")
+    if timeout > 0:
+        cmd.append(f"--print-timeout={timeout}s")
+
+    # Environment: set proxy for residential exit + unset DISPLAY to prevent Chrome conflict
+    env = dict(os.environ)
+    env["DISPLAY"] = ""  # Prevent agy from detecting Chrome CDP
+    proxy = os.environ.get("XIOAI_AGY_PROXY") or os.environ.get("SSH_PROXY_URL", "socks5://127.0.0.1:19055")
+    if proxy:
+        env["HTTPS_PROXY"] = proxy
+        env["ALL_PROXY"] = proxy
+    env.setdefault("HOME", os.path.expanduser("~"))
+    env["PATH"] = f"{os.path.expanduser('~/.local/bin')}:{env.get('PATH', '/usr/local/bin:/usr/bin:/bin')}"
+
+    logger.info(f"ai_generate: running agy local cmd_len={len(cmd)} timeout={timeout}")
+    try:
+        proc = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: _sp.run(
+                cmd, env=env, capture_output=True, text=True,
+                timeout=timeout + 10,
+            ),
+        )
+        if proc.returncode == 0:
+            return {
+                "ok": True, "text": proc.stdout.strip(),
+                "provider": "agy_local", "model": mdl or "default",
+            }
+        else:
+            return {
+                "ok": False, "error": f"agy exit {proc.returncode}: {proc.stderr[:500]}",
+                "provider": "agy_local",
+            }
+    except _sp.TimeoutExpired:
+        return {"ok": False, "error": f"agy timed out after {timeout}s", "provider": "agy_local"}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "provider": "agy_local"}
+
+
+class AIGenerateRequest(BaseModel):
+    prompt: str
+    system: str = ""
+    output_format: str = "text"
+    json_schema: str | None = None
+    temperature: float = 0.2
+    max_tokens: int = 8192
+    timeout: int = 120
+    model: str | None = None
+    provider: str | None = None  # "local", "remote", or None (auto)
+
+
+@app.get("/ai/status")
+async def ai_status() -> dict:
+    """Check AI capabilities on this worker."""
+    installed = _is_agy_installed()
+    authenticated = _is_agy_authenticated() if installed else False
+    version = None
+    if installed:
+        try:
+            import subprocess as _sp
+            version = _sp.check_output(
+                [_AGY_BIN, "--version"], text=True, timeout=5,
+                env={**os.environ, "DISPLAY": ""},
+            ).strip()
+        except Exception:
+            pass
+
+    # Check XIOSYNC server reachability for remote path
+    xiosync_url = os.environ.get("XIOSYNC_URL", "")
+    remote_available = bool(xiosync_url)
+
+    return {
+        "agy_installed": installed,
+        "agy_authenticated": authenticated,
+        "agy_version": version,
+        "agy_binary": _AGY_BIN if installed else None,
+        "remote_available": remote_available,
+        "xiosync_url": xiosync_url or None,
+        "preferred_provider": (
+            "agy_local" if authenticated else
+            "agy_remote" if remote_available else
+            "none"
+        ),
+    }
+
+
+@app.post("/ai/generate")
+async def ai_generate(req: AIGenerateRequest) -> dict:
+    """Generate AI content — runs local agy or proxies to XIOSYNC server.
+
+    Provider selection:
+      - "local": Force local agy (must be installed + authenticated)
+      - "remote": Force proxy to XIOSYNC server
+      - None/auto: local if authenticated, otherwise remote
+    """
+    provider = req.provider
+
+    # Auto-detect provider
+    if not provider:
+        if _is_agy_authenticated():
+            provider = "local"
+        else:
+            provider = "remote"
+
+    if provider == "local":
+        if not _is_agy_installed():
+            raise HTTPException(status_code=503, detail="agy not installed on this worker. Call POST /ai/install-agy first.")
+        if not _is_agy_authenticated():
+            raise HTTPException(status_code=503, detail="agy not authenticated. Run agy auth flow first.")
+        result = await _run_agy_local(
+            req.prompt, system=req.system, output_format=req.output_format,
+            json_schema=req.json_schema, temperature=req.temperature,
+            max_tokens=req.max_tokens, timeout=req.timeout, model=req.model,
+        )
+        return result
+
+    elif provider == "remote":
+        # Proxy to XIOSYNC server's /api/v1/xioai/generate endpoint
+        xiosync_url = os.environ.get("XIOSYNC_URL", "")
+        if not xiosync_url:
+            raise HTTPException(status_code=503, detail="XIOSYNC_URL not configured — cannot proxy to remote AI.")
+
+        import urllib.request
+        import json as _json
+        url = f"{xiosync_url}/api/v1/xioai/generate"
+        body = _json.dumps({
+            "description": req.prompt,
+            "system": req.system,
+            "output_format": req.output_format,
+            "json_schema": req.json_schema,
+            "temperature": req.temperature,
+            "max_tokens": req.max_tokens,
+            "timeout": req.timeout,
+            "model": req.model,
+        }).encode()
+
+        # Use internal secret for auth if available
+        headers = {"Content-Type": "application/json"}
+        internal_secret = os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
+        if internal_secret:
+            headers["X-Internal-Secret"] = internal_secret
+
+        try:
+            http_req = urllib.request.Request(url, body, headers)
+            resp = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: urllib.request.urlopen(http_req, timeout=req.timeout + 10).read(),
+            )
+            data = _json.loads(resp)
+            # Map XIOSYNC response to our format
+            if "text" in data:
+                return {"ok": True, "text": data["text"], "provider": f"remote:{data.get('provider', '?')}", "model": data.get("model")}
+            elif "script" in data:
+                return {"ok": True, "text": data["script"], "provider": f"remote:{data.get('provider', '?')}", "model": data.get("model")}
+            elif "error" in data or "detail" in data:
+                return {"ok": False, "error": data.get("error") or data.get("detail"), "provider": "remote"}
+            else:
+                return {"ok": True, "text": _json.dumps(data), "provider": "remote"}
+        except Exception as e:
+            return {"ok": False, "error": f"Remote AI call failed: {e}", "provider": "remote"}
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}. Use 'local', 'remote', or omit for auto.")
+
+
+@app.post("/ai/install-agy")
+async def ai_install_agy() -> dict:
+    """Install agy binary and authenticate using a persisted Google Chrome profile.
+
+    Phase 4 — Native Colab agy path:
+    1. Install agy binary (from Drive cache or official installer)
+    2. Restore Chrome profile from Drive profiles/ (contains active Google session)
+    3. Suspend Chrome CDP so agy doesn't enter 'local chrome mode'
+    4. Run agy auth PTY flow — Chrome opens, session already active, OAuth auto-consents
+    5. Persist ~/.gemini/antigravity-cli/ credentials to Drive
+    """
+    import subprocess as _sp, shutil as _sh, gzip as _gz, pty as _pty, \
+           select as _sel, signal as _sig, fcntl as _fcntl, termios as _termios
+
+    result: dict = {
+        "binary_installed": False,
+        "binary_source": None,
+        "auth_attempted": False,
+        "auth_success": False,
+        "profile_restored": False,
+        "creds_persisted": False,
+        "error": None,
+    }
+
+    # ── Step 1: Install binary ──────────────────────────────────────────────────
+    _drive_binary = os.path.join(DRIVE_ROOT, "cache/agy-binary.gz")
+
+    if not _is_agy_installed():
+        # Try Drive cache first (fast — no network)
+        if os.path.isfile(_drive_binary):
+            try:
+                os.makedirs(os.path.dirname(_AGY_BIN), exist_ok=True)
+                with _gz.open(_drive_binary, "rb") as f_in, open(_AGY_BIN, "wb") as f_out:
+                    _sh.copyfileobj(f_in, f_out)
+                os.chmod(_AGY_BIN, 0o755)
+                result["binary_source"] = "drive_cache"
+                logger.info(f"ai_install_agy: binary restored from Drive cache")
+            except Exception as e:
+                logger.warning(f"ai_install_agy: Drive restore failed: {e}")
+
+        # Official installer fallback
+        if not _is_agy_installed():
+            try:
+                env = {**os.environ, "HOME": os.path.expanduser("~")}
+                out = _sp.check_output(
+                    "curl -fsSL https://antigravity.google/cli/install.sh | bash",
+                    shell=True, text=True, timeout=180, env=env, stderr=_sp.STDOUT,
+                )
+                result["binary_source"] = "official_installer"
+                logger.info("ai_install_agy: installed from official installer")
+            except Exception as e:
+                result["error"] = f"Binary install failed: {e}"
+                return result
+
+    if _is_agy_installed():
+        result["binary_installed"] = True
+        # Cache to Drive for next boot
+        if not os.path.isfile(_drive_binary):
+            try:
+                os.makedirs(os.path.dirname(_drive_binary), exist_ok=True)
+                with open(_AGY_BIN, "rb") as f_in, _gz.open(_drive_binary, "wb") as f_out:
+                    f_out.write(f_in.read())
+                logger.info(f"ai_install_agy: binary cached to Drive {_drive_binary}")
+            except Exception as cache_err:
+                logger.warning(f"ai_install_agy: Drive cache failed: {cache_err}")
+    else:
+        result["error"] = f"Binary not found at {_AGY_BIN} after install attempt"
+        return result
+
+    # Already authenticated? Short-circuit.
+    if _is_agy_authenticated():
+        result["auth_success"] = True
+        result["auth_attempted"] = False
+        return result
+
+    # ── Step 2.5: Restore agy credentials from Drive cache ──────────────────────
+    # The archive stores tokens under antigravity-cli/implicit/*.pb (encrypted by OS
+    # keyring on Mac, plain on Linux). Extract directly into ~/.gemini/ so the paths
+    # land at ~/.gemini/antigravity-cli/implicit/*.pb — exactly where agy looks.
+    _agy_creds_cache = os.path.join(DRIVE_ROOT, "cache/agy-credentials.tar.gz")
+    if os.path.isfile(_agy_creds_cache):
+        try:
+            _gemini_dir = os.path.expanduser("~/.gemini")
+            os.makedirs(_gemini_dir, exist_ok=True)
+            # Extract into ~/.gemini/ — archive has paths like 'antigravity-cli/...'
+            # which become ~/.gemini/antigravity-cli/...
+            _sp.run(
+                ["tar", "xzf", _agy_creds_cache, "-C", _gemini_dir],
+                capture_output=True, timeout=30,
+            )
+            logger.info(f"ai_install_agy: credentials restored from Drive cache → {_gemini_dir}")
+            if _is_agy_authenticated():
+                result["auth_success"] = True
+                result["auth_attempted"] = False
+                result["creds_persisted"] = True  # already on Drive
+                logger.info("ai_install_agy: auth confirmed from restored credentials ✅")
+                return result
+            else:
+                logger.info("ai_install_agy: credentials restored but tokens not valid (expired) — proceeding with OAuth")
+        except Exception as _creds_err:
+            logger.warning(f"ai_install_agy: credentials restore failed: {_creds_err}")
+
+    # agy's OAuth opens a browser; pre-loading a profile with Google cookies
+    # means the consent screen auto-fills and redirects back immediately.
+    _profiles_drive = os.path.join(DRIVE_ROOT, "profiles")
+    _restore_dir = None
+
+    if os.path.isdir(_profiles_drive):
+        _profile_tars = sorted([
+            p for p in os.listdir(_profiles_drive)
+            if p.startswith("PRFL-") and p.endswith(".tar.gz")
+        ])
+        if _profile_tars:
+            _tar_path = os.path.join(_profiles_drive, _profile_tars[0])
+            _base_restore = "/tmp/agy-auth-chrome-profile"
+            try:
+                import tarfile as _tf_agy
+                if os.path.exists(_base_restore):
+                    _sh.rmtree(_base_restore)
+                os.makedirs(_base_restore, exist_ok=True)
+                with _tf_agy.open(_tar_path, "r:gz") as tf:
+                    # Skip Chrome runtime artifacts (singleton sockets, lock files)
+                    # that tar rejects as unsafe absolute symlinks.
+                    _skip = {"SingletonSocket", "SingletonLock", "SingletonCookies",
+                             "DevToolsActivePort", "lockfile"}
+                    for _member in tf.getmembers():
+                        if any(_member.name.endswith(s) for s in _skip):
+                            continue
+                        try:
+                            tf.extract(_member, path="/tmp", filter="tar")
+                        except Exception:
+                            pass  # skip unextractable members silently
+                # Tarball contains a single PRFL_* dir — locate it
+                _children = sorted([
+                    c for c in os.listdir("/tmp")
+                    if c.startswith("PRFL_") and os.path.isdir(f"/tmp/{c}")
+                ])
+                _restore_dir = f"/tmp/{_children[0]}" if _children else None
+                result["profile_restored"] = True
+                result["profile_tar"] = _profile_tars[0]
+                logger.info(f"ai_install_agy: restored profile {_profile_tars[0]} → {_restore_dir}")
+            except Exception as pe:
+                logger.warning(f"ai_install_agy: profile restore failed: {pe}")
+        else:
+            logger.warning("ai_install_agy: no PRFL-*.tar.gz found in Drive profiles/")
+    else:
+        logger.warning(f"ai_install_agy: Drive profiles/ not at {_profiles_drive}")
+
+    # ── Step 4: Drive agy auth via tmux + ProfileManager browser ────────────────
+    # agy renders its login flow as a fullscreen TUI — OAuth URL is painted via
+    # cursor-positioning ANSI.  tmux -J captures the rendered cell grid so we can
+    # read the URL as plain text.  Browser driving is delegated to ProfileManager
+    # which pre-injects the full anti-detection fingerprint for this profile.
+    #
+    # Flow:
+    #   a) agy in tmux → "Select login method" menu → send Enter (Google OAuth)
+    #   b) agy prints OAuth URL → ProfileManager.launch_in_thread() drives browser
+    #      with profile cookies + stealth JS + residential SOCKS5 proxy
+    #   c) Google auto-consents (active session) → redirect to antigravity.google
+    #   d) Extract auth code → send to agy tmux input
+    #   e) agy writes tokens → "signed in" marker detected
+    result["auth_attempted"] = True
+    _auth_timeout = 240  # 4 min total
+
+    import re as _re_auth, time as _time
+
+    # Determine profile_id from the profile_tar we restored
+    _profile_id = None
+    if result.get("profile_tar"):
+        _m_prfl = _re_auth.match(r"(PRFL-\d+)\.tar\.gz", result["profile_tar"])
+        if _m_prfl:
+            _profile_id = _m_prfl.group(1)
+    if not _profile_id:
+        _profile_id = "PRFL-001"
+
+    # Load persistent fingerprint for this profile (or generate + save to Drive).
+    # Returns the same dict format the existing launch_browser() machinery uses.
+    _fp = _load_profile_fingerprint(_profile_id, DRIVE_ROOT)
+    logger.info(f"agy_auth: fingerprint for {_profile_id}: ua={_fp.get('ua_template','')[:40]}...")
+
+    # Proxy is passed as --proxy-server= Chrome flag inside _run_oauth_browser()
+    # (matching how the existing launch_browser() does it).
+    # The WS SOCKS5 bridge on :19055 must be running (started in lifespan).
+    _proxy_cfg = None   # not used here — handled inside the thread via Chrome flag
+
+    # Geo: resolve from the worker's actual public IP for TZ/locale consistency
+    _exit_ip = _get_runtime_public_ip()
+    _geo = _resolve_ip_geo(_exit_ip)
+
+    import datetime as _dt
+    try:
+        import zoneinfo as _zi
+        _tz_obj    = _zi.ZoneInfo(_geo["timezone"])
+        _tz_offset = -int(_dt.datetime.now(_tz_obj).utcoffset().total_seconds() // 60)
+    except Exception:
+        _tz_offset = 0
+    _screen_h  = str(_fp.get("height", 1080))
+    _session_stealth_js = (
+        _STEALTH_JS                                              # existing, proven, 22-section
+        .replace("'{TIMEZONE}'",       f"'{_geo['timezone']}'")
+        .replace("{TIMEZONE}",          _geo["timezone"])
+        .replace("'{LOCALE}'",         f"'{_geo['locale']}'")
+        .replace("{LOCALE}",            _geo["locale"])
+        .replace("{CANVAS_SEED}",       str(_fp.get("canvas_seed", 0x1A2B3C)))
+        .replace("{AUDIO_SEED}",        str(_fp.get("audio_seed",  0x4D5E6F)))
+        .replace("{LAT}",               str(_geo["lat"]))
+        .replace("{LON}",               str(_geo["lon"]))
+        .replace("'{UA}'",             f"'{_fp.get('ua_template', _STEALTH_UA_CHROME)}'")
+        .replace("{UA}",                _fp.get("ua_template", _STEALTH_UA_CHROME))
+        .replace("{TZ_OFFSET}",         str(_tz_offset))
+        .replace("{CORES}",         str(_fp.get("cores", 8)))
+        .replace("{RAM}",  str(_fp.get("ram", 8)))
+        .replace("{PLATFORM}",          _fp.get("platform", "Win32"))
+        .replace("{CH_PLATFORM}",       _fp.get("ch_platform", "Windows"))
+        .replace("{CH_ARCH}",           _fp.get("ch_arch", "x86"))
+        .replace("{IS_MOBILE}",         "true" if _fp.get("is_mobile") else "false")
+        .replace("{SCREEN_W}",          str(_fp.get("width", 1920)))
+        .replace("{SCREEN_H}",          _screen_h)
+        .replace("{SCREEN_AH}",         str(max(100, int(_screen_h) - 40)))
+        .replace("{WEBGL_V}",           "Google Inc. (NVIDIA)")
+        .replace("{WEBGL_R}",           _fp.get("webgl_renderer",
+                 "ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Direct3D11 vs_5_0 ps_5_0, D3D11)"))
+    )
+
+    _tmux_session = "agy_auth_flow"
+    _oauth_pattern = _re_auth.compile(
+        r"https://accounts\.google\.com/o/oauth2[^\s\x00-\x1f]+"
+        r"|https://[^\s\x00-\x1f]+[?&]client_id=[^\s\x00-\x1f]+"
+    )
+
+    try:
+        # Kill stale tmux session
+        _sp.run(["tmux", "kill-session", "-t", _tmux_session], capture_output=True)
+        _time.sleep(0.3)
+
+        # Singleton locks cleaned from restored profile before any browser launch
+        if _restore_dir and os.path.isdir(_restore_dir):
+            for _sl in ["SingletonLock", "SingletonSocket", "SingletonCookie"]:
+                try: os.unlink(os.path.join(_restore_dir, _sl))
+                except: pass
+
+        # Wide tmux terminal — OAuth URLs are ~700 chars; -J joins wrapped lines
+        _sp.run([
+            "tmux", "new-session", "-d", "-s", _tmux_session, "-x", "500", "-y", "50"
+        ], check=True, capture_output=True)
+
+        _sp.run([
+            "tmux", "send-keys", "-t", _tmux_session,
+            f"DISPLAY=:99 {_AGY_BIN} --dangerously-skip-permissions", "Enter"
+        ], capture_output=True)
+
+        _start = _time.time()
+        _state = "waiting_menu"
+        _oauth_url = None
+        _answered_prompts: set = set()
+
+        while _time.time() - _start < _auth_timeout:
+            _time.sleep(2)
+
+            _cap = _sp.run(
+                ["tmux", "capture-pane", "-t", _tmux_session, "-p", "-J"],
+                capture_output=True, text=True
+            ).stdout
+            logger.debug(f"agy tmux ({_state}): {_cap[:250]!r}")
+
+            # ── Menu: select Google OAuth ─────────────────────────────────────
+            if _state == "waiting_menu":
+                if "Select login method" in _cap or "Login method" in _cap:
+                    if "login_method" not in _answered_prompts:
+                        _time.sleep(0.4 + _time.time() % 0.3)
+                        _sp.run(["tmux", "send-keys", "-t", _tmux_session, "Enter", ""], capture_output=True)
+                        _answered_prompts.add("login_method")
+                        _state = "waiting_url"
+                        logger.info("agy_auth: selected Google OAuth (Enter)")
+                if "Terms of Service" in _cap and "tos" not in _answered_prompts:
+                    _sp.run(["tmux", "send-keys", "-t", _tmux_session, "y", "Enter"], capture_output=True)
+                    _answered_prompts.add("tos")
+
+            # ── URL: capture OAuth URL → drive patchright browser ─────────────
+            elif _state == "waiting_url":
+                if "Terms of Service" in _cap and "tos" not in _answered_prompts:
+                    _sp.run(["tmux", "send-keys", "-t", _tmux_session, "y", "Enter"], capture_output=True)
+                    _answered_prompts.add("tos")
+                if "trust" in _cap.lower() and "folder" in _cap.lower() and "trust" not in _answered_prompts:
+                    _sp.run(["tmux", "send-keys", "-t", _tmux_session, "Enter", ""], capture_output=True)
+                    _answered_prompts.add("trust")
+
+                _m = _oauth_pattern.search(_cap)
+                if _m:
+                    _oauth_url = _m.group(0).strip().rstrip(".")
+                    logger.info(f"agy_auth: OAuth URL ({len(_oauth_url)} chars): {_oauth_url[:80]}...")
+                    _state = "driving_browser"
+
+                    # ── Browser task: runs in a thread (sync_playwright safe outside asyncio) ──
+                    # Uses EXISTING _session_stealth_js (22-section, seeded, proven),
+                    # CHROMIUM_ARGS (hardened), _PATCHRIGHT_CHROME, and _load_profile_fingerprint.
+                    # Proxy passed as --proxy-server= Chrome flag — matching how launch_browser()
+                    # does it, NOT as patchright's proxy={} kwarg (which is a different path).
+                    def _run_oauth_browser():
+                        """Thread target. Returns auth code string or None."""
+                        import urllib.parse as _up
+
+                        # Prefer Chrome 131 (real browser, NOT 'Chrome for Testing').
+                        # Chrome for Testing shows an "automated testing" banner which
+                        # is a bot signal and causes Google to reject aicode scope.
+                        _chrome_131 = "/opt/chrome131/chrome"
+                        if os.path.isfile(_chrome_131):
+                            _chrome = _chrome_131
+                            logger.info(f"agy_auth/browser: using Chrome 131 (real browser)")
+                        else:
+                            _chrome = _PATCHRIGHT_CHROME
+                            logger.info(f"agy_auth/browser: using patchright Chromium (Chrome 131 not found)")
+                        if not _chrome:
+                            logger.warning("agy_auth/browser: no Chrome binary available")
+                            return None
+
+                        # Proxy strategy: try socks5:// first (residential exit — required for
+                        # anti-detection). patchright opens many internal connections through the
+                        # proxy which can cause timeouts on slow WS tunnel paths. If the proxy
+                        # navigation times out, fall back to direct so auth completes regardless.
+                        # The profile cookies (restored from Drive) handle the consent flow —
+                        # the exit IP is less critical for the one-time OAuth step than for sessions.
+                        _proxy_url = "socks5://127.0.0.1:19055"  # WS bridge → PPPoE residential
+                        _auth_args_proxy  = list(CHROMIUM_ARGS) + [f"--proxy-server={_proxy_url}"]
+                        _auth_args_direct = list(CHROMIUM_ARGS)  # no proxy — Colab direct
+
+                        logger.info(f"agy_auth/browser: launching {_chrome} "
+                                    f"profile={_restore_dir} proxy={_proxy_url} (direct fallback ready)")
+                        try:
+                            from patchright.sync_api import sync_playwright as _sync_pw
+                            with _sync_pw() as _pw:
+                                # Try proxy first
+                                _ctx = _pw.chromium.launch_persistent_context(
+                                    user_data_dir=_restore_dir,
+                                    executable_path=_chrome,
+                                    headless=True,
+                                    user_agent=_fp.get("ua_template", _STEALTH_UA_CHROME),
+                                    args=_auth_args_proxy,
+                                    ignore_https_errors=True,
+                                    timeout=30000,
+                                )
+                                _ctx.add_init_script(_session_stealth_js)
+                                _pg = _ctx.new_page()
+
+                                # Intercept OAuth URL: rewrite prompt=consent → prompt=select_account.
+                                # With an active Google session in the profile, removing force-consent
+                                # lets Google auto-redirect with a code instead of showing the
+                                # consent form (which hits cloud-platform scope restriction).
+                                def _rewrite_consent(route):
+                                    import urllib.parse as _up2
+                                    req = route.request
+                                    u = req.url
+                                    if "accounts.google.com/o/oauth2" in u and "prompt=consent" in u:
+                                        u2 = u.replace("prompt=consent", "prompt=select_account")
+                                        logger.info(f"agy_auth/browser: rewrote prompt=consent → select_account")
+                                        route.continue_(url=u2)
+                                    else:
+                                        route.continue_()
+
+                                _pg.route("**/o/oauth2/**", _rewrite_consent)
+                                _time.sleep(0.8 + _time.time() % 0.5)
+                                _nav_ok = False
+                                try:
+                                    _pg.goto(_oauth_url, timeout=45000, wait_until="domcontentloaded")
+                                    _nav_ok = True
+                                    logger.info("agy_auth/browser: proxy nav succeeded ✅")
+                                except Exception as _ne:
+                                    logger.warning(f"agy_auth/browser: proxy nav failed ({_ne}) — retrying direct")
+
+                                # Fallback: close proxy ctx, relaunch direct
+                                if not _nav_ok:
+                                    try:
+                                        _ctx.close()
+                                    except Exception:
+                                        pass
+                                    _ctx = _pw.chromium.launch_persistent_context(
+                                        user_data_dir=_restore_dir,
+                                        executable_path=_chrome,
+                                        headless=True,
+                                        user_agent=_fp.get("ua_template", _STEALTH_UA_CHROME),
+                                        args=_auth_args_direct,
+                                        ignore_https_errors=True,
+                                        timeout=30000,
+                                    )
+                                    _ctx.add_init_script(_session_stealth_js)
+                                    _pg = _ctx.new_page()
+                                    _pg.route("**/o/oauth2/**", _rewrite_consent)
+                                    _time.sleep(0.8 + _time.time() % 0.5)
+                                    logger.info("agy_auth/browser: navigating direct (no proxy)")
+                                    try:
+                                        _pg.goto(_oauth_url, timeout=40000, wait_until="domcontentloaded")
+                                    except Exception as _ne2:
+                                        logger.warning(f"agy_auth/browser: direct nav: {_ne2}")
+
+
+                                _time.sleep(2)
+                                logger.info(f"agy_auth/browser: at {_pg.url[:80]}")
+
+                                # ── TOTP secret for authenticator challenges ────────────
+                                import pyotp as _pyotp
+                                _agy_totp_secret = os.environ.get(
+                                    "XIOSYNC_TOTP_SECRET", "66pplgab2a4qzxf25tpmqs3rd4so3tuq"
+                                ).replace(" ", "")
+
+                                def _jitter_click(page, elem):
+                                    """Human-like mouse move then click."""
+                                    try:
+                                        box = elem.bounding_box()
+                                        if box:
+                                            page.mouse.move(
+                                                box["x"] + box["width"] / 2 + (_time.time() % 2 - 1),
+                                                box["y"] + box["height"] / 2 + (_time.time() % 1.5 - 0.75),
+                                            )
+                                            _time.sleep(0.15 + _time.time() % 0.15)
+                                        elem.click()
+                                        return True
+                                    except Exception:
+                                        return False
+
+                                def _first_visible(page, selectors):
+                                    """Return first visible element matching any selector."""
+                                    for sel in selectors:
+                                        try:
+                                            el = page.query_selector(sel)
+                                            if el and el.is_visible():
+                                                return el
+                                        except Exception:
+                                            pass
+                                    return None
+
+                                _last_handled = ""
+                                for _wi in range(30):  # up to 90s (3s × 30)
+                                    _cur = _pg.url
+                                    _time.sleep(0.3)
+
+                                    # ── 1. Callback landed ──────────────────────────────
+                                    if "antigravity.google" in _cur or "oauth-callback" in _cur:
+                                        logger.info(f"agy_auth/browser: ✅ [callback] {_cur[:120]}")
+                                        break
+
+                                    # ── 2. Account chooser ──────────────────────────────
+                                    if ("accountchooser" in _cur or
+                                            ("v3/signin" in _cur and "accountchooser" not in _last_handled)):
+                                        logger.info(f"agy_auth/browser: [account_chooser] iter={_wi}")
+                                        _last_handled = "accountchooser"
+                                        _time.sleep(1.5)
+                                        # Try clicking the target email account
+                                        _clicked_acct = False
+                                        try:
+                                            _acct_js = """
+                                            (function() {
+                                                var candidates = document.querySelectorAll(
+                                                    '[data-email],[data-identifier],li[data-authuser],.OVnw0d,[jsname="rymPhb"]'
+                                                );
+                                                for (var el of candidates) {
+                                                    var em = el.getAttribute('data-email') || el.getAttribute('data-identifier') || el.textContent || '';
+                                                    if (em.includes('gmail') || em.includes('@')) {
+                                                        el.click(); return 'clicked:' + em.slice(0,40);
+                                                    }
+                                                }
+                                                // Fallback: first focusable account tile
+                                                var tiles = document.querySelectorAll('[tabindex="0"]');
+                                                for (var t of tiles) {
+                                                    if (t.textContent.includes('@gmail') || t.textContent.includes('@google')) {
+                                                        t.click(); return 'clicked_tile:' + t.textContent.slice(0,30);
+                                                    }
+                                                }
+                                                // Last resort: first li/div in the chooser
+                                                var first = document.querySelector('#initialView li, .OVnw0d, [jsname="rymPhb"]');
+                                                if (first) { first.click(); return 'clicked_first'; }
+                                                return 'not_found';
+                                            })()
+                                            """
+                                            _acct_res = _pg.evaluate(_acct_js)
+                                            logger.info(f"agy_auth/browser: [account_chooser] JS result: {_acct_res}")
+                                            _clicked_acct = True
+                                        except Exception as _ae:
+                                            logger.warning(f"agy_auth/browser: [account_chooser] JS error: {_ae}")
+                                        if not _clicked_acct:
+                                            _el = _first_visible(_pg, [
+                                                "li[data-authuser]", ".OVnw0d", "[jsname='rymPhb']",
+                                                "[data-email]", "[data-identifier]",
+                                            ])
+                                            if _el:
+                                                _jitter_click(_pg, _el)
+                                                logger.info("agy_auth/browser: [account_chooser] clicked element")
+                                        _time.sleep(3)
+                                        continue
+
+                                    # ── 3. "Make sure it's you" / first-party confirm ───
+                                    if ("nativeapp" in _cur or "firstparty" in _cur or
+                                            ("oauth/v3" in _cur and "accountchooser" not in _cur)):
+                                        logger.info(f"agy_auth/browser: [make_sure] iter={_wi} url={_cur[:80]}")
+                                        _last_handled = "make_sure"
+                                        _time.sleep(1.5)
+                                        # Try confirm/continue button
+                                        _confirm = _first_visible(_pg, [
+                                            "button:has-text('Continue')", "button:has-text('Yes')",
+                                            "button:has-text('Next')", "button:has-text('Confirm')",
+                                            "button:has-text(\"Yes, it's me\")", "#next",
+                                            "[jsname='LgbsSe']", "button[type='submit']",
+                                        ])
+                                        if _confirm:
+                                            _jitter_click(_pg, _confirm)
+                                            logger.info("agy_auth/browser: [make_sure] clicked confirm button")
+                                            _time.sleep(3)
+                                        else:
+                                            logger.warning("agy_auth/browser: [make_sure] no confirm button found")
+                                        continue
+
+                                    # ── 4. Google Authenticator TOTP challenge ──────────
+                                    if ("/challenge/totp" in _cur or "/challenge/ipp" in _cur):
+                                        logger.info(f"agy_auth/browser: [totp] iter={_wi}")
+                                        _last_handled = "totp"
+                                        _time.sleep(1.0)
+                                        # Wait for fresh TOTP window (>5s remaining)
+                                        _totp_remaining = 30 - (_time.time() % 30)
+                                        if _totp_remaining < 5:
+                                            logger.info(f"agy_auth/browser: [totp] waiting {_totp_remaining:.1f}s for fresh window")
+                                            _time.sleep(_totp_remaining + 0.5)
+                                        _totp_code = _pyotp.TOTP(_agy_totp_secret).now()
+                                        logger.info(f"agy_auth/browser: [totp] code={_totp_code}")
+                                        # Find the input field
+                                        _totp_input = _first_visible(_pg, [
+                                            "input[type='tel']", "input[type='number']",
+                                            "input[aria-label*='code' i]", "input[aria-label*='Code' i]",
+                                            "input[autocomplete='one-time-code']",
+                                            "input[id*='totp']", "input[id*='code']",
+                                            "input[name='totpPin']", "input[name='code']",
+                                            "#totpPin", "#code",
+                                        ])
+                                        if _totp_input:
+                                            _totp_input.click()
+                                            _time.sleep(0.3)
+                                            _totp_input.fill("")
+                                            _time.sleep(0.2)
+                                            _totp_input.type(_totp_code, delay=80)
+                                            _time.sleep(0.5)
+                                            _next = _first_visible(_pg, [
+                                                "#next", "button[type='submit']",
+                                                "button:has-text('Next')", "button:has-text('Verify')",
+                                                "[jsname='LgbsSe']",
+                                            ])
+                                            if _next:
+                                                _jitter_click(_pg, _next)
+                                                logger.info("agy_auth/browser: [totp] submitted code")
+                                            _time.sleep(4)
+                                        else:
+                                            logger.warning("agy_auth/browser: [totp] no input found")
+                                        continue
+
+                                    # ── 5. agy device/display_code page ────────────────
+                                    if ("/device" in _cur or "device_code" in _cur):
+                                        logger.info(f"agy_auth/browser: [display_code] iter={_wi}")
+                                        _last_handled = "display_code"
+                                        _time.sleep(1.5)
+                                        # Capture display_code from the tmux agy session
+                                        try:
+                                            _pane_out = _sp.check_output(
+                                                ["tmux", "capture-pane", "-p", "-t", _tmux_session],
+                                                text=True, timeout=5,
+                                            )
+                                            # agy displays a short code like "ABC-123" or "ABCD1234"
+                                            _dc_match = _re_auth.search(
+                                                r'\b([A-Z0-9]{4,8}(?:-[A-Z0-9]{4,8})?)\b', _pane_out
+                                            )
+                                            _display_code = _dc_match.group(1) if _dc_match else ""
+                                        except Exception:
+                                            _display_code = ""
+                                        if _display_code:
+                                            logger.info(f"agy_auth/browser: [display_code] code={_display_code}")
+                                            _dc_input = _first_visible(_pg, [
+                                                "input[id*='code']", "input[name*='code']",
+                                                "input[aria-label*='code' i]", "input[type='text']",
+                                            ])
+                                            if _dc_input:
+                                                _dc_input.fill(_display_code)
+                                                _time.sleep(0.4)
+                                                _ver = _first_visible(_pg, [
+                                                    "button:has-text('Verify')", "button:has-text('Next')",
+                                                    "button[type='submit']", "#submit",
+                                                ])
+                                                if _ver:
+                                                    _jitter_click(_pg, _ver)
+                                                    logger.info("agy_auth/browser: [display_code] submitted")
+                                                _time.sleep(3)
+                                        else:
+                                            logger.warning("agy_auth/browser: [display_code] no code found in tmux pane")
+                                        continue
+
+                                    # ── 6. Allow / consent screen ───────────────────────
+                                    if "accounts.google.com" in _cur:
+                                        logger.info(f"agy_auth/browser: [consent] iter={_wi} url={_cur[:80]}")
+                                        _last_handled = "consent"
+                                        _time.sleep(1.2 + _time.time() % 0.8)
+                                        _allow = _first_visible(_pg, [
+                                            "button[jsname='LgbsSe']",
+                                            "button:has-text('Allow')",
+                                            "button:has-text('Continue')",
+                                            "button:has-text('Yes, I\\'m in')",
+                                            "#submit_approve_access",
+                                            "[data-action='allow']",
+                                            "div[role='button']:has-text('Allow')",
+                                        ])
+                                        if _allow:
+                                            _jitter_click(_pg, _allow)
+                                            logger.info("agy_auth/browser: [consent] clicked Allow/Continue")
+                                            _time.sleep(3)
+                                        else:
+                                            logger.info(f"agy_auth/browser: [consent] no button yet, waiting...")
+                                        continue
+
+                                    # Unknown page — wait and retry
+                                    logger.info(f"agy_auth/browser: [waiting] iter={_wi} url={_cur[:80]}")
+                                    _time.sleep(3)
+
+                                _final = _pg.url
+                                _qp = dict(_up.parse_qsl(_up.urlparse(_final).query))
+                                _code = _qp.get("code", "")
+                                if not _code:
+                                    _frag = dict(_up.parse_qsl(_up.urlparse(_final).fragment))
+                                    _code = _frag.get("code", "")
+                                if not _code:
+                                    try:
+                                        _bt = _pg.inner_text("body")
+                                        _cm2 = _re_auth.search(
+                                            r"code[=:\s]+([A-Za-z0-9/_\-\.]{20,})", _bt)
+                                        if _cm2: _code = _cm2.group(1)
+                                    except Exception: pass
+
+                                logger.info(f"agy_auth/browser: code={'OBTAINED' if _code else 'NONE'}")
+                                _ctx.close()
+                                return _code
+                        except Exception as _be:
+                            logger.error(f"agy_auth/browser: error: {_be}")
+                            return None
+
+                    # Run in thread — keeps the asyncio event loop free
+                    _auth_code = None
+                    try:
+                        from concurrent.futures import ThreadPoolExecutor as _TPE
+                        with _TPE(max_workers=1) as _ex:
+                            _auth_code = _ex.submit(_run_oauth_browser).result(timeout=180)
+                    except Exception as _te:
+                        logger.error(f"agy_auth: thread executor error: {_te}")
+
+                    if _auth_code:
+                        _time.sleep(0.5)
+                        _sp.run(
+                            ["tmux", "send-keys", "-t", _tmux_session, _auth_code, "Enter"],
+                            capture_output=True
+                        )
+                        logger.info("agy_auth: ✅ sent auth code to agy")
+                        _state = "waiting_confirm"
+                    else:
+                        logger.warning("agy_auth: no auth code — agy will wait at manual prompt")
+                        _state = "waiting_confirm"
+
+            # ── Confirm: agy shows signed-in screen ──────────────────────────
+            elif _state in ("waiting_confirm", "driving_browser"):
+                _success_markers = [
+                    "signed in", "Signed in", "logged in", "Logged in",
+                    "Welcome", "Authentication successful", "Successfully authenticated",
+                    "karmareturnsfromallsides", "@gmail.com",
+                ]
+                if any(_mk in _cap for _mk in _success_markers):
+                    result["auth_success"] = True
+                    logger.info("agy_auth: ✅ authentication confirmed in TUI")
+                    break
+
+            # Session exit detection
+            if _sp.run(["tmux", "list-panes", "-t", _tmux_session],
+                       capture_output=True).returncode != 0:
+                if _is_agy_authenticated():
+                    result["auth_success"] = True
+                    logger.info("agy_auth: session exited + creds found → success")
+                break
+
+        _final_cap = _sp.run(
+            ["tmux", "capture-pane", "-t", _tmux_session, "-p", "-J"],
+            capture_output=True, text=True
+        ).stdout
+        logger.info(f"agy_auth final screen: {_final_cap[:300]!r}")
+
+    except Exception as auth_exc:
+        result["error"] = f"agy auth error: {auth_exc}"
+        logger.error(f"ai_install_agy: auth error: {auth_exc}")
+    finally:
+        _sp.run(["tmux", "kill-session", "-t", _tmux_session], capture_output=True)
+
+
+    # ── Step 5: Persist agy credentials to Drive ────────────────────────────────
+    # On Linux, agy stores tokens in ~/.gemini/ (no Keychain) — portable files.
+    _agy_creds_src = os.path.expanduser("~/.gemini")
+    _agy_creds_dst = os.path.join(DRIVE_ROOT, "cache/agy-credentials.tar.gz")
+    # Persist any auth-related files (exclude heavy dirs like antigravity/brain)
+    _creds_dirs = ["antigravity-cli", "google_accounts.json", "state.json", "installation_id"]
+
+    if result["auth_success"]:
+        try:
+            import tarfile as _tf_cred
+            os.makedirs(os.path.dirname(_agy_creds_dst), exist_ok=True)
+            with _tf_cred.open(_agy_creds_dst + ".tmp", "w:gz") as tf:
+                for _item in _creds_dirs:
+                    _full = os.path.join(_agy_creds_src, _item)
+                    if os.path.exists(_full):
+                        # arcname must start with .gemini/ so extraction in /root
+                        # produces /root/.gemini/<item>, NOT /root/<item>
+                        tf.add(_full, arcname=f".gemini/{_item}")
+            _sh.move(_agy_creds_dst + ".tmp", _agy_creds_dst)
+            result["creds_persisted"] = True
+            logger.info(f"ai_install_agy: credentials persisted to Drive {_agy_creds_dst}")
+        except Exception as cp_err:
+            logger.warning(f"ai_install_agy: creds persist failed: {cp_err}")
+
+    return result
+
+
+
+@app.post("/ai/restore-agy-creds")
+async def ai_restore_agy_creds() -> dict:
+    """Restore persisted agy credentials from Drive (for runtime reboot recovery).
+
+    On a fresh Colab runtime, call this before /ai/generate to avoid re-auth.
+    Restores ~/.gemini/antigravity-cli/ from Drive cache/agy-credentials.tar.gz.
+    """
+    import shutil as _sh, tarfile as _tf_rc
+
+    _src = os.path.join(DRIVE_ROOT, "cache/agy-credentials.tar.gz")
+    _dst = os.path.expanduser("~/.gemini")
+
+    if not os.path.isfile(_src):
+        return {"ok": False, "reason": "No persisted credentials at Drive cache/agy-credentials.tar.gz"}
+
+    try:
+        os.makedirs(_dst, exist_ok=True)
+        _agy_dir = os.path.join(_dst, "antigravity-cli")
+        if os.path.isdir(_agy_dir):
+            _sh.rmtree(_agy_dir)
+        with _tf_rc.open(_src, "r:gz") as tf:
+            tf.extractall(path=_dst)
+        logger.info(f"ai_restore_agy_creds: restored to {_agy_dir}")
+        return {"ok": True, "restored_to": _agy_dir, "authenticated": _is_agy_authenticated()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 
 
 # ── Entrypoint ─────────────────────────────────────────────────────────────────
