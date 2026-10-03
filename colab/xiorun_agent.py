@@ -435,7 +435,7 @@ async def _lifespan(application):
                 _STEALTH_JS
                 .replace("{WEBGL_V}", _wv).replace("{WEBGL_R}", _wr)
                 .replace("{UA}",          _fp_st.get("ua_template", _STEALTH_UA_CHROME))
-                .replace("{PLATFORM}",    _fp_st.get("platform",    "MacIntel"))
+                .replace("{PLATFORM}",    _fp_st.get("platform",    "Win32"))
                 .replace("{TIMEZONE}",    _tz_st)
                 .replace("{TZ_OFFSET}",   str(_tz_offset_min))
                 .replace("{CANVAS_SEED}", str(_fp_st.get("canvas_seed", 42)))
@@ -800,7 +800,7 @@ CHROME_EXECUTABLE: str | None = (
 # Chrome 153 is NOT used — UC 3.5.5 doesn't patch it and Google gives only 3 cookies.
 _CHROME_VERSION = "131.0.6778.108"  # /opt/chrome131/chrome
 _STEALTH_UA_CHROME = (
-    f"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     f"(KHTML, like Gecko) Chrome/{_CHROME_VERSION} Safari/537.36"
 )
 
@@ -820,7 +820,7 @@ CHROMIUM_ARGS = [
     "--remote-debugging-address=0.0.0.0",  # bind to Tailscale IP
     # Language
     "--lang=en-US,en",
-    "--accept-lang=en-US,en;q=0.9",
+    "--accept-lang=en-US,en;q=0.9,en-GB;q=0.8",
     # WebGL: use ANGLE over EGL/Mesa (not SwiftShader Vulkan).
     # SwiftShader-Vulkan is a known headless indicator — EGL-ANGLE is far more
     # realistic and still works on Xvfb with Mesa drivers.
@@ -835,6 +835,9 @@ CHROMIUM_ARGS = [
     "--no-first-run",
     "--no-default-browser-check",
     "--password-store=basic",
+    # Fix: Trusted Types blocks blob Worker() in headless-detector V4 check.
+    # Disabling TrustedDOMTypes allows importScripts()-based Worker UA patching.
+    "--disable-features=TrustedDOMTypes",
     # NOTE: do NOT add --disable-extensions-except= — it blocks stealth extension
 ]
 
@@ -893,7 +896,7 @@ _STEALTH_JS = r"""
         const _patch = [
           'Object.defineProperty(self.navigator,"userAgent",{get:()=>',
           JSON.stringify(_SPOOF_UA), ',configurable:true,enumerable:true});',
-          'Object.defineProperty(self.navigator,"platform",{get:()=>"MacIntel",configurable:true});',
+          'Object.defineProperty(self.navigator,"platform",{get:()=>"Win32",configurable:true});',
           'Object.defineProperty(self.navigator,"appVersion",{get:()=>',
           JSON.stringify(_SPOOF_UA.replace('Mozilla/','')), ',configurable:true});',
           'Object.defineProperty(self.navigator,"vendor",{get:()=>"Google Inc.",configurable:true});',
@@ -1569,7 +1572,7 @@ async def debug_stealth_js() -> str:
         .replace("{WEBGL_V}",     _webgl_v)
         .replace("{WEBGL_R}",     _webgl_r)
         .replace("{UA}",          _fp_fb.get("ua_template", _STEALTH_UA_CHROME))
-        .replace("{PLATFORM}",    _fp_fb.get("platform",    "MacIntel"))
+        .replace("{PLATFORM}",    _fp_fb.get("platform",    "Win32"))
         .replace("{TIMEZONE}",    _tz_fb)
         .replace("{TZ_OFFSET}",   str(_tz_off_fb))
         .replace("{CANVAS_SEED}", str(_fp_fb.get("canvas_seed", 42)))
@@ -1674,8 +1677,8 @@ async def launch_browser(req: LaunchRequest) -> dict:
     _audio_seed  = _fp.get("audio_seed",  0x3C4D)
     _cores = str(_fp.get("cores", os.cpu_count() or 2))
     _ram = str(_fp.get("ram", max(2, min(8, (os.cpu_count() or 2) * 2))))
-    _platform = _fp.get("platform", "Linux x86_64")
-    _ch_platform = _fp.get("ch_platform", "Linux")
+    _platform = _fp.get("platform", "Win32")
+    _ch_platform = _fp.get("ch_platform", "Windows")
     _ch_arch = _fp.get("ch_arch", "x86")
     _is_mobile = "true" if _fp.get("is_mobile") else "false"
     _screen_w = str(_fp.get("width", 1920))
@@ -2517,7 +2520,7 @@ def _run_uc_login_sync(
               _STEALTH_JS
               .replace("{WEBGL_V}", _ext_wv).replace("{WEBGL_R}", _ext_wr)
               .replace("{UA}",          _ext_fp.get("ua_template", _STEALTH_UA_CHROME))
-              .replace("{PLATFORM}",    _ext_fp.get("platform",    "MacIntel"))
+              .replace("{PLATFORM}",    _ext_fp.get("platform",    "Win32"))
               .replace("{TIMEZONE}",    _ext_tz)
               .replace("{TZ_OFFSET}",   str(_ext_tz_off))
               .replace("{CANVAS_SEED}", str(_ext_fp.get("canvas_seed", 42)))
