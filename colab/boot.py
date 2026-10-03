@@ -941,9 +941,9 @@ if _fetched:
     )
     atexit.register(lambda: _agent_proc.terminate() if _agent_proc else None)
 
-    # Wait for agent to be ready (max 10s)
+    # Wait for agent to be ready (max 35s — agent starts noVNC + SOCKS5 + patchright at boot)
     _ready = False
-    for _ in range(20):
+    for _ in range(70):
         time.sleep(0.5)
         try:
             import urllib.request as _urq  # noqa
