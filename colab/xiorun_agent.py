@@ -5351,10 +5351,14 @@ async def _run_agy_local(prompt: str, *, system: str = "", output_format: str = 
     # Environment: set proxy for residential exit + unset DISPLAY to prevent Chrome conflict
     env = dict(os.environ)
     env["DISPLAY"] = ""  # Prevent agy from detecting Chrome CDP
-    proxy = os.environ.get("XIOAI_AGY_PROXY") or os.environ.get("SSH_PROXY_URL", "socks5://127.0.0.1:19055")
+    # agy is a Go binary — needs socks5h:// (proxy-side DNS) not socks5://
+    # socks5:// causes EOF on TLS handshake in Go's crypto/tls
+    _proxy_raw = os.environ.get("XIOAI_AGY_PROXY") or os.environ.get("SSH_PROXY_URL") or "socks5h://127.0.0.1:19055"
+    proxy = _proxy_raw.replace("socks5://", "socks5h://", 1)  # ensure h variant
     if proxy:
         env["HTTPS_PROXY"] = proxy
-        env["ALL_PROXY"] = proxy
+        env["ALL_PROXY"]   = proxy
+        env["NO_PROXY"]    = "localhost,127.0.0.1"
     env.setdefault("HOME", os.path.expanduser("~"))
     env["PATH"] = f"{os.path.expanduser('~/.local/bin')}:{env.get('PATH', '/usr/local/bin:/usr/bin:/bin')}"
 
