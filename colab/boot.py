@@ -690,12 +690,27 @@ _p("═" * 60)
 _agy_drive_root = _drive_root or "/content/drive/MyDrive/XIOSYNC-Shared"
 _agy_creds_tar = os.path.join(_agy_drive_root, "cache", "agy-credentials.tar.gz")
 if os.path.isfile(_agy_creds_tar):
-    _run(f"tar xzf {_agy_creds_tar} -C /root/", silent=True)
+    try:
+        import tarfile as _agy_tf
+        # Auto-detect tar format by peeking at first entry:
+        #   New tars (saved by xiorun_agent ≥ commit 6885484): root is .gemini/antigravity-cli/
+        #     → extract to /root/ so it lands at /root/.gemini/antigravity-cli/
+        #   Old/stale tars: root is antigravity-cli/ (no .gemini/ prefix)
+        #     → extract to /root/.gemini/ so it lands at /root/.gemini/antigravity-cli/
+        with _agy_tf.open(_agy_creds_tar, "r:gz") as _agy_peek:
+            _first = next(iter(_agy_peek)).name
+        _extract_to = "/root/" if _first.startswith(".gemini") else "/root/.gemini/"
+        os.makedirs(_extract_to, exist_ok=True)
+        _run(f"tar xzf {_agy_creds_tar} -C {_extract_to}", silent=True)
+    except Exception as _agy_ex:
+        _p(f"  ⚠️  agy tar peek failed: {_agy_ex} — extracting to /root/.gemini/")
+        os.makedirs("/root/.gemini", exist_ok=True)
+        _run(f"tar xzf {_agy_creds_tar} -C /root/.gemini/", silent=True)
     _agy_test = _run("PATH=/root/.local/bin:/usr/local/bin:$PATH agy --version 2>&1", capture=True, silent=True)
     if _agy_test and "authentication required" not in str(_agy_test):
         _p(f"  ✅ agy auth restored ({_agy_test.strip().split(chr(10))[0]})")
     else:
-        _p(f"  ⚠️  agy auth restore failed or token invalid")
+        _p(f"  ⚠️  agy auth restore failed or token invalid — will need OAuth")
 else:
     _p(f"  ⚠️  no agy credentials at {_agy_creds_tar} — will need OAuth")
 
