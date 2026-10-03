@@ -1,539 +1,572 @@
 /**
- * google-signin.mjs
+ * google-signin.mjs — XIOSYNC Native
  * ─────────────────────────────────────────────────────────────────────────────
- * Google login workflow — Hybrid Stealth Stack (uc engine)
+ * Google sign-in using UC stealth sidecar + patchright CDP.
+ * Zero dependency on XIOBR / xio-browser. Runs inside XIOSYNC ScriptRunner.
  *
  * Architecture:
  *   Phase 0: Check if already logged in (skip if force=true)
- *   Phase 1: Run uc (undetected-chromedriver) stealth sidecar with CDP 2FA
- *   Phase 2: Load session cookies from sidecar into patchright context
- *   Phase 3: Verify login via myaccount.google.com
+ *   Phase 1: UC stealth sidecar (Python subprocess) → saves cookies to JSON
+ *   Phase 2: Load cookies from JSON into live patchright browser context
+ *   Phase 3: Navigate to myaccount.google.com to verify
  *
- * Profile Naming:
- *   Chrome profiles are stored under a DETERMINISTIC name derived from the
- *   email address — not from session_id (which is arbitrary):
- *     profileId('shahid.workload@gmail.com') → 'shahid_workload'
- *     profileId('user+alias@gmail.com')      → 'user'
- *   This makes profiles self-describing and stable across reboots.
+ * Params (all resolved from context JSON):
+ *   email           Google account email (required)
+ *   password        Account password (required)
+ *   totp_secret     Base32 TOTP secret for 2FA (required)
+ *   cdp_ws_url      CDP WebSocket URL of the target browser (required)
+ *   session_id      XIOSYNC session UUID (optional, for push-profile)
+ *   xiorun_url      xiorun-agent base URL e.g. http://100.97.124.3:9300
+ *   force           Skip Phase 0 session check (default: false)
  *
- * Params:
- *   email        - Google account email address (required)
- *   password     - Account password (required)
- *   totp_secret  - Base32 TOTP secret for 2FA (required)
- *   force        - Skip Phase 0 session check (default: false)
+ * Subprocess contract (stdout, last JSON line wins):
+ *   { "status": "success", "result": {...} }
+ *   { "status": "error",   "error": "..." }
+ *
+ * Note: Later this will be converted to a DAG-based xioflow template.
  */
 
 export const meta = {
   name:        'google-signin',
-  description: 'Full Google sign-in using undetected-chromedriver (uc) + CDP 2FA. Persists session cookies to Supabase (primary) + Drive (cold backup). Chrome profile stored on R2 (primary) + Drive (cold backup). Deterministic profile name derived from email.',
-  requires:    [],
+  description: 'Google sign-in via UC stealth sidecar + patchright CDP. XIOSYNC-native, no XIOBR deps.',
   params: {
-    email:       'Google account email (required)',
-    password:    'Account password (required)',
-    totp_secret: 'Base32 TOTP secret for 2FA (required)',
-    force:       '(optional) true = skip Phase 0 session check, default false',
+    email:                'Google account email (required)',
+    password:             'Account password (required)',
+    totp_secret:          'Base32 TOTP secret for 2FA (required)',
+    cdp_ws_url:           'CDP WebSocket URL of the target browser session (required)',
+    session_id:           'XIOSYNC session UUID (optional)',
+    xiorun_url:           'xiorun-agent base URL (optional, e.g. http://100.97.124.3:9300)',
+    proxy_url:            'PPPoE exit node SOCKS5 proxy URL (e.g. socks5://100.x.x.x:10001) — enforced on UC login',
+    exit_node_public_ip:  'PPPoE slot public IP for geo-timezone resolution (optional)',
+    force:                'Skip Phase 0 session check (default: false)',
   },
 };
 
-import { existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath }            from 'node:url';
-import { resolve as _resolve, dirname as _dirname } from 'node:path';
-import { createLogger }             from '../src/utils/logger.mjs';
-import { createShot } from '../src/core/wf-shot.mjs';
 
-const log = createLogger('gdt-login');
-
-const WORKFLOW_ID = 'google-signin';
-const DOMAIN      = 'accounts.google.com';
-
-// ── Locate xio-browser root ───────────────────────────────────────────────
-// Workflows can be loaded from Drive (xio-mesh/workflows/) or from the git
-// repo (xio-browser/workflows/). Both cases need to reach src/core/.
-// We walk up from this file and look for the known src/core/ sentinel.
-const _thisDir = _dirname(fileURLToPath(import.meta.url));
-
-function _findXiobrRoot(fromDir) {
-  // Check: fromDir/../src/core/stealth-runner.mjs  (bundled: workflows/ is child of root)
-  const candidate1 = _resolve(fromDir, '..', 'src', 'core', 'stealth-runner.mjs');
-  if (existsSync(candidate1)) return _resolve(fromDir, '..');
-  // Check: fromDir/../../src/core/stealth-runner.mjs  (Drive: xio-mesh/workflows/)
-  const candidate2 = _resolve(fromDir, '..', '..', 'src', 'core', 'stealth-runner.mjs');
-  if (existsSync(candidate2)) return _resolve(fromDir, '../..');
-  // Fallback: absolute Colab path (always correct on Colab)
-  return '/content/xio-browser';
-}
-const _xiobr = _findXiobrRoot(_thisDir);
-
-// ── Lazy-load stealth-runner and engine-selector ──────────────────────────
-let _stealthRunner, _getRankedEngines, _recordEngineResult;
-try {
-  _stealthRunner = await import(`file://${_xiobr}/src/core/stealth-runner.mjs`);
-} catch (e) {
-  log.warn(`[gdt-login] stealth-runner not available: ${e.message}`);
-  _stealthRunner = {
-    runStealthSidecar: async () => ({ success: false, engine: null }),
-  };
-}
-
-try {
-  const esr = await import(`file://${_xiobr}/src/core/engine-selector.mjs`);
-  _getRankedEngines   = esr.getRankedEngines;
-  _recordEngineResult = esr.recordEngineResult;
-} catch (_) {
-  // ESR not available — default to uc only (camoufox/nodriver removed)
-  _getRankedEngines   = () => ['uc'];
-  _recordEngineResult = () => {};
-}
-
-const { runStealthSidecar }    = _stealthRunner;
-const getRankedEngines         = _getRankedEngines;
-const recordEngineResult       = _recordEngineResult;
-
-// ── Per-session Drive lock for google-signin ─────────────────────────────
-// Prevents concurrent runtimes from running google-signin for the same account.
-async function acquireSigninLock(sessionId, ctx, timeoutMs = 90_000) {
-  // Use a local file lock instead of Drive — boot.py import takes ~60s and
-  // causes ETIMEDOUT. All google-signin jobs run on the same Colab node so
-  // a /tmp fcntl lock is sufficient for mutual exclusion.
-  // Write lock script to temp .py file to avoid all shell-quoting issues.
-  const { execSync: _es } = await import('node:child_process');
-  const { writeFileSync, unlinkSync, existsSync } = await import('node:fs');
-  const slug = sessionId.split('@')[0].replace(/[.+]/g, '_').slice(0, 40);
-  const lockFile = `/tmp/xio_signin_${slug}.lock`;
-  const lockScript = `/tmp/xio_lock_acquire_${slug}.py`;
-  // Clear stale lock file left by a crashed Node process (older than 10 min)
-  try {
-    const { statSync, unlinkSync: _unlink } = await import('node:fs');
-    const st = statSync(lockFile);
-    if (Date.now() - st.mtimeMs > 600_000) {
-      _unlink(lockFile);
-      ctx.log(`[signin-lock] Cleared stale lock file (>10 min old)`);
-    }
-  } catch { /* file doesn't exist — expected */ }
-  writeFileSync(lockScript, [
-    'import fcntl, os, sys',
-    `f = open(${JSON.stringify(lockFile)}, 'w')`,
-    'try:',
-    '    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)',
-    '    f.write(str(os.getpid()))',
-    '    f.flush()',
-    "    print('ok')",
-    'except BlockingIOError:',
-    "    print('locked')",
-  ].join('\n'));
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const res = _es(`python3 ${lockScript}`, { encoding: 'utf8', timeout: 5000 }).trim();
-      if (res === 'ok') {
-        ctx.log(`[signin-lock] Acquired lock for ${slug}`);
-        try { unlinkSync(lockScript); } catch {}
-        return lockFile;
-      }
-      ctx.log(`[signin-lock] Waiting for lock on ${slug}…`);
-    } catch (_e) {
-      ctx.log(`[signin-lock] Lock error: ${_e.message?.slice(0, 60)} — proceeding unlocked`);
-      try { unlinkSync(lockScript); } catch {}
-      return null;
-    }
-    await new Promise(r => setTimeout(r, 5000));
-  }
-  try { unlinkSync(lockScript); } catch {}
-  ctx.log(`[signin-lock] Lock timeout for ${slug} — proceeding anyway`);
-  return null;
-}
-
-async function releaseSigninLock(lockFile, ctx) {
-  if (!lockFile) return;
-  try {
-    const { execSync: _es } = await import('node:child_process');
-    _es(`rm -f ${JSON.stringify(lockFile)}`, { encoding: 'utf8', timeout: 3000 });
-    ctx.log(`[signin-lock] Released lock ${lockFile}`);
-  } catch (_e) {
-    ctx.log(`[signin-lock] Lock release error: ${_e.message?.slice(0, 60)}`);
-  }
-}
-
+// ── Node.js stdlib only — no XIOBR imports ───────────────────────────────────
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { tmpdir }                from 'node:os';
+import { join }                  from 'node:path';
+import { spawn }                 from 'node:child_process';
+import { randomUUID }            from 'node:crypto';
+import { fileURLToPath }         from 'node:url';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+const randInt    = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+const sleep      = ms => new Promise(r => setTimeout(r, ms));
+const humanSleep = (a = 500, b = 1500) => sleep(randInt(a, b));
 
-const randInt    = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-const humanSleep = (a = 300, b = 900) => new Promise(r => setTimeout(r, randInt(a, b)));
+// ── [DEPRECATED] UC stealth sidecar removed ──────────────────────────────────
+// The embedded Python UC script (_UC_SCRIPT) and runUCSidecar() were removed
+// in the v2 architecture. Login now runs entirely on xiorun_agent.py via
+// POST /run-uc-login. See: colab/xiorun_agent.py :: _run_uc_login_sync()
 
-/**
- * Deterministic Chrome profile ID derived from a Google email address.
- *   'shahid.workload@gmail.com'         → 'shahid_workload'
- *   'samnurnihartalukdar@gmail.com'     → 'samnurnihartalukdar'
- *   'user+alias@gmail.com'              → 'user'
- */
-export function profileId(email) {
-  return email.split('@')[0].split('+')[0].replace(/\./g, '_');
+// ── Profile push (via xiorun-agent) ──────────────────────────────────────────
+async function pushProfileToStorage({ session_id, identity_id, profile_dir, xiorun_url, log }) {
+  // Phase 3.5 persist-session already handles Drive persistence for new profiles.
+  // This function handles the legacy /push-profile path as a belt-and-suspenders
+  // fallback — only fires when both identity_id and profile_dir are known.
+  if (!xiorun_url) {
+    log('[google-signin] Profile push skipped (no xiorun_url in context)');
+    return;
+  }
+  if (!identity_id || !profile_dir) {
+    log(`[google-signin] Profile push skipped (missing identity_id=${identity_id} or profile_dir=${profile_dir})`);
+    return;
+  }
+  try {
+    // Build the drive object key: profiles/PRFL-{serial}.tar.gz
+    // The agent resolves the PRFL serial from identity_id internally;
+    // we pass drive_object_key as a hint — agent will ignore if it already
+    // knows a canonical key from the session.
+    const driveKey = `profiles/PRFL-${(identity_id || '').slice(0, 8)}.tar.gz`;
+    const body = JSON.stringify({
+      identity_id,
+      local_dir:        profile_dir,
+      drive_object_key: driveKey,
+    });
+    const fullUrl = new URL(`${xiorun_url}/push-profile`);
+    const isHttps = fullUrl.protocol === 'https:';
+    const { request } = await import(isHttps ? 'node:https' : 'node:http');
+    await new Promise((resolve, reject) => {
+      const req = request({
+        hostname: fullUrl.hostname,
+        port:     fullUrl.port || (isHttps ? 443 : 80),
+        path:     fullUrl.pathname,
+        method:   'POST',
+        headers:  { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      }, res => {
+        let data = '';
+        res.on('data', c => { data += c; });
+        res.on('end', () => {
+          log(`[google-signin] Profile push response (${res.statusCode}): ${data.slice(0, 100)}`);
+          resolve();
+        });
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+  } catch (e) {
+    log(`[google-signin] Profile push failed (non-fatal): ${e.message}`);
+  }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN EXPORT
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Proxy resolution: PPPoE slot → SSH tunnel fallback ───────────────────────
+/**
+ * Resolve the exit-node proxy URL for this login session.
+ *
+ * Priority:
+ *   1. Explicit proxy_url param (caller already acquired a slot)
+ *   2. Acquire an idle PPPoE slot from XIOSYNC (POST /api/v1/pppoe/nodes/acquire)
+ *   3. Worker SSH SOCKS5 tunnel (GET /health → ssh_proxy_url)
+ *
+ * Returns { proxy_url, slot_host_id?, slot_no?, release_fn }
+ * Caller MUST call release_fn() after the session ends.
+ */
+async function resolveProxy({ xiorun_url, session_id, xiosync_url, xiosync_token, log }) {
+  const noop = () => Promise.resolve();
 
-export async function run(ctx, params = {}) {
-  const page  = ctx.page;
-  // Use ctx.log when available (structured, captured per-step); fall back to module logger
-  const _log  = ctx.log?.bind(ctx) ?? log.info.bind(log);
-  const { email: rawEmail, password: rawPassword, totp_secret: rawTotp, force = false } = params;
-
-  // ── Auto-fetch credentials from accounts table when not supplied as params ──
-  let email = rawEmail, password = rawPassword, totp_secret = rawTotp;
-
-  // If email not in params, resolve from session record (account_email → slug@gmail.com)
-  if (!email) {
-    const { getSession } = await import(`file://${_xiobr}/src/core/db.mjs`);
-    const session = getSession(ctx.sessionId);
-    const _rawId = session?.account_email || ctx.sessionId;
-    email = (_rawId && _rawId.includes('@')) ? _rawId : (_rawId ? `${_rawId}@gmail.com` : null);
-  }
-
-  if (!email) throw new Error('google-signin: email is required (not in params and could not resolve from session)');
-
-  // Auto-fetch password / totp_secret from accounts table (loaded from Supabase into memory)
-  if (!password || !totp_secret) {
-    const { getAccount } = await import(`file://${_xiobr}/src/core/db.mjs`);
-    const acct = getAccount(email);
-    if (!password)    password    = acct?.password    ?? null;
-    if (!totp_secret) totp_secret = acct?.totp_secret ?? null;
-  }
-
-  if (!email || !password) throw new Error('google-signin: email and password required (not found in accounts table either)');
-
-  // sessionId comes from ctx (set by job-manager)
-  const sessionId = ctx.sessionId ?? 'unknown';
-  const jobId     = ctx.jobId ?? 'nojob';
-
-  // Use canonical session path (PRFL-NNN_username.json) so that phase1 (stealth sidecar)
-  // and phase2 (load cookies into patchright) agree on the same file.
-  // Falls back to legacy slug path only if session-manager is unavailable.
-  let sessionPath;
+  // ── 1. Worker health: get worker_ts_ip + ssh_proxy_url ───────────────────
+  let workerHealth = null;
+  let workerTsIp   = null;
+  let sshProxyUrl  = null;
   try {
-    const { sessionStatePath } = await import(`file://${_xiobr}/src/core/session-manager.mjs`);
-    sessionPath = sessionStatePath(email);
-  } catch {
-    sessionPath = `/content/xio-mesh/sessions/${sessionId}.json`;
+    const isHttps = xiorun_url.startsWith('https');
+    const { request } = await import(isHttps ? 'node:https' : 'node:http');
+    const url = new URL(`${xiorun_url}/health`);
+    workerHealth = await new Promise((res, rej) => {
+      const req = request({
+        hostname: url.hostname, port: url.port || (isHttps ? 443 : 80),
+        path: '/health', method: 'GET', timeout: 8000,
+      }, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { res(JSON.parse(d)); } catch { rej(new Error('bad json')); } }); });
+      req.on('error', rej); req.on('timeout', () => { req.destroy(); rej(new Error('timeout')); });
+      req.end();
+    });
+    // worker Tailscale IP is embedded in cdp_ws_url or can be derived from xiorun_url
+    workerTsIp  = new URL(xiorun_url).hostname;
+    sshProxyUrl = workerHealth.ssh_proxy_url ?? null;
+  } catch (e) {
+    log(`[google-signin] ⚠️  Could not reach worker health: ${e.message}`);
   }
-  // Chrome profile dir
-  const { localProfilePath: _localProfilePath } = await import(
-    'file:///content/xio-browser/src/core/session-manager.mjs'
-  );
-  const profileDir = _localProfilePath(sessionId);
-  // Use per-job dir so sidecar screenshots land in the orchestrator's file listing.
-  // ctx.jobDir = full absolute path (correct for nested sub-workflow dirs)
-  // ctx.dirName = leaf name only — use as fallback if jobDir not set
-  const jobDir         = ctx.jobDir ?? `/content/xio-mesh/jobs/${ctx.dirName ?? jobId}`;
-  const screenshotDir  = `${jobDir}/steps`;
-  const shot = createShot(screenshotDir, { logFn: _log });
-  shot.setPage(page);
 
-  // ── Phase 0: Already logged in? ────────────────────────────────────────────
-  // Skip when force=true (caller wants a fresh sidecar run regardless)
-  let alreadyLoggedIn = false;
-  if (force) {
-    _log('[gdt-login] Phase 0: Skipped (force=true)');
-  } else {
-    await ctx.step('phase0_session_check', async () => {
-      _log('[gdt-login] Phase 0: Session check...');
+  // ── 2. Try PPPoE slot acquisition from XIOSYNC ───────────────────────────
+  if (xiosync_url && xiosync_token && workerTsIp) {
+    try {
+      const isHttps = xiosync_url.startsWith('https');
+      const { request } = await import(isHttps ? 'node:https' : 'node:http');
+      const url = new URL(`${xiosync_url}/api/v1/pppoe/nodes/acquire`);
+      const body = JSON.stringify({ worker_ts_ip: workerTsIp, session_id });
+      const slotResult = await new Promise((res, rej) => {
+        const req = request({
+          hostname: url.hostname, port: url.port || (isHttps ? 443 : 80),
+          path: url.pathname, method: 'POST', timeout: 15000,
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+            'Authorization': `Bearer ${xiosync_token}`,
+          },
+        }, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { res(JSON.parse(d)); } catch { rej(new Error('bad json')); } }); });
+        req.on('error', rej);
+        req.on('timeout', () => { req.destroy(); rej(new Error('timeout')); });
+        req.write(body); req.end();
+      });
 
-      // ── Check 1: DB is_valid flag (fast, no browser needed)
-      // NOTE: After a runtime reboot the SQLite DB is re-loaded from D1 but
-      // the is_valid flag is NOT persisted between runtimes. So this alone is
-      // unreliable — we always also check the session JSON file on disk.
-      let dbSaysValid = false;
-      try {
-        const { getSession } = await import(`file://${_xiobr}/src/core/db.mjs`);
-        const _sess = getSession(sessionId);
-        dbSaysValid = !!(_sess?.services?.find?.(s => s.service === 'google' && s.is_valid));
-      } catch { /* db unavailable */ }
+      if (slotResult.proxy_url) {
+        log(`[google-signin] 🔒 PPPoE slot acquired: ${slotResult.proxy_url} (public_ip=${slotResult.public_ip})`);
+        const releaseSlot = async () => {
+          try {
+            const { request: req2 } = await import(isHttps ? 'node:https' : 'node:http');
+            const rurl = new URL(`${xiosync_url}/api/v1/pppoe/nodes/${slotResult.host_id}/${slotResult.slot}/assign`);
+            await new Promise((res2, rej2) => {
+              const r = req2({ hostname: rurl.hostname, port: rurl.port || (isHttps ? 443 : 80),
+                path: rurl.pathname, method: 'DELETE', timeout: 8000,
+                headers: { 'Authorization': `Bearer ${xiosync_token}` },
+              }, resp => { resp.resume(); resp.on('end', res2); });
+              r.on('error', rej2); r.on('timeout', () => { r.destroy(); rej2(new Error('timeout')); });
+              r.end();
+            });
+            log(`[google-signin] ✅ PPPoE slot ${slotResult.slot} released`);
+          } catch (e) {
+            log(`[google-signin] ⚠️  PPPoE slot release failed (non-fatal): ${e.message}`);
+          }
+        };
+        return {
+          proxy_url:   slotResult.proxy_url,
+          public_ip:   slotResult.public_ip,
+          host_id:     slotResult.host_id,
+          slot:        slotResult.slot,
+          source:      'pppoe',
+          release_fn:  releaseSlot,
+        };
+      }
+    } catch (e) {
+      log(`[google-signin] ⚠️  PPPoE slot acquisition failed: ${e.message}`);
+    }
+  }
 
-      // ── Check 2: Session JSON file exists with Google cookies (survives reboot)
-      // Even after reboot, google-signin from a previous run may have saved cookies.
-      let fileHasGoogleCookies = false;
-      try {
-        const { readFileSync, existsSync } = await import('node:fs');
-        const { sessionStatePath } = await import(`file://${_xiobr}/src/core/session-manager.mjs`);
-        const filePath = sessionStatePath(sessionId);
-        if (existsSync(filePath)) {
-          const state = JSON.parse(readFileSync(filePath, 'utf8'));
-          fileHasGoogleCookies = (state.cookies || []).some(c =>
-            c.domain && (c.domain.includes('google.com') || c.domain.includes('accounts.google'))
-          );
-          _log(`[gdt-login] Phase 0: session file found — google cookies=${fileHasGoogleCookies} (${(state.cookies||[]).length} total)`);
-        } else {
-          _log('[gdt-login] Phase 0: no session file on disk');
+  // ── 3. Fall back to SSH SOCKS5 tunnel ────────────────────────────────────
+  if (sshProxyUrl) {
+    log(`[google-signin] 🔒 Using SSH SOCKS5 tunnel: ${sshProxyUrl} (Mac residential IP)`);
+    return { proxy_url: sshProxyUrl, public_ip: null, source: 'ssh_tunnel', release_fn: noop };
+  }
+
+  // ── 4. No proxy available ────────────────────────────────────────────────
+  return { proxy_url: null, public_ip: null, source: 'none', release_fn: noop };
+}
+
+
+// ── HTTP helper (no deps) ─────────────────────────────────────────────────────
+function httpPost(xiorun_url, path, body, timeoutMs = 60000) {
+  const isHttps = xiorun_url.startsWith('https');
+  return import(isHttps ? 'node:https' : 'node:http').then(({ request }) => {
+    const url = new URL(`${xiorun_url}${path}`);
+    const data = JSON.stringify(body);
+    return new Promise((res, rej) => {
+      const req = request({
+        hostname: url.hostname,
+        port: url.port || (isHttps ? 443 : 80),
+        path: url.pathname,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
+        timeout: timeoutMs,
+      }, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { res(JSON.parse(d)); } catch(e) { rej(new Error(`Bad JSON: ${d.slice(0,100)}`)); } }); });
+      req.on('error', rej);
+      req.on('timeout', () => { req.destroy(); rej(new Error(`HTTP POST ${path} timed out`)); });
+      req.write(data); req.end();
+    });
+  });
+}
+
+
+// ── Main workflow export ──────────────────────────────────────────────────────
+export async function run(ctx, params = {}) {
+  const merged             = { ...params };
+  const email              = merged.email;
+  const password           = merged.password;
+  const totp_secret        = merged.totp_secret;
+  const force              = merged.force === true || merged.force === 'true';
+  const session_id         = merged.session_id || ctx.sessionId || null;
+  const identity_id        = merged.identity_id || null;     // for cascade check + persist-session
+  const org_id             = merged.org_id || '00000000-0000-7000-8000-000000000000';
+  const xiorun_url         = merged.xiorun_url || null;
+  const xiosync_url        = merged.xiosync_url || null;     // for PPPoE slot acquisition
+  const xiosync_token      = merged.xiosync_token || null;
+  let   proxy_url          = merged.proxy_url  || null;      // explicit override — skip auto-resolve
+  let   exit_node_public_ip = merged.exit_node_public_ip || null;
+
+  const _log = (typeof ctx.log === 'function') ? ctx.log.bind(ctx) : msg => process.stderr.write(msg + '\n');
+
+  if (!email)       throw new Error('google-signin: email is required');
+  if (!password)    throw new Error('google-signin: password is required');
+  if (!totp_secret) throw new Error('google-signin: totp_secret is required');
+  if (!xiorun_url)  throw new Error('google-signin: xiorun_url is required (xiorun_agent base URL)');
+
+  // Declare these before proxy resolution — step() is used in that block
+  const page = ctx.page;
+  let finalResult = null;
+  const step = ctx.step ?? ((_, fn) => fn());
+
+  // ── Proxy resolution ──────────────────────────────────────────────────────
+  // If proxy_url not explicitly passed, auto-acquire from PPPoE pool or SSH tunnel
+  let proxyInfo = { proxy_url: null, release_fn: async () => {} };
+  await step('resolve_exit_proxy', async () => {
+    if (proxy_url) {
+      _log(`[google-signin] 🔒 Using explicit proxy_url: ${proxy_url}`);
+      proxyInfo = { proxy_url, public_ip: exit_node_public_ip, source: 'explicit', release_fn: async () => {} };
+      return;
+    }
+    proxyInfo = await resolveProxy({ xiorun_url, session_id, xiosync_url, xiosync_token, log: _log });
+    proxy_url = proxyInfo.proxy_url;
+    exit_node_public_ip = proxyInfo.public_ip ?? exit_node_public_ip;
+
+    if (!proxy_url) {
+      throw new Error(
+        'google-signin: No exit node proxy available. ' +
+        'Configure a PPPoE host in XIOSYNC (POST /api/v1/pppoe/hosts/register) ' +
+        'or ensure the SSH SOCKS5 tunnel is up (check worker /health → ssh_proxy_url).'
+      );
+    }
+    _log(`[google-signin] 🔒 Exit proxy resolved (${proxyInfo.source}): ${proxy_url}`);
+  });
+
+  // Cleanup handler — release PPPoE slot on success or failure
+  const cleanup = async () => {
+    try { await proxyInfo.release_fn(); } catch {}
+  };
+
+  try {
+    // ── Phase 0: Session cascade check ──────────────────────────────────────
+    // 4-level validation (cheapest → most expensive):
+    //   L1: Worker local profile dir exists → L2: Live patchright verify
+    //   L3: Drive FUSE profile pull → L4: Not found → full login
+    if (!force && identity_id && xiorun_url) {
+      await step('phase0_cascade_check', async () => {
+        _log('[google-signin] Phase 0: session cascade check via worker...');
+        try {
+          const cascadeResult = await httpPost(xiorun_url, '/session-cascade-check', {
+            identity_id, email, proxy_url,
+          }, 30_000);
+          if (cascadeResult.valid) {
+            _log(`[google-signin] ✅ Cascade check passed (level=${cascadeResult.level}) — session still valid`);
+            ctx.setResult?.({ success: true, skipped: true, level: cascadeResult.level });
+            finalResult = { success: true, skipped: true, level: cascadeResult.level, profile_dir: cascadeResult.profile_dir };
+          } else {
+            _log(`[google-signin] Cascade check: ${cascadeResult.level} — proceeding to login`);
+          }
+        } catch (e) {
+          _log(`[google-signin] ⚠️  Cascade check error (${e.message}) — proceeding to login`);
         }
-      } catch (e) { _log(`[gdt-login] Phase 0: session file check error: ${e.message}`); }
+      });
+      if (finalResult) { await cleanup(); return finalResult; }
+    }
 
-      const looksLikeValid = dbSaysValid || fileHasGoogleCookies;
-      _log(`[gdt-login] Phase 0: db_valid=${dbSaysValid} file_cookies=${fileHasGoogleCookies} → looksValid=${looksLikeValid}`);
-
-      if (looksLikeValid) {
-        // Session may be valid — do a live patchright check
+    // ── Phase 0b: Fallback browser check (if no identity_id or cascade unavailable)
+    if (!force && !finalResult && page) {
+      let alreadyLoggedIn = false;
+      await step('phase0_browser_check', async () => {
+        _log('[google-signin] Phase 0b: browser session check...');
         await page.goto('https://myaccount.google.com/', {
           waitUntil: 'domcontentloaded', timeout: 15000,
         }).catch(() => {});
-        await humanSleep(800, 1500);
-
-        const { verifyGoogleSession } = await import('file://' + _xiobr + '/src/core/session-verifier.mjs');
-        const isValid = await verifyGoogleSession(page, email);
-        await shot('phase0_session_check', { waitMs: 400 });
-
-        if (isValid) {
-          _log('[gdt-login] ✅ Already logged in (correct account) — skipping stealth sidecar');
-          ctx.setResult?.({ success: true, skipped: true, url: page.url() });
-          alreadyLoggedIn = true;
-          return;
+        await humanSleep(2000, 3000);
+        const url   = page.url();
+        const title = await page.title().catch(() => '');
+        alreadyLoggedIn = url.includes('myaccount.google.com') && !title.toLowerCase().includes('sign in');
+        if (alreadyLoggedIn) {
+          _log(`[google-signin] ✅ Already logged in: ${url}`);
+          ctx.setResult?.({ success: true, skipped: true, url });
+          finalResult = { success: true, skipped: true, url };
+        } else {
+          _log(`[google-signin] Not logged in (${url}) — proceeding to UC stealth login`);
         }
-        _log(`[gdt-login] ⚠️  Session inactive or wrong account — will try R2 profile (Check 3)`);
+      });
+      if (finalResult) { await cleanup(); return finalResult; }
+    }
+
+    // ── Phase 1: UC stealth login via xiorun_agent ──────────────────────────
+    // UC Chrome runs on the Colab worker using the exit-node proxy.
+    // On success: UC Chrome stays OPEN, patchright connects to it via CDP,
+    // session registered in xiorun_agent — NO cookie injection needed.
+    let ucSessionId, ucCdpWsUrl, ucFinalUrl, ucProfileDir;
+    await step('phase1_uc_stealth_login', async () => {
+      _log(`[google-signin] Phase 1: UC login via ${xiorun_url}/run-uc-login (proxy=${proxy_url})`);
+
+      const ucResult = await httpPost(xiorun_url, '/run-uc-login', {
+        session_id,
+        identity_id,
+        email,
+        password,
+        totp_secret,
+        proxy_url,
+        exit_node_public_ip,
+      }, 240_000);  // UC login up to 4 min
+
+      if (!ucResult.ok) {
+        // ── HITL: if login failed with a HITL notice, report it ─────────
+        if (ucResult.hitl_notice_id) {
+          _log(`[google-signin] ⚠️  Login failed with HITL notice ${ucResult.hitl_notice_id} — operator intervention needed`);
+        }
+        throw new Error(`UC login failed: ${ucResult.error || JSON.stringify(ucResult).slice(0, 200)}`);
       }
 
-      // ── Check 3: Pull Chrome profile from R2 → launchPersistentContext ──────
-      // Runs whenever the session is NOT confirmed valid:
-      //   • looksLikeValid=false (no DB flag, no session JSON) — obvious case
-      //   • looksLikeValid=true but live check failed — e.g. DB flag stale after reboot
-      // Chrome encrypts cookies (AES-CBC). launchPersistentContext lets Chrome
-      // decrypt them natively; we then save a Playwright storageState JSON.
-      if (!alreadyLoggedIn) {
-        _log('[gdt-login] Phase 0 Check 3: Trying R2 Chrome profile (launchPersistentContext)...');
-        let r2ProfileValid = false;
+      ucSessionId  = ucResult.session_id;
+      ucCdpWsUrl   = ucResult.cdp_ws_url;
+      ucFinalUrl   = ucResult.final_url;
+      ucProfileDir = ucResult.profile_dir || null;
+      _log(`[google-signin] ✅ UC login succeeded: ${ucFinalUrl} (session=${ucSessionId})`);
+    });
+
+
+    // ── Phase 2: Navigate UC Chrome to Gmail ────────────────────────────────
+    // UC Chrome IS logged in and stays open. Just navigate it to Gmail via
+    // POST /navigate — no cookie injection, no cross-browser transfer.
+    await step('phase2_navigate_to_gmail', async () => {
+      _log('[google-signin] Phase 2: navigating UC Chrome to Gmail...');
+      const navResult = await httpPost(xiorun_url, '/navigate', {
+        session_id: ucSessionId,
+        url: 'https://mail.google.com/mail/u/0/#inbox',
+      }, 30_000).catch(e => ({ ok: false, error: e.message }));
+
+      if (!navResult.ok) {
+        _log(`[google-signin] ⚠️  Navigate returned: ${JSON.stringify(navResult).slice(0, 100)} — continuing`);
+      } else {
+        _log(`[google-signin] ✅ Navigated to Gmail: ${navResult.url ?? ''}`);
+      }
+    });
+
+
+    // ── Phase 3: Verify via xiorun_agent ────────────────────────────────────
+    await step('phase3_verify', async () => {
+      // Navigate to myaccount to confirm logged-in state
+      const verResult = await httpPost(xiorun_url, '/navigate', {
+        session_id: ucSessionId,
+        url: 'https://myaccount.google.com/',
+      }, 30_000).catch(e => ({ ok: false, error: e.message }));
+
+      const verUrl = verResult.url ?? '';
+      if (verResult.ok && verUrl.includes('myaccount.google.com')) {
+        _log(`[google-signin] ✅ Login verified: ${verUrl}`);
+      } else {
+        _log(`[google-signin] ⚠️  Verification inconclusive (${verUrl})`);
+      }
+    });
+
+
+    // ── Phase 3.5: Persist session (cookies to vault + profile to Drive) ────
+    // Uses the worker's /persist-session endpoint which calls SessionStateIO
+    // and ChromeProfileStore under the hood.
+    if (identity_id && xiorun_url) {
+      await step('phase3_5_persist_session', async () => {
+        _log('[google-signin] Phase 3.5: persisting session to vault + Drive...');
         try {
-          const { execSync: _es } = await import('node:child_process');
-          const syncPy = `${_xiobr}/colab/sync.py`;
-          _log('[gdt-login] Phase 0 Check 3: Pulling R2 profile...');
-          _es(
-            `python3 ${JSON.stringify(syncPy)} --what chrome_profiles --session-id ${JSON.stringify(sessionId)} -q`,
-            { encoding: 'utf8', timeout: 120_000, stdio: 'pipe' }
-          );
-
-          const { localProfilePath, sessionStatePath: _ssp } =
-            await import('file://' + _xiobr + '/src/core/session-manager.mjs');
-          const profDir = localProfilePath(sessionId);
-          const { existsSync: _ex } = await import('node:fs');
-
-          if (_ex(profDir)) {
-            _log(`[gdt-login] Phase 0 Check 3: Profile at ${profDir} — launching patchright`);
-            const { chromium: _pr } = await import('patchright');
-            const _tmpCtx = await _pr.launchPersistentContext(profDir, {
-              headless: false,
-              args: [
-                '--no-sandbox', '--disable-dev-shm-usage', '--disable-setuid-sandbox',
-                '--disable-blink-features=AutomationControlled',
-              ],
-              ignoreHTTPSErrors: true,
-            });
-            try {
-              const _tmpPage = await _tmpCtx.newPage();
-              await _tmpPage.goto('https://myaccount.google.com/', {
-                waitUntil: 'domcontentloaded', timeout: 25000,
-              }).catch(() => {});
-              await humanSleep(2000, 3000);
-
-              const { verifyGoogleSession: _vgs } = await import(
-                'file://' + _xiobr + '/src/core/session-verifier.mjs'
-              );
-              const isR2Valid = await _vgs(_tmpPage, email);
-              await _tmpPage.screenshot({ path: `${screenshotDir}/phase0_r2_profile_check.jpg` })
-                .catch(() => {});
-
-              if (isR2Valid) {
-                _log('[gdt-login] ✅ Phase 0 Check 3: R2 profile valid — saving session JSON');
-                const _sessionPath = _ssp(sessionId);
-                await _tmpCtx.storageState({ path: _sessionPath });
-                _log(`[gdt-login] Phase 0 Check 3: Session JSON saved → ${_sessionPath}`);
-                ctx.setResult?.({ success: true, skipped: true, source: 'r2_profile', url: _tmpPage.url() });
-                r2ProfileValid = true;
-              } else {
-                _log('[gdt-login] Phase 0 Check 3: R2 profile cookies are stale — proceeding to Phase 1');
-              }
-            } finally {
-              await _tmpCtx.close().catch(() => {});
-            }
-          } else {
-            _log(`[gdt-login] Phase 0 Check 3: Profile dir not found (${profDir}) — proceeding to Phase 1`);
+          const persistResult = await httpPost(xiorun_url, '/persist-session', {
+            identity_id,
+            org_id,
+            profile_dir: ucProfileDir,
+            page_url: ucFinalUrl,
+          }, 60_000);
+          if (persistResult.cookie_saved) {
+            _log(`[google-signin] ✅ Cookies saved to vault (${persistResult.cookie_count} cookies)`);
           }
-        } catch (_pe) {
-          _log(`[gdt-login] Phase 0 Check 3 error: ${_pe.message?.slice(0, 140)}`);
+          if (persistResult.profile_saved) {
+            _log(`[google-signin] ✅ Profile saved to Drive: ${persistResult.profile_key} (${persistResult.profile_size} bytes)`);
+          }
+          if (!persistResult.cookie_saved && !persistResult.profile_saved) {
+            _log('[google-signin] ⚠️  Session persistence incomplete — check worker logs');
+          }
+        } catch (e) {
+          _log(`[google-signin] ⚠️  Persist-session error: ${e.message} — login succeeded but session not saved`);
         }
-
-        if (r2ProfileValid) {
-          alreadyLoggedIn = true;
-          return;
-        }
-      }
-
-      // ── Domain-aware eviction — preserve other domain cookies (Tailscale, v0, etc.) ────
-      // evictSession() (full JSON delete) is intentionally NOT used here: the state.json
-      // may contain valid Tailscale/v0/GitHub cookies that share this session slot.
-      // We only strip Google-domain cookies so those services remain authenticated.
-      const { evictDomainFromSession, evictLocalProfileCookies } =
-        await import('file://' + _xiobr + '/src/core/session-manager.mjs');
-
-      // 1. Strip Google cookies from the shared state.json (preserve all other domains)
-      evictDomainFromSession(sessionId, 'google');
-
-      // 2. Strip Google cookies from the UC/Selenium Chrome profile's SQLite Cookies DB.
-      //    Stale Google auth rows in Default/Cookies bypass the login form, causing
-      //    the profile to navigate directly to myaccount.google.com → verification_failed.
-      evictLocalProfileCookies(sessionId, 'google');
-    }, { autoScreenshot: false });
-  }
-
-  if (alreadyLoggedIn) {
-    // Session was valid at phase0 — no stealth signin ran, no cookies changed.
-    // Skipping ALL saves: no saveStorageStateFull, no pushToStorage, no R2/Drive/Supabase writes.
-    _log('[gdt-login] ✅ Session already valid — no saves needed (cookies unchanged)');
-    return { success: true, skipped: true };
-  }
-
-  // ── Phase 1: Run stealth sidecar (multi-engine, via stealth-runner) ─────────
-  // NOTE: The sidecar runs its own Chrome (uc/camoufox) separately from patchright.
-  //       The patchright page (stream-visible) is idle during this phase by design.
-  //       Sidecar saves its own CDP screenshots to jobDir at key steps.
-  let sidecarResult;
-  await ctx.step('phase1_stealth_login', async () => {
-    _log('[gdt-login] Phase 1: Launching stealth sidecar...');
-    const _signinLock = await acquireSigninLock(sessionId, ctx);
-    try {
-      sidecarResult = await runStealthSidecar({
-        email, password, totp_secret,
-        sessionPath, screenshotDir,
-        log: _log,
-        workflowId:        WORKFLOW_ID,
-        domain:            DOMAIN,
-        profileDir,
-        jobId:             ctx.jobId,   // enables killSidecar() on cancel
-        getRankedEngines,
-        recordEngineResult,
       });
-    } finally {
-      await releaseSigninLock(_signinLock, ctx);
     }
 
-    if (!sidecarResult.success) {
-      // ── Recoverable failure → HITL pause ──────────────────────────────────
-      // When the stealth sidecar fails due to a TOTP/verification issue (not a
-      // code bug), pause the job for human intervention instead of hard-failing.
-      // The user can resolve the issue (e.g. re-enter TOTP, unblock account) and
-      // then resume the job. Hard failures (missing sidecar, no engines) still throw.
-      if (sidecarResult.hitl) {
-        const _hitlMsg = {
-          totp_rejected:        '⚠️  Google rejected the TOTP code during sign-in. The code may have expired or been entered incorrectly. Please verify the TOTP secret is correct, then resume.',
-          verification_failed:  '⚠️  Sign-in completed but session verification failed (ended at account/about). Google may have flagged the account. Check the uc_final screenshot and resume when ready.',
-          totp_input_not_found: '⚠️  2FA screen appeared but TOTP input field could not be found. The challenge type may have changed. Check screenshots and resume.',
-          all_engines_failed:   '⚠️  All stealth login engines failed. Check the step screenshots for the specific challenge and resolve manually.',
-        }[sidecarResult.failureType] ?? `⚠️  Google sign-in sidecar failed (${sidecarResult.failureType}).`;
 
-        await ctx.hitl(_hitlMsg, {
-          instructions: 'Review the step screenshots in the job folder. Resolve the issue on the Google account, then resume this job.',
-          screenshotDir,
-        });
-        // After resume: sidecar already wrote partial session — re-run sidecar
-        sidecarResult = await runStealthSidecar({
-          email, password, totp_secret,
-          sessionPath, screenshotDir,
-          log: _log,
-          workflowId: WORKFLOW_ID, domain: DOMAIN,
-          profileDir, jobId: ctx.jobId, getRankedEngines, recordEngineResult,
-        });
-        if (!sidecarResult.success) {
-          throw new Error(`All stealth engines failed after HITL resume (${sidecarResult.failureType})`);
-        }
-        return; // success on second attempt
-      }
-      throw new Error('All stealth engines failed — check engine logs above');
-    }
-  }, { autoScreenshot: false });
+    // ── Post-success: push Chrome profile to Drive (belt-and-suspenders fallback) ──
+    await pushProfileToStorage({ session_id: ucSessionId, identity_id, profile_dir: ucProfileDir, xiorun_url, log: _log });
+
+    finalResult = {
+      success:     true,
+      engine:      'uc',
+      final_url:   ucFinalUrl,
+      session_id:  ucSessionId,
+      cdp_ws_url:  ucCdpWsUrl,
+      proxy_source: proxyInfo.source,
+    };
+    ctx.setResult?.(finalResult);
+    return finalResult;
+
+  } finally {
+    await cleanup();
+  }
+}
 
 
-  // ── Phase 2: Load sidecar session into patchright context ───────────────────
-  await ctx.step('phase2_load_cookies', async () => {
-    _log('[gdt-login] Phase 2: Loading sidecar session into browser context...');
-    const sessionData = JSON.parse(readFileSync(sessionPath, 'utf8'));
-    if (sessionData.cookies?.length > 0) {
-      await page.context().addCookies(sessionData.cookies);
-      _log(`[gdt-login] Loaded ${sessionData.cookies.length} cookies from ${sidecarResult.engine}`);
-      // No screenshot here: patchright page hasn't navigated yet — nothing meaningful to capture.
-    } else {
-      throw new Error('Session file has no cookies — sidecar may have failed silently');
-    }
-  }, { autoScreenshot: false });
+// ── Subprocess entrypoint ─────────────────────────────────────────────────────
+// Called by XIOSYNC ScriptRunner:
+//   node google-signin.mjs --context=<json> [--session-id=<uuid>]
+// Connects to the live browser via patchright CDP, builds ctx, calls run().
+// Outputs a single JSON result line to stdout (ScriptRunner reads last JSON line).
 
-  // ── Phase 3: Verify login in patchright context ─────────────────────────────
-  // This phase IS visible in the stream — patchright navigates to myaccount.google.com.
-  let finalUrl, success;
-  await ctx.step('phase3_verify_login', async () => {
-    _log('[gdt-login] Phase 3: Verifying login in patchright context...');
-    await page.goto('https://myaccount.google.com/', {
-      waitUntil: 'domcontentloaded', timeout: 15000,
-    }).catch(() => {});
-    await humanSleep(2000, 3000);
-
-    finalUrl         = page.url();
-    const finalTitle = await page.title().catch(() => '');
-    success          = finalUrl.includes('myaccount.google.com') && !finalTitle.includes('Sign in');
-
-    if (!success) {
-      await shot('phase3_verify_FAILED');
-      throw new Error(`Verification failed — ended at: ${finalUrl.slice(0, 100)}`);
-    }
-    _log(`[gdt-login] ✅ Login verified! Engine: ${sidecarResult.engine}, URL: ${finalUrl.slice(0, 80)}`);
-    ctx.setResult?.({ success: true, engine: sidecarResult.engine, final_url: finalUrl });
-
-    // ── Save full v2 session state (CDP-based rich capture) ─────────────────
-    // NOTE: saveStorageStateFull navigates patchright to each localStorage origin
-    // (google.com, accounts.google.com, etc.) and back.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  (async () => {
+    // ── Parse CLI args ──────────────────────────────────────────────────────
+    const ctxArg = process.argv.find(a => a.startsWith('--context='))?.slice(10) ?? '{}';
+    const sidArg = process.argv.find(a => a.startsWith('--session-id='))?.slice(13) ?? null;
+    let ctxData;
     try {
-      const { saveStorageStateFull } = await import('file://' + _xiobr + '/src/core/session-manager.mjs');
-      await saveStorageStateFull(sessionId, page);
-      _log(`[gdt-login] 💾 Full v2 session state saved (CDP cookies + localStorage + IndexedDB)`);
-    } catch (se) {
-      _log(`[gdt-login] ⚠️  saveStorageStateFull failed, falling back to basic save: ${se.message}`);
+      ctxData = JSON.parse(ctxArg);
+    } catch (e) {
+      console.log(JSON.stringify({ status: 'error', error: `Invalid --context JSON: ${e.message}` }));
+      process.exit(1);
+    }
+
+    const cdp_ws_url = ctxData.cdp_ws_url ?? null;
+    const _log = msg => process.stderr.write(`[${new Date().toISOString().slice(11,19)}] ${msg}\n`);
+
+    // ── Connect to live browser via patchright CDP ──────────────────────────
+    let browser = null;
+    let page    = null;
+
+    if (cdp_ws_url) {
       try {
-        const { saveStorageState } = await import('file://' + _xiobr + '/src/core/session-manager.mjs');
-        await saveStorageState(sessionId, page.context());
-        _log(`[gdt-login] 💾 Fallback: patchright storageState saved to session JSON`);
-      } catch (se2) {
-        _log(`[gdt-login] ⚠️  Could not save storageState: ${se2.message}`);
+        _log(`Connecting patchright to CDP: ${cdp_ws_url}`);
+        const { chromium } = await import('patchright');
+        // patchright connectOverCDP expects an HTTP endpoint, not ws://
+        const cdpHttpUrl = cdp_ws_url.replace(/^ws:\/\//, 'http://').replace(/^wss:\/\//, 'https://');
+        browser = await chromium.connectOverCDP(cdpHttpUrl);
+        const ctx0 = browser.contexts()[0] ?? await browser.newContext();
+        page = ctx0.pages()[0] ?? await ctx0.newPage();
+        _log(`CDP connected. Page URL: ${page.url()}`);
+      } catch (e) {
+        console.log(JSON.stringify({ status: 'error', error: `CDP connect failed: ${e.message}` }));
+        process.exit(1);
       }
+    } else {
+      _log('WARNING: no cdp_ws_url in context — ctx.page will be null (Phase 0 + 2 + 3 skipped)');
     }
 
-    // One definitive screenshot: taken after saveStorageStateFull finishes
-    // (which already ends on a Google origin) — no redundant second goto needed.
-    await shot('phase3_verified', { waitMs: 400 });
+    // ── Build ctx ───────────────────────────────────────────────────────────
+    let _result = null;
+    const ctx = {
+      page,
+      sessionId: ctxData.session_id ?? sidArg ?? 'unknown',
+      jobId:     ctxData.job_id     ?? 'nojob',
+      log:       _log,
+      step: async (name, fn) => {
+        _log(`[step:${name}] START`);
+        const t0 = Date.now();
+        try {
+          await fn();
+          _log(`[step:${name}] DONE (${Date.now() - t0}ms)`);
+        } catch (e) {
+          _log(`[step:${name}] FAILED (${Date.now() - t0}ms): ${e.message}`);
+          throw e;
+        }
+      },
+      hitl: async (msg, details = {}) => {
+        // Create HITL notice on the worker agent — operator can resume via /hitl/{id}/resume
+        const _xiorun = ctxData.xiorun_url;
+        if (_xiorun) {
+          try {
+            const http = await import('node:http');
+            const noticeReq = JSON.stringify({
+              organization_id: ctxData.org_id || '00000000-0000-7000-8000-000000000000',
+              session_id: ctxData.session_id || 'workflow',
+              challenge_type: details.challenge_type || 'hitl_workflow',
+              message: msg,
+              instructions: details.instructions || 'Check XIOVIEW and resume when ready.',
+            });
+            const url = new URL(_xiorun);
+            await new Promise((res, rej) => {
+              const r = http.request({ hostname: url.hostname, port: url.port, path: '/hitl/create', method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(noticeReq) },
+                timeout: 10000 }, resp => { let d = ''; resp.on('data', c => d += c); resp.on('end', () => {
+                  try { const j = JSON.parse(d); _log(`[HITL] Notice created: ${j.id || d}`); } catch { _log(`[HITL] ${d}`); }
+                  res();
+                });
+              });
+              r.on('error', e => { _log(`[HITL] create error: ${e.message}`); rej(e); });
+              r.write(noticeReq); r.end();
+            });
+          } catch (e) { _log(`[HITL] Failed: ${e.message}`); }
+        }
+        throw new Error(`HITL_REQUIRED: ${msg}`);
+      },
+      setResult: r => { _result = r; },
+      isCancelled: () => false,
+    };
 
-    // ── Mark google service as valid ───────────────────────────────────────
+    // ── Execute workflow ─────────────────────────────────────────────────────
     try {
-      const { upsertSessionService } = await import('file://' + _xiobr + '/src/core/db.mjs');
-      const { normaliseSessionId }   = await import('file://' + _xiobr + '/src/utils/session-id.mjs');
-      upsertSessionService({ session_id: normaliseSessionId(sessionId), service: 'google', account_hint: email, is_valid: 1 });
-      _log(`[gdt-login] ✅ session_credentials updated: google=valid`);
-    } catch (de) {
-      _log(`[gdt-login] ⚠️  session_credentials update failed: ${de.message}`);
+      const res = await run(ctx, ctxData);
+      console.log(JSON.stringify({ status: 'success', result: _result ?? res ?? {} }));
+    } catch (e) {
+      console.log(JSON.stringify({ status: 'error', error: e.message, detail: e.stack?.slice(0, 500) }));
+      process.exitCode = 1;
+    } finally {
+      // Disconnect without closing the remote browser (it stays alive)
+      if (browser) { try { await browser.close(); } catch {} }
     }
-
-    // ── Push session state + chrome_profiles ─────────────────────────────────
-    // Uses generalised pushToStorage() helper from session-manager:
-    //   Session JSON  -> Supabase (awaited, 15 s) + Drive (background detached)
-    //   Chrome profile -> R2 (awaited, 60 s)     + Drive (background detached)
-    try {
-      const { pushToStorage } = await import('file://' + _xiobr + '/src/core/session-manager.mjs');
-      await pushToStorage(sessionId, {
-        session: true,
-        profile: true,
-        awaitPrimary: true,
-        log: _log,
-      });
-    } catch (pe) {
-      _log(`[gdt-login] Push skipped: ${pe.message}`);
-    }
-
-
-
-  }, { autoScreenshot: false });
-
-  return { success: true, engine: sidecarResult.engine, final_url: finalUrl };
+  })();
 }

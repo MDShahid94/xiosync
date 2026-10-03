@@ -4927,27 +4927,31 @@ async def session_cascade_check(req: CascadeCheckRequest):
     if _profile_dir and os.path.isdir(_profile_dir):
         logger.info(f"cascade-check: L1 local profile found: {_profile_dir}")
 
-        # Level 2: Live verify — launch patchright, navigate to myaccount
+        # Level 2: Live verify — launch patchright with persistent context, navigate to myaccount
         try:
             from patchright.async_api import async_playwright
             async with async_playwright() as pw:
-                browser = await pw.chromium.launch(
+                # MUST use launch_persistent_context for a user-data-dir profile.
+                # browser.new_context(user_data_dir=...) is NOT valid in patchright.
+                context = await pw.chromium.launch_persistent_context(
+                    _profile_dir,
                     headless=True,
-                    args=["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"],
-                )
-                context = await browser.new_context(
-                    user_data_dir=_profile_dir,
+                    args=[
+                        "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+                        "--disable-blink-features=AutomationControlled",
+                    ],
                     viewport={"width": 1440, "height": 900},
+                    no_viewport=False,
                 )
-                page = await context.new_page()
-                await page.goto("https://myaccount.google.com/", wait_until="networkidle", timeout=15000)
+                page = context.pages[0] if context.pages else await context.new_page()
+                await page.goto("https://myaccount.google.com/", wait_until="networkidle", timeout=20000)
                 await asyncio.sleep(1.5)
 
                 prefix = req.email.split("@")[0].lower()
                 body_text = await page.evaluate("document.body.innerText.toLowerCase()")
                 is_valid = prefix in body_text and "sign in" not in (await page.title()).lower()
 
-                await browser.close()
+                await context.close()
 
                 if is_valid:
                     logger.info(f"cascade-check: L2 live verify PASSED for {req.email}")
@@ -5532,21 +5536,20 @@ async def ai_install_agy() -> dict:
         return result
 
     # ── Step 2.5: Restore agy credentials from Drive cache ──────────────────────
-    # The archive stores tokens under antigravity-cli/implicit/*.pb (encrypted by OS
-    # keyring on Mac, plain on Linux). Extract directly into ~/.gemini/ so the paths
-    # land at ~/.gemini/antigravity-cli/implicit/*.pb — exactly where agy looks.
+    # The archive stores tokens under .gemini/antigravity-cli/... (arcname prefix).
+    # Extract to HOME (/root) so entries unpack as /root/.gemini/antigravity-cli/...
+    # Do NOT extract to ~/.gemini or paths become ~/.gemini/.gemini/... (double-nest).
     _agy_creds_cache = os.path.join(DRIVE_ROOT, "cache/agy-credentials.tar.gz")
     if os.path.isfile(_agy_creds_cache):
         try:
-            _gemini_dir = os.path.expanduser("~/.gemini")
-            os.makedirs(_gemini_dir, exist_ok=True)
-            # Extract into ~/.gemini/ — archive has paths like 'antigravity-cli/...'
-            # which become ~/.gemini/antigravity-cli/...
+            _home_dir = os.path.expanduser("~")
+            os.makedirs(os.path.join(_home_dir, ".gemini"), exist_ok=True)
+            # Extract to HOME — arcname=".gemini/{item}" → /root/.gemini/{item}
             _sp.run(
-                ["tar", "xzf", _agy_creds_cache, "-C", _gemini_dir],
+                ["tar", "xzf", _agy_creds_cache, "-C", _home_dir],
                 capture_output=True, timeout=30,
             )
-            logger.info(f"ai_install_agy: credentials restored from Drive cache → {_gemini_dir}")
+            logger.info(f"ai_install_agy: credentials restored from Drive cache → {os.path.join(_home_dir, '.gemini')}")
             if _is_agy_authenticated():
                 result["auth_success"] = True
                 result["auth_attempted"] = False
@@ -6162,9 +6165,10 @@ async def ai_install_agy() -> dict:
                 for _item in _creds_dirs:
                     _full = os.path.join(_agy_creds_src, _item)
                     if os.path.exists(_full):
-                        # arcname must start with .gemini/ so extraction in /root
-                        # produces /root/.gemini/<item>, NOT /root/<item>
-                        tf.add(_full, arcname=f".gemini/{_item}")
+                        # arcname=".gemini/{item}" + extract to HOME (/root)
+                        # → /root/.gemini/{item} — correct final path.
+                        # Do NOT extract to ~/.gemini or it becomes ~/.gemini/.gemini/{item}
+                        tf.add(_full, arcname=os.path.join(".gemini", _item))
             _sh.move(_agy_creds_dst + ".tmp", _agy_creds_dst)
             result["creds_persisted"] = True
             logger.info(f"ai_install_agy: credentials persisted to Drive {_agy_creds_dst}")
@@ -6191,12 +6195,17 @@ async def ai_restore_agy_creds() -> dict:
         return {"ok": False, "reason": "No persisted credentials at Drive cache/agy-credentials.tar.gz"}
 
     try:
-        os.makedirs(_dst, exist_ok=True)
-        _agy_dir = os.path.join(_dst, "antigravity-cli")
+        # Extract to HOME (/root), NOT to ~/.gemini.
+        # tar entries are arcname=".gemini/{item}", so extracting to HOME
+        # produces /root/.gemini/{item}. Extracting to ~/.gemini would produce
+        # /root/.gemini/.gemini/{item} — the double-nesting bug.
+        _home = os.path.expanduser("~")
+        os.makedirs(os.path.join(_home, ".gemini"), exist_ok=True)
+        _agy_dir = os.path.join(_home, ".gemini", "antigravity-cli")
         if os.path.isdir(_agy_dir):
             _sh.rmtree(_agy_dir)
         with _tf_rc.open(_src, "r:gz") as tf:
-            tf.extractall(path=_dst)
+            tf.extractall(path=_home)
         logger.info(f"ai_restore_agy_creds: restored to {_agy_dir}")
         return {"ok": True, "restored_to": _agy_dir, "authenticated": _is_agy_authenticated()}
     except Exception as e:
