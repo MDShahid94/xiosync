@@ -4968,18 +4968,38 @@ async def session_cascade_check(req: CascadeCheckRequest):
         _profile_dir = f"/tmp/xiorun_profiles/PRFL_{_id_short}__{_node_slug}"
         os.makedirs(_profile_dir, exist_ok=True)
 
-        # Canonical: scan profiles/PRFL-*.tar.gz and pick the one whose inner
-        # slug matches this identity's email prefix / id_short.
+        # Canonical: scan profiles/PRFL-*.tar.gz and match by email via fingerprint JSON.
+        # Strategy: for each PRFL-NNN.tar.gz, check if PRFL-NNN.fingerprint.json exists
+        # and its 'email' field matches req.email. Pick the matching one; fall back to
+        # the most-recent (highest serial) if no fingerprint match is found.
         _profiles_dir = os.path.join(DRIVE_ROOT, "profiles")
         _found_tar = None
+        _fallback_tar = None
         if os.path.isdir(_profiles_dir):
-            for _p in sorted(os.listdir(_profiles_dir)):
-                if _p.endswith(".tar.gz") and _p.startswith("PRFL-"):
-                    # Each archive may contain any profile slug — just offer
-                    # all available profiles ordered by name; caller picks first.
-                    # For now pick the first one; future: match by cookie domain.
-                    _found_tar = os.path.join(_profiles_dir, _p)
-                    break  # will be refined in Phase 4 agy-auth to pick by account
+            _candidates = sorted(
+                [_p for _p in os.listdir(_profiles_dir) if _p.endswith(".tar.gz") and _p.startswith("PRFL-")],
+                reverse=True,  # highest serial first (PRFL-003 before PRFL-002)
+            )
+            for _p in _candidates:
+                _tar_path = os.path.join(_profiles_dir, _p)
+                _prfl_stem = _p[: -len(".tar.gz")]          # e.g. "PRFL-003"
+                _fp_path = os.path.join(_profiles_dir, f"{_prfl_stem}.fingerprint.json")
+                if os.path.isfile(_fp_path):
+                    try:
+                        with open(_fp_path) as _fp_f:
+                            _fp_data = json.load(_fp_f)
+                        if _fp_data.get("email", "").lower() == req.email.lower():
+                            _found_tar = _tar_path
+                            logger.info(f"cascade-check: L3 fingerprint match {_prfl_stem} → {req.email}")
+                            break
+                    except Exception:
+                        pass
+                if _fallback_tar is None:
+                    _fallback_tar = _tar_path  # highest-serial tar as fallback
+
+            if not _found_tar and _fallback_tar:
+                _found_tar = _fallback_tar
+                logger.info(f"cascade-check: L3 no fingerprint match — using fallback {os.path.basename(_found_tar)}")
 
         # Legacy fallback: chrome_profiles/PRFL_{id_short}.tar.gz
         if not _found_tar:
