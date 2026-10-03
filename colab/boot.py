@@ -742,7 +742,7 @@ else:
 
 # ── Patchright patched Chromium ──────────────────────────────────
 # Phase 3b-pre: Restore patchright cache from Drive (saves ~15-30s download)
-_PATCHRIGHT_CACHE_TAR = f"{DRIVE_ROOT}/cache/patchright-cache.tar.gz"
+_PATCHRIGHT_CACHE_TAR = os.path.join(_drive_root or "/content/drive/MyDrive/XIOSYNC-Shared", "cache", "patchright-cache.tar.gz")
 if os.path.isfile(_PATCHRIGHT_CACHE_TAR):
     try:
         import tarfile as _pr_tf
