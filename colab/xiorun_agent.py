@@ -5407,7 +5407,9 @@ async def ai_status() -> dict:
             pass
 
     # Check XIOSYNC server reachability for remote path
-    xiosync_url = os.environ.get("XIOSYNC_URL", "")
+    xiosync_url = (os.environ.get("XIOSYNC_URL") or
+                   os.environ.get("XIORUN_XIOSYNC_BASE") or
+                   os.environ.get("XIOSYNC_BASE") or "")
     remote_available = bool(xiosync_url)
 
     return {
@@ -5457,7 +5459,9 @@ async def ai_generate(req: AIGenerateRequest) -> dict:
 
     elif provider == "remote":
         # Proxy to XIOSYNC server's /api/v1/xioai/generate endpoint
-        xiosync_url = os.environ.get("XIOSYNC_URL", "")
+        xiosync_url = (os.environ.get("XIOSYNC_URL") or
+                       os.environ.get("XIORUN_XIOSYNC_BASE") or
+                       os.environ.get("XIOSYNC_BASE") or "")
         if not xiosync_url:
             raise HTTPException(status_code=503, detail="XIOSYNC_URL not configured — cannot proxy to remote AI.")
 
