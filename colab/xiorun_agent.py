@@ -5611,9 +5611,22 @@ async def ai_install_agy() -> dict:
         _profile_tars = sorted([
             p for p in os.listdir(_profiles_drive)
             if p.startswith("PRFL-") and p.endswith(".tar.gz")
-        ])
+        ], reverse=True)  # highest serial first (most recent login)
         if _profile_tars:
+            # Prefer a profile with a valid fingerprint JSON (email present)
             _tar_path = os.path.join(_profiles_drive, _profile_tars[0])
+            for _pt in _profile_tars:
+                _fp_path = os.path.join(_profiles_drive, _pt.replace(".tar.gz", ".fingerprint.json"))
+                if os.path.isfile(_fp_path):
+                    try:
+                        import json as _fp_j
+                        _fp_data = _fp_j.load(open(_fp_path))
+                        if "@" in _fp_data.get("email", ""):
+                            _tar_path = os.path.join(_profiles_drive, _pt)
+                            logger.info(f"ai_install_agy: using profile {_pt} ({_fp_data['email']}) for OAuth browser")
+                            break
+                    except Exception:
+                        pass
             _base_restore = "/tmp/agy-auth-chrome-profile"
             try:
                 import tarfile as _tf_agy
@@ -6163,7 +6176,7 @@ async def ai_install_agy() -> dict:
                 _success_markers = [
                     "signed in", "Signed in", "logged in", "Logged in",
                     "Welcome", "Authentication successful", "Successfully authenticated",
-                    "karmareturnsfromallsides", "@gmail.com",
+                    "@gmail.com",  # any Google account confirmation
                 ]
                 if any(_mk in _cap for _mk in _success_markers):
                     result["auth_success"] = True

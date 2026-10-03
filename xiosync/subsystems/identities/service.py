@@ -24,9 +24,12 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+
+from xiosync.domain.profile_identity import ProfileIdentity, DomainCookieSet, MaterializationMode, BrowserCookie
+from xiosync.domain.cookie_health import check_cookie_health, CookieHealthReport
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -67,6 +70,7 @@ class IdentityRecord:
     created_at: datetime
     updated_at: datetime
     is_platform_global: bool
+    profile_serial: int = 0       # identities.profile_serial — permanent PRFL-NNN sequence value
 
 
 @dataclass(frozen=True, slots=True)
@@ -587,6 +591,188 @@ class IdentityService:
             for r in rows
         ]
 
+    # ── Profiles ──────────────────────────────────────────────────────
+
+    def get_profile_identity(
+        self,
+        ctx: OrgContext,
+        identity_id: uuid.UUID,
+    ) -> ProfileIdentity:
+        """Load a ProfileIdentity with all domain sets and materialization mode."""
+        identity = self.get_identity(ctx, identity_id)
+        row = self._session.execute(
+            text("""
+                SELECT materialization_mode, profile_version
+                FROM identities
+                WHERE id = :id AND organization_id = :org_id
+            """),
+            {"id": str(identity_id), "org_id": str(ctx.organization_id)},
+        ).one_or_none()
+        mode = MaterializationMode(row[0]) if row else MaterializationMode.TAR_PROFILE
+        version = row[1] if row else 0
+
+        # Load domain sets
+        ds_rows = self._session.execute(
+            text("""
+                SELECT domain_pattern, is_valid, health_urgency, cookie_count,
+                       auth_method, parent_domain, last_verified_at,
+                       last_refreshed_at, vault_key, storage_object_key
+                FROM profile_domain_sets
+                WHERE identity_id = :id AND organization_id = :org_id
+                ORDER BY domain_pattern
+            """),
+            {"id": str(identity_id), "org_id": str(ctx.organization_id)},
+        ).fetchall()
+
+        domain_sets: dict[str, DomainCookieSet] = {}
+        for r in ds_rows:
+            from xiosync.domain.cookie_health import CookieHealthUrgency
+            domain_sets[r[0]] = DomainCookieSet(
+                domain_pattern=r[0],
+                cookies=(),
+                local_storage={},
+                health=CookieHealthUrgency(r[2]) if r[2] else CookieHealthUrgency.NONE,
+                last_verified_at=r[6],
+                is_valid=r[1],
+                auth_method=r[4],
+                parent_domain=r[5],
+            )
+
+        return ProfileIdentity(
+            identity_id=identity_id,
+            serial=identity.profile_serial,        # fix: was identity.serial (AttributeError → 0)
+            organization_id=ctx.organization_id,
+            domain_sets=domain_sets,
+            materialization=mode,
+            is_persisted=True,
+            storage_object_key=None,
+            version=version,
+        )
+
+    def save_domain_set_state(
+        self,
+        ctx: OrgContext,
+        identity_id: uuid.UUID,
+        domain_pattern: str,
+        *,
+        is_valid: bool = True,
+        health_urgency: str = "none",
+        cookie_count: int = 0,
+        auth_method: str | None = None,
+        parent_domain: str | None = None,
+    ) -> None:
+        """Upsert a profile domain set record (per-domain session tracking)."""
+        self._session.execute(
+            text("""
+                INSERT INTO profile_domain_sets
+                    (organization_id, identity_id, domain_pattern,
+                     is_valid, health_urgency, cookie_count,
+                     auth_method, parent_domain, updated_at)
+                VALUES
+                    (:org_id, :id, :domain, :valid, :urgency, :count,
+                     :auth, :parent, now())
+                ON CONFLICT (organization_id, identity_id, domain_pattern)
+                DO UPDATE SET
+                    is_valid = EXCLUDED.is_valid,
+                    health_urgency = EXCLUDED.health_urgency,
+                    cookie_count = EXCLUDED.cookie_count,
+                    auth_method = COALESCE(EXCLUDED.auth_method, profile_domain_sets.auth_method),
+                    parent_domain = COALESCE(EXCLUDED.parent_domain, profile_domain_sets.parent_domain),
+                    updated_at = now()
+            """),
+            {
+                "org_id": str(ctx.organization_id),
+                "id": str(identity_id),
+                "domain": domain_pattern,
+                "valid": is_valid,
+                "urgency": health_urgency,
+                "count": cookie_count,
+                "auth": auth_method,
+                "parent": parent_domain,
+            },
+        )
+
+    def check_profile_health(
+        self,
+        ctx: OrgContext,
+        identity_id: uuid.UUID,
+        cookies: list[dict],
+    ) -> CookieHealthReport:
+        """Run cookie health check and update domain set urgency."""
+        browser_cookies = [
+            BrowserCookie(
+                name=c.get("name", ""),
+                value=c.get("value", ""),
+                domain=c.get("domain", ""),
+                path=c.get("path", "/"),
+                expires=c.get("expires", -1),
+                httpOnly=c.get("httpOnly", False),
+                secure=c.get("secure", False),
+                sameSite=c.get("sameSite", "Lax"),
+                size=c.get("size"),
+            )
+            for c in cookies
+        ]
+        report = check_cookie_health(browser_cookies)
+        # Update google.com domain set urgency
+        self.save_domain_set_state(
+            ctx,
+            identity_id,
+            "google.com",
+            is_valid=report.ok,
+            health_urgency=report.refresh_urgency.value if hasattr(report.refresh_urgency, 'value') else str(report.refresh_urgency),
+            cookie_count=report.total_cookies,
+        )
+        return report
+
+    def evict_profile_domain(
+        self,
+        ctx: OrgContext,
+        identity_id: uuid.UUID,
+        domain_pattern: str,
+        *,
+        cascade: bool = True,
+    ) -> list[str]:
+        """Evict a domain from the profile and invalidate dependents.
+
+        Returns the list of domain_patterns that were invalidated.
+        """
+        invalidated = [domain_pattern]
+        # Mark primary domain invalid
+        self._session.execute(
+            text("""
+                UPDATE profile_domain_sets
+                SET is_valid = false, updated_at = now()
+                WHERE organization_id = :org_id
+                  AND identity_id = :id
+                  AND domain_pattern = :domain
+            """),
+            {
+                "org_id": str(ctx.organization_id),
+                "id": str(identity_id),
+                "domain": domain_pattern,
+            },
+        )
+        if cascade:
+            # Invalidate dependents (preserve cookies but mark invalid)
+            dep_rows = self._session.execute(
+                text("""
+                    UPDATE profile_domain_sets
+                    SET is_valid = false, updated_at = now()
+                    WHERE organization_id = :org_id
+                      AND identity_id = :id
+                      AND parent_domain = :domain
+                    RETURNING domain_pattern
+                """),
+                {
+                    "org_id": str(ctx.organization_id),
+                    "id": str(identity_id),
+                    "domain": domain_pattern,
+                },
+            ).fetchall()
+            invalidated.extend(r[0] for r in dep_rows)
+        return invalidated
+
 
 # ── Mapping helpers ───────────────────────────────────────────────────────────
 
@@ -622,6 +808,7 @@ def _row_to_identity(row: Any) -> IdentityRecord:
         created_at=row.created_at,
         updated_at=row.updated_at,
         is_platform_global=(org_id is None),
+        profile_serial=int(getattr(row, "profile_serial", 0) or 0),
     )
 
 

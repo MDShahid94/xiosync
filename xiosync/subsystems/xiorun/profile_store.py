@@ -8,8 +8,9 @@ Storage: Google Drive FUSE via XIODriveFS (org-zero-drive provider).
 Credentials come from env vars set by boot.py (XIOSYNC_BASE, WORKER_SECRET,
 NODE_NAME, XIO_DRIVE_ROOT).
 
-Profile key path convention (compatible with migrated R2 data):
-    chrome_profiles/PRFL-{serial:03d}_{slug}.tar.gz
+Profile key path convention (Drive folder: profiles/):
+    profiles/PRFL-{serial:03d}.tar.gz
+    (Legacy reads: chrome_profiles/PRFL-NNN_slug.tar.gz still accepted via DB key)
 
 Restore flow:
     1. Derive object key from credentials.storage_object_key (or slug fallback)
@@ -163,15 +164,15 @@ def _normalize_username(identifier: str) -> str:
 def _canonical_profile_key(identity_id: str, engine: object) -> str:
     """Return the canonical Drive key for a Chrome profile tarball.
 
-    Key format (matches XIOBR naming.py + XIOSYNC convention):
-        chrome_profiles/PRFL-{serial:03d}_{username}.tar.gz
+    Key format (Drive folder: profiles/):
+        profiles/PRFL-{serial:03d}.tar.gz
 
-    serial comes from identities.serial — a permanent PostgreSQL SEQUENCE
-    value that is assigned once at row creation and never changes on deletion.
+    serial comes from identities.profile_serial — a permanent PostgreSQL SEQUENCE
+    value assigned once at row creation and never changes on deletion.
     This guarantees stable file references even after rows are archived.
 
-    Falls back to legacy hex-slug key if the serial column is not yet available
-    (migration 0045 pending) so existing deployments are not broken.
+    Falls back to legacy hex-slug key under profiles/ if the serial column
+    is not yet available (migration 0045 pending).
     """
     from sqlalchemy import text  # noqa: PLC0415
     from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
@@ -179,7 +180,7 @@ def _canonical_profile_key(identity_id: str, engine: object) -> str:
     with OrmSession(engine) as sess:
         row = sess.execute(
             text("""
-                SELECT serial, identifier
+                SELECT profile_serial AS serial
                 FROM identities
                 WHERE id = :iid
                 LIMIT 1
@@ -188,12 +189,11 @@ def _canonical_profile_key(identity_id: str, engine: object) -> str:
         ).mappings().first()
 
         if row and row["serial"] is not None:
-            username = _normalize_username(row["identifier"] or "")
-            return f"chrome_profiles/PRFL-{int(row['serial']):03d}_{username}.tar.gz"
+            return f"profiles/PRFL-{int(row['serial']):03d}.tar.gz"
 
-    # Fallback: hex-slug key (pre-0045 migration or identity not found)
+    # Fallback: hex-slug key under profiles/
     slug = _slug_from_identity(identity_id)
-    return f"chrome_profiles/PRFL_{slug}.tar.gz"
+    return f"profiles/PRFL_{slug}.tar.gz"
 
 
 def lookup_drive_object_key(identity_id: str, engine: object) -> str:
@@ -341,7 +341,7 @@ class ChromeProfileStore:
         _trim_profile(profile_path)
 
         object_key = lookup_drive_object_key(identity_id, self._engine) or (
-            f"chrome_profiles/PRFL_{_slug_from_identity(identity_id)}.tar.gz"
+            f"profiles/PRFL_{_slug_from_identity(identity_id)}.tar.gz"
         )
 
         with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp:

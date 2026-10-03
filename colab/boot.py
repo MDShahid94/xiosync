@@ -687,16 +687,16 @@ _p("\n" + "═" * 60)
 _p("  Phase 2.5: Antigravity Auth Restore")
 _p("═" * 60)
 
-_agy_tar = _run("ls /content/drive/MyDrive/XIOSYNC-Shared/agy_auth/AGY_*.tar.gz 2>/dev/null | tail -1", capture=True, silent=True)
-if _agy_tar and _agy_tar.strip():
-    _run(f"tar xzf {_agy_tar.strip()} -C /root/")
-    _agy_test = _run("agy --version 2>&1", capture=True, silent=True)
-    if "authentication required" not in str(_agy_test):
-        _p("  ✅ agy auth restored")
+_agy_creds_tar = f"{DRIVE_ROOT}/cache/agy-credentials.tar.gz"
+if os.path.isfile(_agy_creds_tar):
+    _run(f"tar xzf {_agy_creds_tar} -C /root/", silent=True)
+    _agy_test = _run("PATH=/root/.local/bin:/usr/local/bin:$PATH agy --version 2>&1", capture=True, silent=True)
+    if _agy_test and "authentication required" not in str(_agy_test):
+        _p(f"  ✅ agy auth restored ({_agy_test.strip().split(chr(10))[0]})")
     else:
-        _p("  ⚠️  agy auth restore failed or invalid")
+        _p(f"  ⚠️  agy auth restore failed or token invalid")
 else:
-    _p("  ⚠️  no agy auth found")
+    _p(f"  ⚠️  no agy credentials found at {_agy_creds_tar}")
 
 
 # ════════════════════════════════════════════════════════════════════════════════
