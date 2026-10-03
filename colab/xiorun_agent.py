@@ -5190,10 +5190,15 @@ async def persist_session(req: PersistSessionRequest):
 # ── AI Generation Endpoints ────────────────────────────────────────────────────
 
 # Constants for native agy
-_AGY_BIN = os.environ.get("XIOAI_AGY_BIN") or os.path.expanduser("~/.local/bin/agy")
+_AGY_BIN = (
+    os.environ.get("XIOAI_AGY_BIN") or
+    shutil.which("agy") or                         # search $PATH first
+    os.path.expanduser("~/.local/bin/agy") or      # pip install --user
+    "/usr/local/bin/agy"                           # system install
+)
 _AGY_GEMINI_DIR = os.path.expanduser("~/.gemini")
-_AGY_STATE_DIR = os.path.join(_AGY_GEMINI_DIR, "antigravity-cli")
-_AGY_TOKEN_FILE = os.path.join(_AGY_GEMINI_DIR, "jetski-standalone-oauth-token")
+_AGY_STATE_DIR  = os.path.join(_AGY_GEMINI_DIR, "antigravity-cli")
+_AGY_TOKEN_FILE = os.path.join(_AGY_GEMINI_DIR, "antigravity-cli", "antigravity-oauth-token")
 
 
 # ── Per-profile fingerprint persistence ───────────────────────────────────────
