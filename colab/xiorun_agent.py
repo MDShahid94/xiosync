@@ -306,12 +306,31 @@ async def _lifespan(application):
                 timeout=10,
             )
             await _test_ws.close()
-            # Start the bridge server
-            _ws_bridge_task = asyncio.create_task(_ws_socks5_bridge())
+
+            # ── Self-restarting supervisor for the SOCKS5 bridge ─────────────
+            # If the WS connection drops (XIOSYNC restart, network blip), the
+            # bridge's serve_forever() exits silently and port 19055 goes dark.
+            # This supervisor loop detects exit and restarts with backoff.
+            async def _ws_socks5_supervisor():
+                _backoff = 1.0
+                while True:
+                    try:
+                        logger.info(f"ws_bridge/supervisor: starting bridge on :{_WS_SOCKS5_PORT}")
+                        await _ws_socks5_bridge()
+                        logger.warning("ws_bridge/supervisor: bridge exited — restarting...")
+                    except asyncio.CancelledError:
+                        logger.info("ws_bridge/supervisor: cancelled, stopping")
+                        break
+                    except Exception as _sup_err:
+                        logger.warning(f"ws_bridge/supervisor: bridge crashed ({_sup_err}) — restarting in {_backoff}s")
+                    await asyncio.sleep(_backoff)
+                    _backoff = min(_backoff * 2, 30.0)  # exponential backoff, cap 30s
+
+            _ws_bridge_task = asyncio.create_task(_ws_socks5_supervisor())
             _t.sleep(0.5)
             _SSH_PROXY_URL = f"socks5://127.0.0.1:{_WS_SOCKS5_PORT}"
             logger.info(
-                f"WS SOCKS5 bridge ready on :{_WS_SOCKS5_PORT} "
+                f"WS SOCKS5 bridge supervisor ready on :{_WS_SOCKS5_PORT} "
                 f"→ XIOSYNC tunnel → {_pppoe_proxy}"
             )
         except Exception as _e:

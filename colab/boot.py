@@ -740,6 +740,20 @@ else:
     _p("  ℹ️  System Chrome not at standard paths — UC will auto-download on first use")
 
 # ── Patchright patched Chromium ──────────────────────────────────
+# Phase 3b-pre: Restore patchright cache from Drive (saves ~15-30s download)
+_PATCHRIGHT_CACHE_TAR = f"{DRIVE_ROOT}/cache/patchright-cache.tar.gz"
+if os.path.isfile(_PATCHRIGHT_CACHE_TAR):
+    try:
+        import tarfile as _pr_tf
+        _p("  📦 Restoring patchright cache from Drive...")
+        with _pr_tf.open(_PATCHRIGHT_CACHE_TAR, "r:gz") as _pr_tar:
+            _pr_tar.extractall(path="/root/.cache")
+        _p(f"  ✅ Patchright cache restored from Drive ({os.path.getsize(_PATCHRIGHT_CACHE_TAR)//1024//1024}MB)")
+    except Exception as _pr_restore_err:
+        _p(f"  ⚠️  Patchright cache restore failed (non-fatal): {_pr_restore_err}")
+else:
+    _p("  ℹ️  No patchright Drive cache found — will download fresh")
+
 _PR_BOOT_URL  = f"{ASSET_BASE}/api/v1/workers/patchright-boot.py"
 _PR_BOOT_PATH = "/tmp/patchright_boot.py"
 try:
