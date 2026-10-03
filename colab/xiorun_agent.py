@@ -3042,7 +3042,10 @@ def _run_uc_login_sync(
         # ── Pre-auth fast-path: profile already authenticated ─────────────────
         # If Chrome redirected to Gmail/Drive/myaccount instead of sign-in page,
         # the profile has a valid Google session — skip all login form steps.
-        _already_authed = any(s in curr_start for s in [
+        # IMPORTANT: strip query string first — otherwise 'mail.google.com' matches
+        # 'accounts.google.com/v3/signin?continue=https://mail.google.com'
+        _curr_path = curr_start.split("?")[0]
+        _already_authed = any(s in _curr_path for s in [
             "mail.google.com", "drive.google.com", "docs.google.com",
             "myaccount.google.com", "youtube.com",
         ])
