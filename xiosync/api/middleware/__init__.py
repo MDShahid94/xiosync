@@ -37,6 +37,7 @@ _PUBLIC_AUTH_PATHS = frozenset({
     # boot.py is public (no secrets inside); config fetch validates by token.
     "/api/v1/workers/boot.py",
     "/api/v1/workers/xiorun-agent.py",
+    "/api/v1/workers/patchright-boot.py",
     # Notebook self-update — workers fetch to check/download latest version.
     "/api/v1/workers/notebook.ipynb",
     "/api/v1/workers/notebook-hash",
@@ -48,13 +49,17 @@ _PUBLIC_AUTH_PATHS = frozenset({
 
 # Prefix-based public paths (matched by startswith)
 _PUBLIC_AUTH_PREFIXES = (
-    "/api/v1/workers/bootstrap/",    # GET /workers/bootstrap/{token}
-    "/api/v1/workers/ts-state/",     # GET/PUT ts-state/{node} -- auth via X-Worker-Secret
-    "/api/v1/workers/lock/",         # GET/POST lock/* -- auth via X-Worker-Secret
-    "/api/v1/workers/xio-drive-fs.py",  # public static asset -- no secrets
+    "/api/v1/workers/bootstrap/",     # GET /workers/bootstrap/{token}
+    "/api/v1/workers/ts-state/",      # GET/PUT ts-state/{node} -- auth via X-Worker-Secret
+    "/api/v1/workers/lock/",          # GET/POST lock/* -- auth via X-Worker-Secret
+    "/api/v1/workers/xio-drive-fs.py",   # public static asset -- no secrets
+    "/api/v1/workers/xiorun-agent.py",   # public static asset -- workers fetch before auth
+    "/api/v1/workers/mesh-identity",     # public -- auth via X-Worker-Org-Secret header
+    "/api/v1/workers/xiorun_agent.py",   # underscore alias (boot.py may use either form)
     "/api/v1/xioview/sessions/",     # viewer HTML is public (WS auth is separate)
     "/api/v1/xioview/attach",        # uses internal-secret in body, not Bearer
     "/api/v1/xioview/observable",    # read-only list — no secrets
+    "/api/v1/xioai/",                # AI gateway — internal callers use X-XIOSYNC-Internal
 )
 
 

@@ -83,7 +83,25 @@ def create_app(
         # Register engine singleton so subsystems can reach DB outside request context
         from xiosync.platform.engine_ref import set_engine as _set_engine
         _set_engine(engine)
+        # Start XIOVIEW background tasks (cleanup timer, audit flusher)
+        try:
+            from xiosync.subsystems.xioview.registry import get_registry  # noqa: PLC0415
+            from xiosync.subsystems.xioview.audit import get_audit_log  # noqa: PLC0415
+            get_registry().start_background_tasks()
+            get_audit_log().start()
+            _log.info("startup: XIOVIEW background tasks started")
+        except Exception:
+            _log.debug("startup: XIOVIEW background tasks skipped (not imported)")
         yield
+        # Graceful shutdown: stop XIOVIEW background tasks
+        try:
+            from xiosync.subsystems.xioview.registry import get_registry as _xv_reg  # noqa: PLC0415
+            from xiosync.subsystems.xioview.audit import get_audit_log as _xv_audit  # noqa: PLC0415
+            _xv_reg().stop_background_tasks()
+            _xv_audit().stop()
+            _log.info("shutdown: XIOVIEW background tasks stopped")
+        except Exception:
+            pass
         # Graceful shutdown: dispose connection pool and close Redis.
         _log.info("shutdown: disposing database connection pool")
         engine.dispose()
@@ -247,6 +265,12 @@ def create_app(
         dependencies=[require_capability("workflow.manage")],
     )
 
+    from xiosync.subsystems.xioflow.api.workflows import router as xioflow_workflows_router
+    application.include_router(
+        xioflow_workflows_router, prefix="/api/v1",
+        dependencies=[require_capability("workflow.manage")],
+    )
+
     # --- XIOVIEW: universal browser session observation (WS stream + remote control)
     from xiosync.subsystems.xioview.api.observe import (  # noqa: PLC0415
         router as xioview_router,
@@ -325,6 +349,10 @@ def create_app(
         worker_locks_router, prefix="/api/v1",
     )
 
+    # --- PROXY TUNNEL: WebSocket TCP tunnel for Colab workers (bypasses TS ACL)
+    from xiosync.api.routers.proxy_tunnel import router as proxy_tunnel_router  # noqa: PLC0415
+    application.include_router(proxy_tunnel_router)
+
     from xiosync.api.routers.secrets_crud import router as secrets_crud_router
     application.include_router(
         secrets_crud_router, prefix="/api/v1",
@@ -354,6 +382,11 @@ def create_app(
         operations_router, prefix="/api/v1",
         dependencies=[require_capability("event.manage")],
     )
+
+    # --- XIOAI: AI Gateway Subsystem ----------
+    from xiosync.subsystems.xioai.api.routes import router as xioai_router
+    application.include_router(xioai_router, prefix="/api/v1/xioai",
+                               tags=["xioai"])
 
     # --- XIOGRID Decoupled Services ----------
     from xiosync.api.routers.browser_pools import router as browser_pools_router
