@@ -436,7 +436,7 @@ def complete_run_internal(run_id: uuid.UUID, payload: CompleteRunRequest, reques
         if payload.task_id:
             task_state = "SUCCESS" if payload.success else "FAILED"
             sess.execute(text("""
-                UPDATE xioflow_tasks SET state = :s, finished_at = :now, error = :error, result = cast(:res as jsonb)
+                UPDATE xioflow_tasks SET state = :s, completed_at = :now, error = :error, result = cast(:res as jsonb)
                 WHERE id = :tid
             """), {"s": task_state, "now": now, "tid": payload.task_id, "error": payload.error, "res": json.dumps(payload.result or {})})
         
@@ -444,14 +444,12 @@ def complete_run_internal(run_id: uuid.UUID, payload: CompleteRunRequest, reques
             UPDATE xioflow_runs
             SET state = :s,
                 finished_at = :now,
-                error = :error,
-                context = context || cast(:result as jsonb)
+                error = :error
             WHERE id = :rid
         """), {
             "s": run_state, "now": now,
             "error": payload.error,
-            "result": json.dumps({"worker_result": payload.result or {}, "error": payload.error}),
-            "rid": str(run_id)
+            "rid": str(run_id),
         })
         sess.commit()
     
