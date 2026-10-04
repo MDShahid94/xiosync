@@ -64,6 +64,7 @@ _PUBLIC_AUTH_PREFIXES = (
     "/api/v1/xioflow/events/runs/pending-dag-internal",
     "/api/v1/xioflow/events/runs-internal/",
     "/api/v1/xioflow/events/memory-graph-internal",
+    "/api/v1/xioflow/events/trace-nodes-internal",
 )
 
 

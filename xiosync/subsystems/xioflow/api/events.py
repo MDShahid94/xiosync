@@ -500,3 +500,69 @@ def get_memory_graph_internal(request: Request, domain: str, intent: str) -> dic
             queue.extend(next_intents)
         
         return {'domain': domain, 'root_intent': intent, 'nodes': nodes}
+
+@internal_router.post("/trace-nodes-internal", status_code=200,
+                      summary="[Worker-internal] Bulk-deploy auto-traced steps as memory nodes")
+def deploy_trace_nodes_internal(request: Request, payload: dict) -> dict:
+    """Worker posts executed steps after a trace_mode=True run.
+    
+    Payload:
+        org_id: str
+        domain: str
+        nodes: list of {intent, action_type, place_value, action_params, previous_intent?}
+    """
+    import os as _os, json as _json
+    from sqlalchemy.orm import Session as _Sess
+    from xiosync.platform.engine_ref import get_engine
+    from xiosync.platform.ids import new_id
+
+    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
+    given = request.headers.get("X-XIOSYNC-Internal", "")
+    if not expected or given != expected:
+        raise HTTPException(status_code=403, detail="invalid_internal_secret")
+
+    org_id   = payload.get("org_id", "")
+    domain   = payload.get("domain", "")
+    nodes    = payload.get("nodes", [])
+    run_id   = payload.get("run_id", "")
+
+    if not org_id or not domain or not nodes:
+        raise HTTPException(status_code=400, detail="org_id, domain, nodes required")
+
+    inserted = 0
+    with _Sess(get_engine()) as sess:
+        for i, node in enumerate(nodes):
+            intent       = node.get("intent", "")
+            action_type  = node.get("action_type", "")
+            place_value  = node.get("place_value", {})
+            action_params = node.get("action_params", {})
+            prev_intent  = node.get("previous_intent")
+            if not intent or not action_type:
+                continue
+            sess.execute(text("""
+                INSERT INTO xioflow_memory_nodes
+                  (id, organization_id, domain, intent, action_type, action_params,
+                   place_value, face_value, tier, status, recording_method,
+                   context_hash, previous_intent, created_at)
+                VALUES
+                  (:id, :org, :domain, :intent, :action_type, cast(:params as jsonb),
+                   cast(:place as jsonb), '{}'::jsonb, 'project_experimental', 'ACTIVE',
+                   'auto_trace', 'default', :prev, now())
+                ON CONFLICT DO NOTHING
+            """), {
+                "id": str(new_id()),
+                "org": org_id,
+                "domain": domain,
+                "intent": intent,
+                "action_type": action_type,
+                "params": _json.dumps(action_params),
+                "place": _json.dumps(place_value),
+                "prev": prev_intent,
+            })
+            inserted += 1
+        sess.commit()
+
+    logger.info("trace_nodes.deployed",
+                extra={"org_id": org_id, "domain": domain, "run_id": run_id, "count": inserted})
+    return {"deployed": inserted, "domain": domain, "run_id": run_id}
+

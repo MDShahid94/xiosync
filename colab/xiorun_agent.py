@@ -591,20 +591,28 @@ async def _execute_dag_run(
             6: lambda pv: pv.get("css"),
         }
 
-        results  = []
-        all_ok   = True
+        results     = []     # summary per step
+        trace_nodes = []     # rich nodes for trace_mode=True deploy
+        all_ok      = True
 
         async with _pw() as pw:
             _brow = await pw.chromium.launch(headless=False, args=_launch_args)
-            _bctx = await _brow.new_context(
-                viewport={"width": 1920, "height": 1080},
-                user_agent=(
+            # Load persisted cookies/session if available
+            _st_slug  = dag_domain.replace(".", "_").replace("/", "_")
+            _st_path  = f"/content/drive/MyDrive/XIOSYNC-Shared/storage_states/{_st_slug}_storage_state.json"
+            _ctx_kwargs: dict = {
+                "viewport": {"width": 1920, "height": 1080},
+                "user_agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
                     "Chrome/131.0.0.0 Safari/537.36"
                 ),
-                locale="en-US",
-            )
+                "locale": "en-US",
+            }
+            if os.path.isfile(_st_path):
+                _ctx_kwargs["storage_state"] = _st_path
+                logger.info(f"dag_run.profile: loading persisted session from {_st_path}")
+            _bctx = await _brow.new_context(**_ctx_kwargs)
             _page = await _bctx.new_page()
 
             # Optional: wrap with PageProxy for auto-trace
@@ -654,6 +662,8 @@ async def _execute_dag_run(
                                 if await _loc.count() == 0: continue
                                 await _loc.first.fill(_text, timeout=8000)
                                 _step_ok = True
+                                _step_rec = {"intent": _intent, "action": _action, "ok": True,
+                                             "locator_tier": _t, "locator_str": _ls}
                                 logger.info(f"dag_run.step: {_intent} fill T{_t} {_ls!r}")
                                 break
                             except Exception: continue
@@ -669,6 +679,8 @@ async def _execute_dag_run(
                                 if await _loc.count() == 0: continue
                                 await _loc.first.click(timeout=8000)
                                 _step_ok = True
+                                _step_rec = {"intent": _intent, "action": _action, "ok": True,
+                                             "locator_tier": _t, "locator_str": _ls}
                                 logger.info(f"dag_run.step: {_intent} click T{_t} {_ls!r}")
                                 break
                             except Exception: continue
@@ -685,7 +697,18 @@ async def _execute_dag_run(
                     logger.error(f"dag_run.step_error: {_intent} [{_action}] {_se}")
                     _step_ok = False
 
-                results.append({"intent": _intent, "action": _action, "ok": _step_ok})
+                _step_rec = {"intent": _intent, "action": _action, "ok": _step_ok,
+                             "locator_tier": None, "locator_str": None}
+                results.append(_step_rec)
+                # Record rich node data for trace deployment
+                if _trace:
+                    trace_nodes.append({
+                        "intent": _intent,
+                        "action_type": _action,
+                        "place_value": _pv or {},
+                        "action_params": _params or {},
+                        "previous_intent": results[-2]["intent"] if len(results) >= 2 else None,
+                    })
                 if not _step_ok and _action != "wait":
                     all_ok = False
                     logger.warning(f"dag_run: step {_intent!r} failed — stopping DAG")
@@ -693,26 +716,39 @@ async def _execute_dag_run(
 
                 await _page.wait_for_timeout(1500)
 
-            # Auto-trace: save recorded actions as memory nodes
-            if _trace and _tc and all_ok:
+            # ── Profile persistence: save storage_state (cookies) to Drive ─────
+            if all_ok:
                 try:
-                    from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
-                    from xiosync.subsystems.xioflow.ingestion.dag_deployer import DAGDeployer
-                    from sqlalchemy import create_engine as _ce
-                    from sqlalchemy.orm import Session as _TS
-                    import uuid as _uuid
-                    _db_url = os.environ.get("DATABASE_URL", "")
-                    if _db_url:
-                        _eng = _ce(_db_url)
-                        with _TS(_eng) as _sess:
-                            _dag_nodes = DAGGraphBuilder().build(_tc, context={})
-                            DAGDeployer(_sess).deploy(_dag_nodes, org_id=None)
-                            _sess.commit()
-                        logger.info(f"dag_run.trace: deployed {len(_dag_nodes)} memory nodes from trace")
-                except Exception as _tre:
-                    logger.warning(f"dag_run.trace: deploy failed ({_tre})")
+                    _st = await _bctx.storage_state()
+                    _drive_profiles = "/content/drive/MyDrive/XIOSYNC-Shared/storage_states"
+                    os.makedirs(_drive_profiles, exist_ok=True)
+                    _st_slug = dag_domain.replace(".", "_").replace("/", "_")
+                    _st_path = f"{_drive_profiles}/{_st_slug}_storage_state.json"
+                    import json as _stj
+                    with open(_st_path, "w") as _stf:
+                        _stj.dump(_st, _stf)
+                    logger.info(f"dag_run.profile: storage_state saved → {_st_path} "
+                                f"({len(_st.get('cookies', []))} cookies)")
+                except Exception as _pe:
+                    logger.debug(f"dag_run.profile: storage_state save skipped ({_pe})")
 
             await _brow.close()
+
+            # ── Auto-trace: POST executed steps as memory nodes to XIOSYNC ──────
+            if _trace and trace_nodes and all_ok:
+                try:
+                    _org_id = context.get("organization_id", "00000000-0000-7000-8000-000000000000")
+                    async with _hx.AsyncClient(timeout=20) as _cl:
+                        _tr = await _cl.post(
+                            f"{_XIOSYNC}/api/v1/xioflow/events/trace-nodes-internal",
+                            headers=_HDRS,
+                            json={"org_id": _org_id, "domain": dag_domain,
+                                  "nodes": trace_nodes, "run_id": run_id},
+                        )
+                    logger.info(f"dag_run.trace: deployed {_tr.json().get('deployed', 0)} "
+                                f"memory nodes via auto-trace (HTTP {_tr.status_code})")
+                except Exception as _tre:
+                    logger.warning(f"dag_run.trace: deploy failed ({_tre})")
 
         # 3. Report results back to XIOSYNC
         async with _hx.AsyncClient(timeout=30) as _cl:
