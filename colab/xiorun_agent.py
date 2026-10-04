@@ -824,7 +824,27 @@ async def _execute_dag_run(
                         await _page.goto(_url, wait_until="domcontentloaded", timeout=30000)
                         await _page.wait_for_timeout(2000)
                         _step_ok = True
-                        logger.info(f"dag_run.step: {_intent} navigate → {_url[:60]}")
+                        _final_url = _page.url
+                        logger.info(f"dag_run.step: {_intent} navigate → {_url[:60]} (final={_final_url[:60]})")
+
+                        # ── Pre-flight auth check (mirrors mjs Phase 0) ────────────────
+                        # If navigate_to_signin was redirected away from the signin page,
+                        # the stored cookies are valid → user is already authenticated.
+                        # Short-circuit: skip all remaining nodes, go straight to persist.
+                        if _intent == "navigate_to_signin" and (
+                            "myaccount.google.com" in _final_url
+                            or ("accounts.google.com" not in _final_url
+                                and "signin" not in _final_url
+                                and "identifier" not in _final_url)
+                        ):
+                            logger.info(
+                                f"dag_run.preflight: already authenticated → "
+                                f"{_final_url[:70]} — skipping signin DAG"
+                            )
+                            results.append({"intent": _intent, "ok": True,
+                                            "note": "already_authenticated"})
+                            all_ok = True
+                            break  # exit node loop → go directly to storage_state save + vault
 
                     elif _action in ("fill", "type"):
                         # "value" key (new nodes) OR "text" key (legacy)
