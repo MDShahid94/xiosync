@@ -856,11 +856,6 @@ async def _execute_dag_run(
                                 break
                             except Exception: continue
 
-                    # ── Post-click: Google challenge handler (fires after click_signin) ──
-                    if _step_ok and _intent == "click_signin":
-                        await _google_challenge_handler(
-                            _page, _vars, _XIOSYNC, _HDRS, run_id, logger)
-
                     elif _action == "wait":
                         await _page.wait_for_timeout(_params.get("ms", 2000))
                         _step_ok = True
@@ -868,6 +863,11 @@ async def _execute_dag_run(
                     else:
                         logger.warning(f"dag_run.step: unknown action {_action!r} for {_intent!r} — skipping")
                         _step_ok = True
+
+                    # ── Post-click: Google challenge handler (fires after click_signin) ──
+                    if _step_ok and _intent == "click_signin":
+                        await _google_challenge_handler(
+                            _page, _vars, _XIOSYNC, _HDRS, run_id, logger)
 
                 except Exception as _se:
                     logger.error(f"dag_run.step_error: {_intent} [{_action}] {_se}")
