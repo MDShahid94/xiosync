@@ -1337,16 +1337,20 @@ async def _execute_dag_run(
                 # Vault save: AES-GCM encrypt cookies → vaulted_secrets via XIOSYNC
                 if _st:
                     try:
-                        async with _hx.AsyncClient(timeout=30) as _cl:
-                            _pr = await _cl.post(
-                                f"{_XIOSYNC}/api/v1/xioflow/events/runs-internal/{run_id}/persist-session",
-                                headers=_HDRS,
-                                json={
-                                    "storage_state": _st,
-                                    "email":         _email,
-                                    "identity_id":   _iid_resolved,
-                                    "org_id":        _org_id,
-                                },
+                        import asyncio as _aio
+                        async with _hx.AsyncClient(timeout=8) as _cl:
+                            _pr = await _aio.wait_for(
+                                _cl.post(
+                                    f"{_XIOSYNC}/api/v1/xioflow/events/runs-internal/{run_id}/persist-session",
+                                    headers=_HDRS,
+                                    json={
+                                        "storage_state": _st,
+                                        "email":         _email,
+                                        "identity_id":   _iid_resolved,
+                                        "org_id":        _org_id,
+                                    },
+                                ),
+                                timeout=8,
                             )
                         _pd = _pr.json()
                         _serial_v = _pd.get("profile_serial", 0)
@@ -1354,8 +1358,9 @@ async def _execute_dag_run(
                             f"dag_run.profile: vault saved → identity={str(_pd.get('identity_id','?'))[:8]} "
                             f"PRFL-{_serial_v:03d} ({_pd.get('cookie_count', 0)} cookies encrypted)"
                         )
-                    except Exception as _ve:
-                        logger.warning(f"dag_run.profile: vault save failed ({_ve})")
+                    except BaseException as _ve:
+                        logger.warning(f"dag_run.profile: vault save failed ({type(_ve).__name__}: {_ve})")
+                        # Do NOT re-raise — vault failure is non-fatal; storage_state already saved
 
             # ── Close browser (persistent-context has no separate _brow) ──────────
             try:
@@ -1395,13 +1400,16 @@ async def _execute_dag_run(
                     logger.warning(f"dag_run.trace: deploy failed ({_tre})")
 
         # 3. Report results back to XIOSYNC
-        async with _hx.AsyncClient(timeout=30) as _cl:
-            await _cl.post(
-                f"{_XIOSYNC}/api/v1/xioflow/events/runs-internal/{run_id}/complete",
-                headers=_HDRS,
-                json={"success": all_ok, "task_id": task_id,
-                      "result": {"steps": results}},
-            )
+        try:
+            async with _hx.AsyncClient(timeout=15) as _cl:
+                await _cl.post(
+                    f"{_XIOSYNC}/api/v1/xioflow/events/runs-internal/{run_id}/complete",
+                    headers=_HDRS,
+                    json={"success": all_ok, "task_id": task_id,
+                          "result": {"steps": results}},
+                )
+        except BaseException as _cr:
+            logger.warning(f"dag_run: complete-report failed ({type(_cr).__name__}: {_cr}) — result still logged")
         logger.info(f"dag_run.done: run={run_id} ok={all_ok} steps={len(results)}")
 
     except BaseException as _ex:
