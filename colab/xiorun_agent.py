@@ -6086,7 +6086,7 @@ async def persist_session(req: PersistSessionRequest):
                     _idr = _hx_ps.get(
                         f"{XIOSYNC_BASE}/api/v1/xioflow/events/identity-internal",
                         params={"identity_id": req.identity_id},
-                        headers={"X-XIOSYNC-Internal": INTERNAL_SECRET},
+                        headers={"X-XIOSYNC-Internal": os.environ.get("XIORUN_INTERNAL_SECRET", os.environ.get("XIOSYNC_INTERNAL_SECRET", ""))},
                         timeout=10,
                     )
                     if _idr.status_code == 200:
@@ -6165,6 +6165,9 @@ async def persist_session(req: PersistSessionRequest):
                     logger.warning(f"persist-session: fingerprint write failed: {_fp_e}")
 
                 # Clean up legacy chrome_profiles/ duplicate if it exists
+                _id_short_ps = req.identity_id.replace("-", "")[:16] if req.identity_id else ""
+                _legacy_key  = f"chrome_profiles/PRFL_{_id_short_ps}.tar.gz"
+                _legacy_path = os.path.join(DRIVE_ROOT, _legacy_key)
                 if os.path.exists(_legacy_path):
                     try:
                         os.unlink(_legacy_path)
