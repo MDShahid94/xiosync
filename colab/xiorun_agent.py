@@ -5710,7 +5710,23 @@ async def navigate_page(req: NavigateRequest) -> dict:
         # Use existing first page if available, else open new one
         pages = ctx.pages
         page  = pages[0] if pages else await ctx.new_page()
-        await page.goto(req.url, wait_until=req.wait_until, timeout=30_000)
+        # Retry up to 3× on transient SOCKS5 failures (PPPoE tunnel drop)
+        _nav_last_exc = None
+        for _nav_attempt in range(3):
+            try:
+                await page.goto(req.url, wait_until=req.wait_until, timeout=30_000)
+                _nav_last_exc = None
+                break
+            except Exception as _nav_exc:
+                _nav_last_exc = _nav_exc
+                _emsg = str(_nav_exc)
+                if "SOCKS" in _emsg or "ERR_SOCKS" in _emsg or "ERR_TUNNEL" in _emsg:
+                    logger.warning(f"navigate: SOCKS failure attempt {_nav_attempt+1}/3 — {_emsg[:80]}")
+                    await asyncio.sleep(3)
+                    continue
+                raise  # non-SOCKS error — propagate immediately
+        if _nav_last_exc:
+            raise _nav_last_exc
         return {"ok": True, "final_url": page.url, "title": await page.title()}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
@@ -6081,23 +6097,48 @@ async def persist_session(req: PersistSessionRequest):
             os.makedirs(_profiles_dir_ps, exist_ok=True)
             _resolved_serial = None
             if XIOSYNC_BASE and req.identity_id:
-                try:
-                    import httpx as _hx_ps
-                    _idr = _hx_ps.get(
-                        f"{XIOSYNC_BASE}/api/v1/xioflow/events/identity-internal",
-                        params={"identity_id": req.identity_id},
-                        headers={"X-XIOSYNC-Internal": os.environ.get("XIORUN_INTERNAL_SECRET", os.environ.get("XIOSYNC_INTERNAL_SECRET", ""))},
-                        timeout=10,
-                    )
-                    if _idr.status_code == 200:
-                        _idata = _idr.json()
-                        _resolved_serial = _idata.get("profile_serial")
-                        logger.info(f"persist-session: identity resolved → PRFL-{_resolved_serial:03d}")
-                    else:
-                        logger.warning(f"persist-session: identity-internal {_idr.status_code} — falling back to Drive scan")
-                except Exception as _ie_ps:
-                    logger.warning(f"persist-session: identity resolve failed: {_ie_ps}")
-            
+                # Try API with 2 retries (SSL EOF is transient on Tailscale)
+                for _retry_ps in range(2):
+                    try:
+                        import httpx as _hx_ps
+                        _idr = _hx_ps.get(
+                            f"{XIOSYNC_BASE}/api/v1/xioflow/events/identity-internal",
+                            params={"identity_id": req.identity_id},
+                            headers={"X-XIOSYNC-Internal": os.environ.get("XIORUN_INTERNAL_SECRET", os.environ.get("XIOSYNC_INTERNAL_SECRET", ""))},
+                            timeout=10,
+                        )
+                        if _idr.status_code == 200:
+                            _idata = _idr.json()
+                            _resolved_serial = _idata.get("profile_serial")
+                            logger.info(f"persist-session: identity resolved → PRFL-{_resolved_serial:03d}")
+                            break
+                        else:
+                            logger.warning(f"persist-session: identity-internal {_idr.status_code} — falling back to Drive scan")
+                            break
+                    except Exception as _ie_ps:
+                        logger.warning(f"persist-session: identity resolve attempt {_retry_ps+1} failed: {_ie_ps}")
+                        if _retry_ps == 0:
+                            time.sleep(2)   # brief pause before retry
+
+            # Drive fingerprint.json fallback — scan for fingerprint with matching identity_id
+            # This works even when the identity-internal API is unreachable.
+            if not _resolved_serial and req.identity_id and os.path.isdir(_profiles_dir_ps):
+                import json as _fp_scan_json
+                for _fp_fn in sorted(os.listdir(_profiles_dir_ps)):
+                    if _fp_fn.endswith(".fingerprint.json") and _fp_fn.startswith("PRFL-"):
+                        try:
+                            _fp_path_scan = os.path.join(_profiles_dir_ps, _fp_fn)
+                            with open(_fp_path_scan) as _fp_f_s:
+                                _fp_d = _fp_scan_json.load(_fp_f_s)
+                            if _fp_d.get("identity_id", "").lower() == req.identity_id.lower():
+                                _prfl_id_str = _fp_d.get("profile_id", "")  # e.g. "PRFL-010"
+                                _resolved_serial = int(_prfl_id_str.split("-")[1]) if _prfl_id_str else None
+                                if _resolved_serial:
+                                    logger.info(f"persist-session: identity resolved from Drive fingerprint → PRFL-{_resolved_serial:03d}")
+                                    break
+                        except Exception:
+                            pass
+
             if _resolved_serial:
                 _next_num = _resolved_serial
             else:
