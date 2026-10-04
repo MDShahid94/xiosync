@@ -836,7 +836,13 @@ async def _execute_dag_run(
     _HDRS    = {"X-XIOSYNC-Internal": _SECRET, "Content-Type": "application/json"}
     _trace   = context.get("trace_mode", False)
     _trace_requested = _trace   # original flag — never overridden, drives trace_nodes collection
-    _vars    = context.get("workflow_vars", {})
+    _vars    = dict(context.get("workflow_vars", {}))  # mutable copy
+    # Merge top-level context fallback keys — so dispatchers can put email/identity_id
+    # at the context root OR inside workflow_vars and both patterns work.
+    for _ck in ("email", "identity_id", "persist_mode", "organization_id",
+                "password", "totp_secret", "proxy_url"):
+        if _ck not in _vars and _ck in context:
+            _vars[_ck] = context[_ck]
     _proxy   = _SSH_PROXY_URL   # socks5://127.0.0.1:19055 (or 19056)
 
     logger.info(f"dag_run.start: run={run_id} domain={dag_domain} intent={dag_root_intent} trace={_trace}")
