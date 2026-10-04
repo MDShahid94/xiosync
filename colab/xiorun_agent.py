@@ -1294,7 +1294,7 @@ async def _execute_dag_run(
             )
         logger.info(f"dag_run.done: run={run_id} ok={all_ok} steps={len(results)}")
 
-    except Exception as _ex:
+    except BaseException as _ex:
         logger.error(f"dag_run.fatal: run={run_id} {_ex}")
         try:
             import httpx as _hx2
@@ -1306,6 +1306,8 @@ async def _execute_dag_run(
                 )
         except Exception:
             pass
+    if isinstance(_ex, __import__('asyncio').CancelledError):
+        raise
 
 
 async def _dag_poll_loop() -> None:
