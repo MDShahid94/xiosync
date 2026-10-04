@@ -92,6 +92,24 @@ def _publish(org_id: str, event: dict) -> None:
         pass  # SSE broker may not be loaded in worker-only mode
 
 
+def _register_active_run(session_id: str, run_id: str, template_type: str) -> None:
+    """Register an active run so XIOVIEW can detect it (both script + DAG)."""
+    try:
+        from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+        get_runtime_pool().register_active_run(session_id, run_id, template_type)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _unregister_active_run(session_id: str) -> None:
+    """Remove the active run marker when execution completes."""
+    try:
+        from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+        get_runtime_pool().unregister_active_run(session_id)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def dispatch_pending_runs(session: Session, *, max_per_tick: int = 3) -> int:
     """Claim up to `max_per_tick` PENDING xioflow_runs and execute them.
 
@@ -136,34 +154,53 @@ def dispatch_pending_runs(session: Session, *, max_per_tick: int = 3) -> int:
         _create_task(session, task_id=task_id, run_id=run_id,
                      node_intent=script_ref or dag_root_intent or "dag_root")
 
-        if template_type == "script" and script_ref:
-            result = _execute_script(
-                script_ref=script_ref,
-                context=context,
-                proxy_url=proxy_url,
-                session_id=uuid.UUID(session_id) if session_id else None,
-            )
-        elif template_type == "xioflow_dag":
-            if not dag_domain or not dag_root_intent:
-                result = {
-                    "success": False, "status": "error",
-                    "error": "xioflow_dag template missing dag_domain or dag_root_intent",
-                }
-            else:
-                result = _execute_dag_workflow(
-                    dag_domain=dag_domain,
-                    dag_root_intent=dag_root_intent,
+        # Register active run in runtime_pool so XIOVIEW can detect it
+        # and block manual interactions for BOTH script and DAG paradigms.
+        _view_session_id = session_id or run_id
+        _register_active_run(_view_session_id, run_id, template_type)
+
+        try:
+            if template_type == "script" and script_ref:
+                result = _execute_script(
+                    script_ref=script_ref,
                     context=context,
-                    org_id=organization_id,
-                    run_id=run_id,
                     proxy_url=proxy_url,
-                    worker_ts_ip=worker_ts_ip,
-                    pool_id=pool_id,
-                    session=session,
+                    session_id=uuid.UUID(session_id) if session_id else None,
                 )
-        else:
-            result = {"success": False, "status": "error",
-                      "error": f"unknown template_type={template_type!r} or missing script_ref"}
+                # ── Auto-trace: if trace_mode was requested and script succeeded,
+                # schedule DAG augmentation from the script's execution trace.
+                if context.get("trace_mode") and result.get("success"):
+                    _schedule_trace_deploy(
+                        session=session,
+                        run_id=run_id,
+                        org_id=organization_id,
+                        script_ref=script_ref,
+                        context=context,
+                        result=result,
+                    )
+            elif template_type == "xioflow_dag":
+                if not dag_domain or not dag_root_intent:
+                    result = {
+                        "success": False, "status": "error",
+                        "error": "xioflow_dag template missing dag_domain or dag_root_intent",
+                    }
+                else:
+                    result = _execute_dag_workflow(
+                        dag_domain=dag_domain,
+                        dag_root_intent=dag_root_intent,
+                        context=context,
+                        org_id=organization_id,
+                        run_id=run_id,
+                        proxy_url=proxy_url,
+                        worker_ts_ip=worker_ts_ip,
+                        pool_id=pool_id,
+                        session=session,
+                    )
+            else:
+                result = {"success": False, "status": "error",
+                          "error": f"unknown template_type={template_type!r} or missing script_ref"}
+        finally:
+            _unregister_active_run(_view_session_id)
 
         _finalise(session, run_id=run_id, task_id=task_id, result=result)
         session.commit()
@@ -198,12 +235,18 @@ def _claim_next_pending(session: Session) -> dict[str, Any] | None:
                       AND bs.state IN ('active','initializing')
                       AND bs.proxy_url IS NOT NULL
                 WHERE  r.state = 'PENDING'
+                  AND  (t.template_type IS NULL OR t.template_type != 'xioflow_dag')
                 ORDER  BY r.started_at
                 LIMIT  1
                 FOR UPDATE OF r SKIP LOCKED
             )
             UPDATE xioflow_runs
-            SET    state = 'RUNNING'
+            SET    state = 'RUNNING',
+                   context = CASE 
+                     WHEN claimed.session_id IS NOT NULL 
+                     THEN xioflow_runs.context || jsonb_build_object('session_id', claimed.session_id)
+                     ELSE xioflow_runs.context
+                   END
             FROM   claimed
             WHERE  xioflow_runs.id = claimed.id
             RETURNING
@@ -213,7 +256,7 @@ def _claim_next_pending(session: Session) -> dict[str, Any] | None:
                 claimed.script_ref,
                 claimed.dag_domain,
                 claimed.dag_root_intent,
-                claimed.context,
+                xioflow_runs.context,
                 claimed.proxy_url,
                 claimed.session_id,
                 claimed.worker_ts_ip,
@@ -237,6 +280,143 @@ def _claim_next_pending(session: Session) -> dict[str, Any] | None:
         "worker_ts_ip": row.worker_ts_ip,
         "pool_id": row.pool_id,
     }
+
+
+def _schedule_trace_deploy(
+    *,
+    session: Session,
+    run_id: str,
+    org_id: str,
+    script_ref: str,
+    context: dict[str, Any],
+    result: dict[str, Any],
+) -> None:
+    """Build and deploy a DAG from a successful script run's trace data.
+
+    For script-mode workflows, the trace is reconstructed from the
+    script's structured result output (steps, actions).  This is a
+    best-effort operation — failure to deploy the trace does not
+    affect the script run's success status.
+    """
+    try:
+        from xiosync.subsystems.xioflow.ingestion.trace_collector import (
+            TraceAction,
+            TraceCollector,
+        )
+        from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+        from xiosync.subsystems.xioflow.memory.memory_graph import MemoryGraph
+        from urllib.parse import urlparse
+
+        # Derive domain from script context
+        domain = context.get("dag_domain", "")
+        if not domain:
+            xiorun_url = context.get("xiorun_url", "")
+            domain = urlparse(xiorun_url).netloc if xiorun_url else script_ref.replace(".mjs", "")
+
+        trace = TraceCollector(org_id=org_id, domain=domain, run_id=run_id)
+
+        # Reconstruct trace from the script result's step data
+        # Scripts output structured step info when ctx.step() is used
+        steps = result.get("result", {}).get("steps", [])
+        if steps:
+            for step_data in steps:
+                step_name = step_data.get("name", "unknown")
+                trace.enter_step(step_name)
+                for act in step_data.get("actions", []):
+                    trace.record(TraceAction(
+                        category=act.get("category", "browser"),
+                        action_type=act.get("action_type", "unknown"),
+                        action_params=act.get("action_params", {}),
+                        url=act.get("url", ""),
+                        domain=urlparse(act.get("url", "")).netloc or domain,
+                        place_value=act.get("place_value"),
+                        face_value=act.get("face_value"),
+                    ))
+                trace.exit_step(step_name)
+        else:
+            # Minimal trace: record the script execution itself as a single node
+            trace.enter_step("script_execution")
+            trace.record(TraceAction(
+                category="system",
+                action_type="script",
+                action_params={
+                    "script_ref": script_ref,
+                    "result_status": result.get("status", "success"),
+                },
+            ))
+            trace.exit_step("script_execution")
+
+        if trace.actions:
+            dag_spec = DAGGraphBuilder().build(
+                trace, context, template_name=script_ref,
+            )
+            nodes = dag_spec.get("nodes", [])
+            if nodes:
+                import asyncio
+                mg = MemoryGraph(session)
+                node_ids = []
+                dag_domain = dag_spec.get("dag_domain", domain)
+                ctx_hash = dag_spec.get("metadata", {}).get("context_hash", "default")
+                for node in nodes:
+                    node_id = asyncio.run(mg.asave_new_action(
+                        org_id=org_id,
+                        domain=dag_domain,
+                        intent=node.get("intent"),
+                        face_value=node.get("face_value") or {},
+                        place_value=node.get("place_value") or {},
+                        action_type=node.get("action_type"),
+                        action_params=node.get("action_params", {}),
+                        previous_intent=node.get("previous_node_id"),
+                        recorded_by="auto_trace",
+                        recording_method="auto_trace",
+                        context_hash=ctx_hash,
+                        output_var=node.get("output_var"),
+                        execution_mode=node.get("execution_mode", "sequential"),
+                    ))
+                    node_ids.append(str(node_id))
+
+                # ── Consensus voting: +1.0 for each successfully traced node ──
+                # This drives Bayesian EMA tier promotion:
+                #   project_experimental → project_ground_truth → organization_shared
+                try:
+                    from xiosync.subsystems.xioflow.memory.consensus_engine import ConsensusEngine
+                    consensus = ConsensusEngine(session)
+                    voter_id = f"auto_trace:{run_id}"
+                    for nid in node_ids:
+                        consensus.submit_vote(
+                            org_id=org_id,
+                            node_id=nid,
+                            voter_id=voter_id,
+                            raw_vote=1.0,
+                            tier_confidence=1.0,  # auto-trace = real execution = full confidence
+                            context_hash=ctx_hash,
+                        )
+                    logger.info(
+                        "run_dispatcher.consensus_votes_submitted",
+                        extra={"run_id": run_id, "nodes": len(node_ids), "vote": 1.0},
+                    )
+                except Exception as vote_exc:
+                    logger.warning(
+                        "run_dispatcher.consensus_vote_failed",
+                        extra={"run_id": run_id, "error": str(vote_exc)},
+                    )
+
+                logger.info(
+                    "run_dispatcher.trace_deployed",
+                    extra={
+                        "run_id": run_id,
+                        "script_ref": script_ref,
+                        "nodes": len(node_ids),
+                        "domain": dag_domain,
+                    },
+                )
+
+    except Exception as exc:
+        # Best-effort — don't fail the run because trace deploy broke
+        logger.warning(
+            "run_dispatcher.trace_deploy_failed",
+            extra={"run_id": run_id, "error": str(exc)},
+        )
 
 
 def _create_task(
