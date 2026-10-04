@@ -593,48 +593,83 @@ async def _google_challenge_handler(page, vars_dict, xiosync_base, hdrs, run_id,
         except Exception as _he:
             logger.warning(f"dag_challenge: HITL error: {_he}")
 
-    # ── 'Try another way' (device push / dp) ─────────────────────────────
+    # ── Challenge navigation loop: TAW → select authenticator → TOTP ─────
+    # Google's 2SV chain can be multi-hop: pwd→dp→selection→totp
+    # We loop up to 4 rounds, each round doing TAW then authenticator-select,
+    # until we land on /challenge/totp or /challenge/selection.
     try:
         _title = await page.title()
     except Exception:
         _title = ""
     _is_challenge = any(k in curr_url for k in [
-        "signin/challenge", "/challenge/dp", "/challenge/sk",
-        "/challenge/ipp", "/challenge/iap",
+        "signin/challenge", "/challenge/dp", "/challenge/pwd",
+        "/challenge/sk", "/challenge/ipp", "/challenge/iap",
     ]) or any(k in _title for k in ["2-Step", "Verification", "Verify it", "Check your"])
 
-    if _is_challenge and "/challenge/totp" not in curr_url and "/challenge/selection" not in curr_url:
-        logger.info("dag_challenge: polling for 'Try another way' (up to 8s)")
-        _taw_js = """(function(){var all=document.querySelectorAll('*');for(var i=0;i<all.length;i++){var t=(all[i].childElementCount===0?(all[i].innerText||all[i].textContent||''):'').toLowerCase().trim();if(t.includes('try another')||t.includes('more options')){all[i].click();return 'clicked';}}return 'not_found';})()"""
-        for _ti in range(16):
-            await _ac.sleep(0.5)
-            try:
-                if await page.evaluate(_taw_js) == "clicked":
-                    logger.info(f"dag_challenge: 'Try another way' clicked (attempt {_ti+1})")
-                    await _ac.sleep(2.5)
-                    curr_url = page.url
-                    break
-            except Exception:
-                pass
+    _taw_js = """(function(){
+      var all=document.querySelectorAll('*');
+      for(var i=0;i<all.length;i++){
+        var t=(all[i].childElementCount===0?(all[i].innerText||all[i].textContent||''):'').toLowerCase().trim();
+        if(t.includes('try another')||t.includes('more options')){all[i].click();return 'clicked';}
+      } return 'not_found';
+    })()"""
+    _sel_js = """(function(){
+      var d=function(el){el.scrollIntoView({block:'center'});
+        ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(e){
+          el.dispatchEvent(new MouseEvent(e,{bubbles:true,cancelable:true,view:window}));});};
+      var t=document.querySelector('[data-challengetype="6"],[data-challengetype="12"],[data-challengetype="13"]');
+      if(!t){var els=document.querySelectorAll('div[role="link"],div[role="button"],li,button,a');
+        for(var i=0;i<els.length;i++){var txt=(els[i].innerText||els[i].textContent||'').toLowerCase();
+          if(txt.includes('authenticator')||txt.includes('auth app')||txt.includes('google auth')
+             ||txt.includes('verification app')){t=els[i];break;}}}
+      if(t){d(t);return 'selected';} return 'not_found';
+    })()"""
 
-    # ── Select Authenticator app ──────────────────────────────────────────
-    _sel_js = """(function(){var d=function(el){el.scrollIntoView({block:'center'});['pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(e){el.dispatchEvent(new MouseEvent(e,{bubbles:true,cancelable:true,view:window}));});};var t=document.querySelector('[data-challengetype="6"],[data-challengetype="12"],[data-challengetype="13"]');if(!t){var els=document.querySelectorAll('div[role="link"],div[role="button"],li,button,a');for(var i=0;i<els.length;i++){var txt=(els[i].innerText||els[i].textContent||'').toLowerCase();if(txt.includes('authenticator')||txt.includes('auth app')||txt.includes('google auth')||txt.includes('verification app')){t=els[i];break;}}}if(t){d(t);return 'selected';}return 'not_found';})()"""
-    curr_url = page.url
-    if _is_challenge and "/challenge/totp" not in curr_url:
-        for _si in range(16):
-            await _ac.sleep(0.5)
-            try:
-                if await page.evaluate(_sel_js) == "selected":
-                    logger.info(f"dag_challenge: authenticator selected (attempt {_si+1})")
-                    for _wi in range(20):
-                        await _ac.sleep(0.5)
-                        curr_url = page.url
-                        if "/challenge/totp" in curr_url or "/challenge/ipp" in curr_url:
-                            logger.info(f"dag_challenge: TOTP page ready")
+    if _is_challenge:
+        for _round in range(4):   # up to 4 TAW rounds (pwd→dp→selection→totp)
+            curr_url = page.url
+            logger.info(f"dag_challenge: round {_round+1} — URL={curr_url[:70]}")
+            if "/challenge/totp" in curr_url or "/challenge/ipp" in curr_url:
+                break   # reached TOTP input page — stop navigating
+
+            # ── Step A: click 'Try another way' if not on selection page ──
+            if "/challenge/selection" not in curr_url:
+                logger.info(f"dag_challenge: polling 'Try another way' (round {_round+1})")
+                for _ti in range(16):    # up to 8s
+                    await _ac.sleep(0.5)
+                    try:
+                        if await page.evaluate(_taw_js) == "clicked":
+                            logger.info(f"dag_challenge: TAW clicked (round {_round+1}, attempt {_ti+1})")
+                            await _ac.sleep(2.5)
+                            curr_url = page.url
                             break
-                    break
-            except Exception:
-                pass
+                    except Exception:
+                        pass
+                if "/challenge/totp" in curr_url or "/challenge/ipp" in curr_url:
+                    break  # TAW led directly to TOTP
+
+            # ── Step B: select Authenticator from selection/dp menu ────────
+            logger.info(f"dag_challenge: trying authenticator select (round {_round+1})")
+            for _si in range(16):    # up to 8s
+                await _ac.sleep(0.5)
+                try:
+                    if await page.evaluate(_sel_js) == "selected":
+                        logger.info(f"dag_challenge: authenticator selected (round {_round+1}, attempt {_si+1})")
+                        # Wait for TOTP URL to load
+                        for _wi in range(20):
+                            await _ac.sleep(0.5)
+                            curr_url = page.url
+                            if "/challenge/totp" in curr_url or "/challenge/ipp" in curr_url:
+                                logger.info("dag_challenge: TOTP page ready")
+                                break
+                        break
+                except Exception:
+                    pass
+            curr_url = page.url
+            if "/challenge/totp" in curr_url or "/challenge/ipp" in curr_url:
+                break   # success — exit loop
+            logger.info(f"dag_challenge: round {_round+1} done, still on {curr_url[:60]}")
+
 
     # ── TOTP fill (window-aware) ──────────────────────────────────────────
     curr_url = page.url
