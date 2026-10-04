@@ -1173,7 +1173,9 @@ async def _execute_dag_run(
                             _worker_port = os.environ.get("PORT", "9300")
                             _worker_url  = f"http://127.0.0.1:{_worker_port}{_s_endpoint}"
                             try:
-                                async with _hx.AsyncClient(timeout=180) as _cl:
+                                # run-uc-login has HITL (up to 600s) + login (120s) = 900s
+                                _script_timeout = 900 if _s_endpoint == "/run-uc-login" else 180
+                                async with _hx.AsyncClient(timeout=_script_timeout) as _cl:
                                     _sr = await _cl.post(_worker_url, json=_s_body)
                                 _ct = _sr.headers.get("content-type", "")
                                 _sd = _sr.json() if "application/json" in _ct else {}
