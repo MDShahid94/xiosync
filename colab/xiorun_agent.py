@@ -5900,14 +5900,18 @@ async def session_cascade_check(req: CascadeCheckRequest):
         logger.info(f"cascade-check: L1 local profile found: {_profile_dir}")
 
         # Level 2: Live verify — launch patchright with persistent context, navigate to myaccount
+        # CRITICAL: use SOCKS5 proxy — cookies were created via the PPPoE exit IP,
+        # so verification must go through the same exit IP or Google will reject them.
         try:
             from patchright.async_api import async_playwright
+            _l2_proxy = _SSH_PROXY_URL or os.environ.get("XIORUN_PROXY", "socks5://127.0.0.1:19055")
             async with async_playwright() as pw:
                 # MUST use launch_persistent_context for a user-data-dir profile.
                 # browser.new_context(user_data_dir=...) is NOT valid in patchright.
                 context = await pw.chromium.launch_persistent_context(
                     _profile_dir,
                     headless=True,
+                    proxy={"server": _l2_proxy} if _l2_proxy else None,
                     args=[
                         "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
                         "--disable-blink-features=AutomationControlled",
