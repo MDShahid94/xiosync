@@ -635,6 +635,7 @@ _PYTHON_DEPS = [
     "google-generativeai>=0.8",  # AIHealer Tier-10 Gemini LLM provider
     "Pillow>=10.0",              # JPEG screenshots via uc_snap()
     "patchright>=1.49.1",
+     "psycopg[binary]>=3.1",     # async PG advisory locks in _execute_dag_run (P0-5)
 ]
 
 
