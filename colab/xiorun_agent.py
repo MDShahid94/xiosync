@@ -1277,6 +1277,18 @@ async def _execute_dag_run(
                     _fail_ok = bool((_params or {}).get("fail_ok", False))
                     if _fail_ok:
                         logger.warning(f"dag_run: step {_intent!r} failed (fail_ok=True) — continuing DAG")
+                        # Special case: navigate_to_signin fail_ok + Phase 0 already confirmed auth.
+                        # If UC login returned final_url pointing to myaccount (Phase 0 shortcut),
+                        # the user is authenticated — short-circuit exactly like the preflight redirect does.
+                        if _intent == "navigate_to_signin":
+                            _uc_final = _vars.get("final_url", "")
+                            if _uc_final and "accounts.google.com" not in _uc_final and "signin" not in _uc_final:
+                                logger.info(
+                                    f"dag_run.preflight: phase0 auth confirmed → {_uc_final[:60]} "
+                                    f"— shortcircuiting DAG (SOCKS drop on navigate_to_signin)"
+                                )
+                                all_ok = True
+                                break  # skip type_email, type_password, etc.
                     else:
                         all_ok = False
                         logger.warning(f"dag_run: step {_intent!r} failed — stopping DAG")
