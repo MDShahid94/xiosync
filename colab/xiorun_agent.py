@@ -933,31 +933,25 @@ async def _execute_dag_run(
             _user_data_dir   = None       # set if tarball was restored
             _st_path         = None       # resolved below (identity-scoped)
 
-            # Step A: resolve profile_serial from DB (fast, local query on worker)
+            # Step A: resolve profile_serial via XIOSYNC internal API (not local DB)
             try:
-                import psycopg as _pg2
-                _rconn = await _pg2.AsyncConnection.connect(
-                    os.environ.get("DATABASE_URL",
-                        "postgresql://xiosync:xiosync@localhost:5432/xiosync"),
-                    autocommit=True,
-                )
-                _rcur = await _rconn.execute(
-                    "SELECT id, profile_serial FROM identities "
-                    "WHERE identifier = %s AND platform = 'google' LIMIT 1",
-                    (_email,),
-                )
-                _rid_row = await _rcur.fetchone()
-                await _rconn.close()
-                if _rid_row:
-                    _iid_resolved   = str(_rid_row[0])
-                    _profile_serial = int(_rid_row[1] or 0)
+                async with _hx.AsyncClient(timeout=10) as _cl:
+                    _ir = await _cl.get(
+                        f"{_XIOSYNC}/api/v1/xioflow/events/identity-internal",
+                        params={"email": _email, "platform": "google"},
+                        headers=_HDRS,
+                    )
+                _id_data = _ir.json()
+                if _id_data.get("found"):
+                    _iid_resolved   = _id_data["identity_id"]
+                    _profile_serial = int(_id_data.get("profile_serial") or 0)
                     logger.info(f"dag_run.profile: identity resolved → PRFL-{_profile_serial:03d} (id={_iid_resolved[:8]})")
                 else:
                     _iid_resolved = _iid_from_vars
                     logger.info("dag_run.profile: identity not found in DB yet — will auto-create on persist")
             except Exception as _re:
                 _iid_resolved = _iid_from_vars
-                logger.info(f"dag_run.profile: DB identity lookup skipped ({_re})")
+                logger.info(f"dag_run.profile: identity API lookup skipped ({_re})")
 
             # Identity-scoped storage_state path (PRFL-NNN or domain-slug fallback)
             _ss_dir   = os.path.join(_DRIVE_ROOT, "storage_states")

@@ -744,3 +744,36 @@ def persist_session_internal(run_id: uuid.UUID, payload: dict, request: Request)
         "profile_serial": profile_serial,
         "cookie_count":   cookie_count,
     }
+
+# ── P0-2 helper: identity resolve (internal, no JWT) ─────────────────────────
+@internal_router.get(
+    "/identity-internal",
+    summary="[Worker-internal] Resolve identity_id + profile_serial from email",
+)
+def resolve_identity_internal(
+    request: Request,
+    email: str,
+    platform: str = "google",
+) -> dict:
+    """Worker calls this before browser launch to get profile_serial for identity-scoped paths."""
+    from sqlalchemy.orm import Session as _Sess
+    from xiosync.platform.engine_ref import get_engine
+    from sqlalchemy import text as _t
+
+    with _Sess(get_engine()) as sess:
+        row = sess.execute(
+            _t(
+                "SELECT id, profile_serial FROM identities "
+                "WHERE identifier = :email AND platform = :platform LIMIT 1"
+            ),
+            {"email": email, "platform": platform},
+        ).fetchone()
+
+    if not row:
+        return {"found": False, "identity_id": None, "profile_serial": 0}
+
+    return {
+        "found": True,
+        "identity_id": str(row[0]),
+        "profile_serial": int(row[1] or 0),
+    }
