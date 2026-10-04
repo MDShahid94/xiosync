@@ -650,7 +650,7 @@ async def _execute_dag_run(
                         logger.info(f"dag_run.step: {_intent} navigate → {_url[:60]}")
 
                     elif _action in ("fill", "type"):
-                        # "value" key (new nodes) OR "text" key (legacy) OR from workflow_vars
+                        # "value" key (new nodes) OR "text" key (legacy)
                         _text = _params.get("value", _params.get("text", ""))
                         # ── Resolve {{var}} tokens ─────────────────────────────────────
                         if "{{totp}}" in str(_text):
@@ -666,8 +666,21 @@ async def _execute_dag_run(
                             # Generic {{key}} → workflow_vars lookup
                             for _k, _v in _vars.items():
                                 _text = str(_text).replace(f"{{{{{_k}}}}}", str(_v))
-                        # ── Wait for field to be visible (password/TOTP fields load async) ──
-                        await _page.wait_for_timeout(1500)
+                        # ── Smart wait: wait for the target field to appear (handles page transitions) ──
+                        _waited = False
+                        for _wt in _prio:
+                            _wfn = _TIER_FN.get(_wt)
+                            if not _wfn: continue
+                            _wls = _wfn(_pv)
+                            if not _wls: continue
+                            try:
+                                await _page.wait_for_selector(_wls, timeout=10000, state="visible")
+                                _waited = True
+                                break
+                            except Exception:
+                                continue
+                        if not _waited:
+                            await _page.wait_for_timeout(2000)
                         for _t in _prio:
                             _fn = _TIER_FN.get(_t)
                             if not _fn: continue
@@ -680,7 +693,7 @@ async def _execute_dag_run(
                                 _step_ok = True
                                 _step_rec = {"intent": _intent, "action": _action, "ok": True,
                                              "locator_tier": _t, "locator_str": _ls}
-                                logger.info(f"dag_run.step: {_intent} fill T{_t} {_ls!r}")
+                                logger.info(f"dag_run.step: {_intent} fill T{_t} {_ls!r} val={repr(_text[:20])}")
                                 break
                             except Exception: continue
 
