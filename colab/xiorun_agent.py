@@ -713,6 +713,115 @@ async def _google_challenge_handler(page, vars_dict, xiosync_base, hdrs, run_id,
         logger.info(f"dag_challenge: skipping inline TOTP ({curr_url[:60]})")
 
 
+async def _google_post_login_handler(
+    page,
+    workflow_vars: dict,
+    logger,
+    *,
+    max_rounds: int = 5,
+) -> None:
+    """Dismiss post-login interstitials that Google shows after successful authentication.
+
+    Handles (mirrors google-signin.mjs Phase 2.5 dismissal loop):
+      - "Stay signed in?" confirmation
+      - "Confirm recovery email/phone" prompt
+      - "Add a phone number" prompt
+      - "Protect your account" security check
+      - "Create a passkey" prompt
+      - "Turn on 2-Step Verification" prompt
+      - "Make sure you can always access your account" prompt
+
+    Also verifies the logged-in email matches the target (P0-4).
+    """
+    import asyncio as _ac
+
+    _dismiss_selectors = [
+        # "Stay signed in?" — Yes/Save
+        ('#confirm-button', 'stay_signed_in'),
+        ('[data-action="confirm"]', 'stay_signed_in_alt'),
+        ('button[jsname="LgbsSe"]', 'google_confirm_btn'),
+        # Recovery / security prompts — "Not now" / "Skip" / "Cancel"
+        ('button:has-text("Not now")', 'not_now'),
+        ('button:has-text("Skip")', 'skip'),
+        ('button:has-text("Cancel")', 'cancel'),
+        ('button:has-text("No thanks")', 'no_thanks'),
+        ('button:has-text("Remind me later")', 'remind_later'),
+        ('a:has-text("Not now")', 'not_now_link'),
+        ('a:has-text("Skip")', 'skip_link'),
+        # "Done" after security checkup
+        ('button:has-text("Done")', 'done'),
+    ]
+
+    # Quick text patterns that indicate an interstitial (check in page content)
+    _interstitial_signals = [
+        "stay signed in",
+        "confirm recovery",
+        "protect your account",
+        "add a phone number",
+        "create a passkey",
+        "make sure you can always",
+        "turn on 2-step",
+        "recovery email",
+        "home address",
+    ]
+
+    for _round in range(max_rounds):
+        await _ac.sleep(1.5)
+        _url = page.url.lower()
+
+        # If we've left accounts.google.com entirely, we're done
+        if "accounts.google.com" not in _url:
+            break
+
+        # Check if any interstitial signal is on page
+        try:
+            _body_text = await page.evaluate("document.body?.innerText?.toLowerCase() || ''")
+        except Exception:
+            break
+
+        _has_interstitial = any(sig in _body_text for sig in _interstitial_signals)
+        if not _has_interstitial:
+            # No interstitial detected — we're through
+            break
+
+        # Try each dismiss selector
+        _dismissed = False
+        for _sel, _label in _dismiss_selectors:
+            try:
+                _loc = page.locator(_sel)
+                if await _loc.count() > 0:
+                    await _loc.first.click(timeout=3000)
+                    logger.info(f"dag_post_login: dismissed '{_label}' (round {_round + 1})")
+                    _dismissed = True
+                    await _ac.sleep(2.0)
+                    break
+            except Exception:
+                continue
+
+        if not _dismissed:
+            logger.info(f"dag_post_login: no dismiss button found on round {_round + 1}, URL={page.url[:60]}")
+            break
+
+    # ── P0-4: Email verification ─────────────────────────────────────────────────
+    _target_email = workflow_vars.get("email", "").lower()
+    if _target_email:
+        try:
+            await page.goto("https://myaccount.google.com/", wait_until="domcontentloaded", timeout=15000)
+            await _ac.sleep(2.0)
+            _final_url = page.url.lower()
+
+            if "about" in _final_url or "signin" in _final_url:
+                logger.warning("dag_post_login: email verify FAILED — redirected to signin, session may be invalid")
+            else:
+                _body = await page.evaluate("document.body?.innerText?.toLowerCase() || ''")
+                if _target_email in _body:
+                    logger.info(f"dag_post_login: email verified ✅ ({_target_email})")
+                else:
+                    logger.warning(f"dag_post_login: email '{_target_email}' NOT found in myaccount body")
+        except Exception as _ve:
+            logger.warning(f"dag_post_login: email verify skipped ({_ve})")
+
+
 async def _execute_dag_run(
     run_id: str,
     task_id: str | None,
@@ -747,10 +856,45 @@ async def _execute_dag_run(
                 raise RuntimeError(f"graph fetch {_gr.status_code}: {_gr.text[:200]}")
             _graph = _gr.json()
 
-        nodes  = _graph.get("nodes", [])
-        logger.info(f"dag_run.graph: {len(nodes)} nodes for {dag_domain}/{dag_root_intent}")
+        nodes  = _graph.get(\"nodes\", [])
+        logger.info(f\"dag_run.graph: {len(nodes)} nodes for {dag_domain}/{dag_root_intent}\")
 
-        # 2. Launch Patchright browser
+        # ── P0-5: Distributed advisory lock (per email) ───────────────────────────
+        # Prevents two workers from signing into the same account simultaneously.
+        _email       = _vars.get(\"email\", \"\")
+        _persist_mode = _vars.get(\"persist_mode\", \"tarball+vault\")  # default: tarball+vault
+        _org_id      = context.get(\"organization_id\", \"00000000-0000-7000-8000-000000000000\")
+        _iid_from_vars = _vars.get(\"identity_id\", \"\")
+        _lock_acquired = False
+        _lock_key      = None
+
+        if _email:
+            try:
+                import hashlib as _hl
+                # Advisory lock key: abs(int(first 8 hex chars of sha256(email))) capped to pg int4
+                _lock_key = abs(int(_hl.sha256(_email.encode()).hexdigest()[:8], 16)) % (2**31 - 1)
+                import psycopg as _pg
+                _lock_conn = await _pg.AsyncConnection.connect(
+                    os.environ.get(\"DATABASE_URL\",
+                        \"postgresql://xiosync:xiosync@localhost:5432/xiosync\"),
+                    autocommit=True,
+                )
+                # pg_try_advisory_lock is non-blocking; if returns false, another worker owns it
+                _lrow = await _lock_conn.execute(
+                    f\"SELECT pg_try_advisory_lock({_lock_key})\"
+                )
+                _lock_result = (await _lrow.fetchone())[0]
+                if _lock_result:
+                    _lock_acquired = True
+                    logger.info(f\"dag_run.lock: acquired advisory lock for '{_email}' (key={_lock_key})\")
+                else:
+                    logger.warning(f\"dag_run.lock: another worker holds lock for '{_email}' — proceeding anyway\")
+            except Exception as _le:
+                logger.info(f\"dag_run.lock: advisory lock skipped ({_le})\")
+                _lock_conn = None
+        else:
+            _lock_conn = None
+
         _launch_args = [
             "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
             "--window-size=1920,1080",
@@ -782,11 +926,84 @@ async def _execute_dag_run(
                 _launch_kwargs["executable_path"] = _chrome_bin
                 logger.info(f"dag_run: using pinned Chrome at {_chrome_bin}")
             _brow = await pw.chromium.launch(**_launch_kwargs)
-            # Load persisted cookies/session if available
-            _st_slug  = dag_domain.replace(".", "_").replace("/", "_")
-            _st_path  = f"/content/drive/MyDrive/XIOSYNC-Shared/storage_states/{_st_slug}_storage_state.json"
+
+            # ── P0-1/P0-2: Identity-scoped profile restore (tarball + storage_state) ──
+            # Key by PRFL-NNN, not domain slug, to avoid multi-account collisions.
+            _DRIVE_ROOT   = "/content/drive/MyDrive/XIOSYNC-Shared"
+            _node_slug    = os.environ.get("WORKER_NODE", "worker")[:16]
+            _profile_serial  = 0          # resolved below
+            _user_data_dir   = None       # set if tarball was restored
+            _st_path         = None       # resolved below (identity-scoped)
+
+            # Step A: resolve profile_serial from DB (fast, local query on worker)
+            try:
+                import psycopg as _pg2
+                _rconn = await _pg2.AsyncConnection.connect(
+                    os.environ.get("DATABASE_URL",
+                        "postgresql://xiosync:xiosync@localhost:5432/xiosync"),
+                    autocommit=True,
+                )
+                _rcur = await _rconn.execute(
+                    "SELECT id, profile_serial FROM identities "
+                    "WHERE identifier = %s AND platform = 'google' LIMIT 1",
+                    (_email,),
+                )
+                _rid_row = await _rcur.fetchone()
+                await _rconn.close()
+                if _rid_row:
+                    _iid_resolved   = str(_rid_row[0])
+                    _profile_serial = int(_rid_row[1] or 0)
+                    logger.info(f"dag_run.profile: identity resolved → PRFL-{_profile_serial:03d} (id={_iid_resolved[:8]})")
+                else:
+                    _iid_resolved = _iid_from_vars
+                    logger.info("dag_run.profile: identity not found in DB yet — will auto-create on persist")
+            except Exception as _re:
+                _iid_resolved = _iid_from_vars
+                logger.info(f"dag_run.profile: DB identity lookup skipped ({_re})")
+
+            # Identity-scoped storage_state path (PRFL-NNN or domain-slug fallback)
+            _ss_dir   = os.path.join(_DRIVE_ROOT, "storage_states")
+            if _profile_serial:
+                _st_path = os.path.join(_ss_dir, f"PRFL-{_profile_serial:03d}_storage_state.json")
+                # migrate legacy domain-slug file if exists and PRFL file doesn't
+                _legacy_slug = dag_domain.replace(".", "_").replace("/", "_")
+                _legacy_path = os.path.join(_ss_dir, f"{_legacy_slug}_storage_state.json")
+                if not os.path.isfile(_st_path) and os.path.isfile(_legacy_path):
+                    import shutil as _shu
+                    _shu.copy2(_legacy_path, _st_path)
+                    logger.info(f"dag_run.profile: migrated legacy storage_state → {_st_path}")
+            else:
+                _legacy_slug = dag_domain.replace(".", "_").replace("/", "_")
+                _st_path = os.path.join(_ss_dir, f"{_legacy_slug}_storage_state.json")
+
+            # Step B: try tarball restore (persist_mode = tarball+vault)
+            if _persist_mode in ("tarball+vault", "tarball_only") and _profile_serial:
+                try:
+                    import tarfile as _tf
+                    _tar_src = os.path.join(_DRIVE_ROOT, "profiles", f"PRFL-{_profile_serial:03d}.tar.gz")
+                    _local_profile_root = f"/tmp/xiorun_profiles/PRFL-{_profile_serial:03d}__{_node_slug}"
+                    if os.path.isfile(_tar_src) and not os.path.isdir(_local_profile_root):
+                        os.makedirs(f"/tmp/xiorun_profiles", exist_ok=True)
+                        with _tf.open(_tar_src, "r:gz") as _tf_obj:
+                            _tf_obj.extractall("/tmp/xiorun_profiles")
+                        # find extracted dir (may be named differently inside tar)
+                        _extracted = [
+                            os.path.join("/tmp/xiorun_profiles", d)
+                            for d in os.listdir("/tmp/xiorun_profiles")
+                            if d.startswith("PRFL-") or d.startswith("xiorun_profiles")
+                        ]
+                        if _extracted:
+                            import shutil as _shu2
+                            _shu2.move(_extracted[0], _local_profile_root)
+                    if os.path.isdir(_local_profile_root):
+                        _user_data_dir = _local_profile_root
+                        logger.info(f"dag_run.profile: tarball restored → {_user_data_dir}")
+                except Exception as _te:
+                    logger.info(f"dag_run.profile: tarball restore skipped ({_te})")
+
+            # Step C: build browser context
             _ctx_kwargs: dict = {
-                "viewport": {"width": 1920, "height": 1080},
+                "viewport":   {"width": 1920, "height": 1080},
                 "user_agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -794,11 +1011,26 @@ async def _execute_dag_run(
                 ),
                 "locale": "en-US",
             }
-            if os.path.isfile(_st_path):
-                _ctx_kwargs["storage_state"] = _st_path
-                logger.info(f"dag_run.profile: loading persisted session from {_st_path}")
-            _bctx = await _brow.new_context(**_ctx_kwargs)
-            _page = await _bctx.new_page()
+            if _user_data_dir:
+                # Tarball available — use persistent context (full device state)
+                await _brow.close()  # don't need the ephemeral browser
+                _bctx = await pw.chromium.launch_persistent_context(
+                    _user_data_dir,
+                    headless=False,
+                    args=_launch_args,
+                    **({("executable_path"): _chrome_bin} if os.path.isfile(_chrome_bin) else {}),
+                    **_ctx_kwargs,
+                )
+                _brow  = None   # persistent context is its own browser
+                _page  = _bctx.pages[0] if _bctx.pages else await _bctx.new_page()
+                logger.info(f"dag_run.profile: launched with persistent user_data_dir={_user_data_dir}")
+            else:
+                # No tarball — fall back to ephemeral context + cookie injection
+                if _st_path and os.path.isfile(_st_path):
+                    _ctx_kwargs["storage_state"] = _st_path
+                    logger.info(f"dag_run.profile: loading storage_state from {_st_path}")
+                _bctx = await _brow.new_context(**_ctx_kwargs)
+                _page = await _bctx.new_page()
 
             # Optional: wrap with PageProxy for auto-trace (best-effort; Colab workers skip)
             if _trace:
@@ -930,6 +1162,8 @@ async def _execute_dag_run(
                     if _step_ok and _intent == "click_signin":
                         await _google_challenge_handler(
                             _page, _vars, _XIOSYNC, _HDRS, run_id, logger)
+                        # P0-3/P0-4: dismiss interstitials, verify logged-in email
+                        await _google_post_login_handler(_page, _vars, logger)
 
                 except Exception as _se:
                     logger.error(f"dag_run.step_error: {_intent} [{_action}] {_se}")
@@ -954,14 +1188,12 @@ async def _execute_dag_run(
 
                 await _page.wait_for_timeout(1500)
 
-            # ── Profile persistence: save storage_state (cookies) to Drive ─────
+            # ── Profile persistence (P0-1/P0-2) ─────────────────────────────────────
             if all_ok:
+                _st = None
                 try:
                     _st = await _bctx.storage_state()
-                    _drive_profiles = "/content/drive/MyDrive/XIOSYNC-Shared/storage_states"
-                    os.makedirs(_drive_profiles, exist_ok=True)
-                    _st_slug = dag_domain.replace(".", "_").replace("/", "_")
-                    _st_path = f"{_drive_profiles}/{_st_slug}_storage_state.json"
+                    os.makedirs(_ss_dir, exist_ok=True)
                     import json as _stj
                     with open(_st_path, "w") as _stf:
                         _stj.dump(_st, _stf)
@@ -970,32 +1202,73 @@ async def _execute_dag_run(
                 except Exception as _pe:
                     logger.debug(f"dag_run.profile: storage_state save skipped ({_pe})")
 
-                # ── Vault save: AES-GCM encrypt cookies → vaulted_secrets via XIOSYNC ──
-                try:
-                    _email   = _vars.get("email", "")
-                    _iid     = _vars.get("identity_id", "")
-                    _org_id  = context.get("organization_id", "00000000-0000-7000-8000-000000000000")
-                    async with _hx.AsyncClient(timeout=30) as _cl:
-                        _pr = await _cl.post(
-                            f"{_XIOSYNC}/api/v1/xioflow/events/runs-internal/{run_id}/persist-session",
-                            headers=_HDRS,
-                            json={
-                                "storage_state": _st,
-                                "email":         _email,
-                                "identity_id":   _iid,
-                                "org_id":        _org_id,
-                            },
-                        )
-                    _pd = _pr.json()
-                    _serial = _pd.get("profile_serial", 0)
-                    logger.info(
-                        f"dag_run.profile: vault saved → identity={str(_pd.get('identity_id','?'))[:8]} "
-                        f"PRFL-{_serial:03d} ({_pd.get('cookie_count', 0)} cookies encrypted)"
-                    )
-                except Exception as _ve:
-                    logger.warning(f"dag_run.profile: vault save failed ({_ve})")
+                # P0-1: tarball save — pack user_data_dir → PRFL-NNN.tar.gz on Drive
+                if _persist_mode in ("tarball+vault", "tarball_only") and _user_data_dir and _profile_serial:
+                    try:
+                        import tarfile as _tfw, tempfile as _tmpf, shutil as _shf
+                        _TRIM_DIRS = ["Cache", "Code Cache", "GPUCache", "DawnCache",
+                                      "ShaderCache", "BudgetDatabase", "Network Action Predictor",
+                                      "Service Worker/CacheStorage", "Service Worker/ScriptCache"]
+                        for _td in _TRIM_DIRS:
+                            _fp = os.path.join(_user_data_dir, _td)
+                            if os.path.exists(_fp):
+                                _shf.rmtree(_fp, ignore_errors=True)
+                        _tar_dst = os.path.join(_DRIVE_ROOT, "profiles", f"PRFL-{_profile_serial:03d}.tar.gz")
+                        os.makedirs(os.path.dirname(_tar_dst), exist_ok=True)
+                        _tmp_tar = _tmpf.NamedTemporaryFile(suffix=".tar.gz", delete=False)
+                        _tmp_tar.close()
+                        with _tfw.open(_tmp_tar.name, "w:gz") as _tfw_obj:
+                            _tfw_obj.add(_user_data_dir, arcname=os.path.basename(_user_data_dir))
+                        _shf.copy2(_tmp_tar.name, _tar_dst)
+                        os.unlink(_tmp_tar.name)
+                        _tar_sz = os.path.getsize(_tar_dst)
+                        logger.info(f"dag_run.profile: tarball saved → {_tar_dst} ({_tar_sz // 1024}KB)")
+                    except Exception as _tse:
+                        logger.warning(f"dag_run.profile: tarball save failed ({_tse})")
 
-            await _brow.close()
+                # Vault save: AES-GCM encrypt cookies → vaulted_secrets via XIOSYNC
+                if _st:
+                    try:
+                        async with _hx.AsyncClient(timeout=30) as _cl:
+                            _pr = await _cl.post(
+                                f"{_XIOSYNC}/api/v1/xioflow/events/runs-internal/{run_id}/persist-session",
+                                headers=_HDRS,
+                                json={
+                                    "storage_state": _st,
+                                    "email":         _email,
+                                    "identity_id":   _iid_resolved,
+                                    "org_id":        _org_id,
+                                },
+                            )
+                        _pd = _pr.json()
+                        _serial_v = _pd.get("profile_serial", 0)
+                        logger.info(
+                            f"dag_run.profile: vault saved → identity={str(_pd.get('identity_id','?'))[:8]} "
+                            f"PRFL-{_serial_v:03d} ({_pd.get('cookie_count', 0)} cookies encrypted)"
+                        )
+                    except Exception as _ve:
+                        logger.warning(f"dag_run.profile: vault save failed ({_ve})")
+
+            # ── Close browser (persistent-context has no separate _brow) ──────────
+            try:
+                await _bctx.close()
+            except Exception:
+                pass
+            if _brow is not None:
+                try:
+                    await _brow.close()
+                except Exception:
+                    pass
+
+            # P0-5: Release advisory lock
+            if _lock_acquired and _lock_conn is not None and _lock_key is not None:
+                try:
+                    await _lock_conn.execute(f"SELECT pg_advisory_unlock({_lock_key})")
+                    await _lock_conn.close()
+                    logger.info(f"dag_run.lock: released advisory lock for '{_email}'")
+                except Exception:
+                    pass
+
 
             # ── Auto-trace: POST executed steps as memory nodes to XIOSYNC ──────
             if _trace_requested and trace_nodes and all_ok:
