@@ -4221,6 +4221,21 @@ def _run_uc_login_sync(
                     else:
                         logger.warning("uc-login: reCAPTCHA HITL timed out (600s) — proceeding")
                     curr2 = driver.current_url
+                    # Auto-enter password if reCAPTCHA cleared to /challenge/pwd
+                    if "challenge/pwd" in curr2:
+                        logger.info("uc-login: password page post-reCAPTCHA — auto-entering")
+                        try:
+                            cdp_click_element("input[type='password']")
+                            uc_sleep(0.3, 0.5)
+                            cdp_type_text(password)
+                            uc_sleep(0.4, 0.7)
+                            cdp_click_element(
+                                "#passwordNext, button[jsname='LgbsSe'], button[type='submit']")
+                            uc_sleep(4.0, 6.0)
+                            curr2 = driver.current_url
+                            logger.info(f"uc-login: pwd post-reCAPTCHA submitted → {curr2[:80]}")
+                        except Exception as _pwd_post_rc:
+                            logger.warning(f"uc-login: post-reCAPTCHA pwd failed: {_pwd_post_rc}")
                     _is_challenge = "challenge/" in curr2 and "challenge/pwd" not in curr2
                     if not _is_challenge:
                         logger.info("uc-login: ✅ reCAPTCHA cleared — continuing login")
