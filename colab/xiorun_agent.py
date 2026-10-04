@@ -856,44 +856,42 @@ async def _execute_dag_run(
                 raise RuntimeError(f"graph fetch {_gr.status_code}: {_gr.text[:200]}")
             _graph = _gr.json()
 
-        nodes  = _graph.get(\"nodes\", [])
-        logger.info(f\"dag_run.graph: {len(nodes)} nodes for {dag_domain}/{dag_root_intent}\")
+        nodes  = _graph.get("nodes", [])
+        logger.info(f"dag_run.graph: {len(nodes)} nodes for {dag_domain}/{dag_root_intent}")
 
-        # ── P0-5: Distributed advisory lock (per email) ───────────────────────────
+        # ── P0-5: Distributed advisory lock (per email) ─────────────────────
         # Prevents two workers from signing into the same account simultaneously.
-        _email       = _vars.get(\"email\", \"\")
-        _persist_mode = _vars.get(\"persist_mode\", \"tarball+vault\")  # default: tarball+vault
-        _org_id      = context.get(\"organization_id\", \"00000000-0000-7000-8000-000000000000\")
-        _iid_from_vars = _vars.get(\"identity_id\", \"\")
+        _email        = _vars.get("email", "")
+        _persist_mode = _vars.get("persist_mode", "tarball+vault")
+        _org_id       = context.get("organization_id", "00000000-0000-7000-8000-000000000000")
+        _iid_from_vars = _vars.get("identity_id", "")
         _lock_acquired = False
         _lock_key      = None
+        _lock_conn     = None
 
         if _email:
             try:
                 import hashlib as _hl
-                # Advisory lock key: abs(int(first 8 hex chars of sha256(email))) capped to pg int4
                 _lock_key = abs(int(_hl.sha256(_email.encode()).hexdigest()[:8], 16)) % (2**31 - 1)
                 import psycopg as _pg
                 _lock_conn = await _pg.AsyncConnection.connect(
-                    os.environ.get(\"DATABASE_URL\",
-                        \"postgresql://xiosync:xiosync@localhost:5432/xiosync\"),
+                    os.environ.get("DATABASE_URL",
+                        "postgresql://xiosync:xiosync@localhost:5432/xiosync"),
                     autocommit=True,
                 )
-                # pg_try_advisory_lock is non-blocking; if returns false, another worker owns it
                 _lrow = await _lock_conn.execute(
-                    f\"SELECT pg_try_advisory_lock({_lock_key})\"
+                    f"SELECT pg_try_advisory_lock({_lock_key})"
                 )
                 _lock_result = (await _lrow.fetchone())[0]
                 if _lock_result:
                     _lock_acquired = True
-                    logger.info(f\"dag_run.lock: acquired advisory lock for '{_email}' (key={_lock_key})\")
+                    logger.info(f"dag_run.lock: acquired advisory lock for '{_email}' (key={_lock_key})")
                 else:
-                    logger.warning(f\"dag_run.lock: another worker holds lock for '{_email}' — proceeding anyway\")
+                    logger.warning(f"dag_run.lock: another worker holds lock for '{_email}' — proceeding anyway")
             except Exception as _le:
-                logger.info(f\"dag_run.lock: advisory lock skipped ({_le})\")
+                logger.info(f"dag_run.lock: advisory lock skipped ({_le})")
                 _lock_conn = None
-        else:
-            _lock_conn = None
+
 
         _launch_args = [
             "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
