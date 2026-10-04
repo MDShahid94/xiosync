@@ -468,10 +468,46 @@ def get_memory_graph_internal(request: Request, domain: str, intent: str) -> dic
     from sqlalchemy import text
     
     with _Sess(get_engine()) as sess:
-        # BFS from root intent
-        visited = set()
+        # ── Step 1: collect script nodes (phase pipeline) — run BEFORE main DAG ──
+        # Script nodes are not connected via next_intents, so BFS misses them.
+        # We prepend them sorted by phase order so cascade/UC-login run first.
+        _PHASE_ORDER = {
+            "resolve_exit_proxy": 0,
+            "phase0_cascade_check": 1,
+            "phase0_browser_check": 2,
+            "phase1_uc_stealth_login": 3,
+            "phase2_navigate_to_gmail": 4,
+            "phase3_verify": 5,
+            "phase3_5_persist_session": 6,
+        }
+        script_rows = sess.execute(text("""
+            SELECT DISTINCT ON (intent)
+                intent, action_type, action_params, place_value, face_value, locator_priority
+            FROM xioflow_memory_nodes
+            WHERE domain = :domain AND status = 'ACTIVE' AND action_type = 'script'
+            ORDER BY intent, tier DESC
+        """), {'domain': domain}).fetchall()
+
+        script_nodes = sorted(
+            [
+                {
+                    'intent': r.intent,
+                    'action_type': r.action_type,
+                    'action_params': r.action_params or {},
+                    'place_value': r.place_value or {},
+                    'face_value': r.face_value or {},
+                    'locator_priority': r.locator_priority or [6, 1, 2, 3, 4, 5],
+                }
+                for r in script_rows
+            ],
+            key=lambda n: _PHASE_ORDER.get(n['intent'], 99),
+        )
+        script_intents = {n['intent'] for n in script_nodes}
+
+        # ── Step 2: BFS from root intent for navigate/fill/click/wait nodes ──
+        visited = set(script_intents)   # skip script intents already included
         queue = [intent]
-        nodes = []
+        dag_nodes = []
         while queue:
             current_intent = queue.pop(0)
             if current_intent in visited:
@@ -482,24 +518,26 @@ def get_memory_graph_internal(request: Request, domain: str, intent: str) -> dic
                        locator_priority, status
                 FROM xioflow_memory_nodes
                 WHERE domain = :domain AND intent = :intent AND status = 'ACTIVE'
+                  AND action_type NOT IN ('done', 'extract_data', 'script')
                 ORDER BY tier DESC LIMIT 1
             """), {'domain': domain, 'intent': current_intent}).fetchone()
             if not row:
                 continue
-            node_dict = {
+            dag_nodes.append({
                 'intent': row.intent,
                 'action_type': row.action_type,
                 'action_params': row.action_params or {},
                 'place_value': row.place_value or {},
                 'face_value': row.face_value or {},
-                'locator_priority': row.locator_priority or [6,1,2,3,4,5],
-            }
-            nodes.append(node_dict)
-            # Queue next intents from action_params
+                'locator_priority': row.locator_priority or [6, 1, 2, 3, 4, 5],
+            })
             next_intents = (row.action_params or {}).get('next_intents', [])
             queue.extend(next_intents)
-        
-        return {'domain': domain, 'root_intent': intent, 'nodes': nodes}
+
+        # Script nodes first (phase pipeline), then BFS DAG nodes
+        nodes = script_nodes + dag_nodes
+        return {'domain': domain, 'root_intent': intent, 'nodes': nodes,
+                'script_count': len(script_nodes), 'dag_count': len(dag_nodes)}
 
 @internal_router.post("/trace-nodes-internal", status_code=200,
                       summary="[Worker-internal] Bulk-deploy auto-traced steps as memory nodes")

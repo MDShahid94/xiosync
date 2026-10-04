@@ -1207,6 +1207,36 @@ async def _execute_dag_run(
                             )
                             _step_ok = True
 
+                        # ── Post-script early-exit checks ─────────────────────────
+                        if _step_ok:
+                            if _intent == "phase0_cascade_check":
+                                # Cascade check says session is already valid — skip main DAG
+                                if _vars.get("valid") is True or _vars.get("valid") == "true":
+                                    logger.info(
+                                        "dag_run.script: phase0 session valid → "
+                                        f"skipping DAG  profile_dir={_vars.get('profile_dir','?')}"
+                                    )
+                                    results.append({"intent": _intent, "ok": True,
+                                                    "note": "cascade_valid"})
+                                    all_ok = True
+                                    break
+                                else:
+                                    logger.info(
+                                        "dag_run.script: phase0 session invalid → "
+                                        "continuing to phase1 UC login"
+                                    )
+
+                            elif _intent == "phase1_uc_stealth_login":
+                                # UC login succeeded — session established; persist will
+                                # happen via phase3_5 script node or the persistence block
+                                if _vars.get("ok") is True or _vars.get("success") is True:
+                                    logger.info(
+                                        "dag_run.script: phase1 UC login success → "
+                                        "continuing to phase2/3 verification"
+                                    )
+                                # If UC login failed, _step_ok is already False; DAG will
+                                # continue to the native Patchright navigate/fill/click nodes
+
                     else:
                         logger.warning(f"dag_run.step: unknown action {_action!r} for {_intent!r} — skipping")
                         _step_ok = True
