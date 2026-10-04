@@ -23,6 +23,11 @@ class RateLimitMiddleware:
         if scope["type"] != "http" or scope.get("path") in {"/live", "/ready"}:
             await self.app(scope, receive, send)
             return
+        # Skip rate limiting for worker-internal requests (X-XIOSYNC-Internal header)
+        headers_raw = dict(scope.get("headers", []))
+        if headers_raw.get(b"x-xiosync-internal"):
+            await self.app(scope, receive, send)
+            return
         path = str(scope.get("path", ""))
         route_class = "auth" if "/auth/" in path else "api"
         config = self.config_fn(route_class)
