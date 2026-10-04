@@ -536,6 +536,148 @@ async def _lifespan(application):
 # them, executes locally with Patchright, and reports results back.
 # Auth: X-XIOSYNC-Internal header (XIOSYNC_INTERNAL_SECRET / XIORUN_INTERNAL_SECRET).
 
+async def _google_challenge_handler(page, vars_dict, xiosync_base, hdrs, run_id, logger):
+    """Handle all Google 2SV challenge pages after password entry.
+    Mirrors UC login challenge logic: reCAPTCHA→HITL, dp→Try another way,
+    selection→authenticator, TOTP page→fill+submit (window-aware).
+    """
+    import asyncio as _ac
+    import time as _tm
+    try:
+        import pyotp as _pt
+    except ImportError:
+        _pt = None
+
+    _NOVNC = "http://100.111.130.118:6080/vnc.html?autoconnect=true&resize=scale"
+
+    try:
+        await page.wait_for_load_state("domcontentloaded", timeout=8000)
+    except Exception:
+        pass
+
+    curr_url = page.url
+    logger.info(f"dag_challenge: post-signin URL = {curr_url[:80]}")
+
+    # ── reCAPTCHA → HITL ──────────────────────────────────────────────────
+    if "challenge/recaptcha" in curr_url or "challenge/az" in curr_url:
+        logger.info("dag_challenge: reCAPTCHA detected — triggering HITL")
+        try:
+            import httpx as _hx
+            _msg = (
+                f"reCAPTCHA for run {str(run_id)[:8]} — "
+                f"solve live: {_NOVNC} — URL: {curr_url[:120]}"
+            )
+            async with _hx.AsyncClient(timeout=10) as _cl:
+                await _cl.post(
+                    f"{xiosync_base}/api/v1/xioflow/events/runs-internal/{run_id}/hitl-pause",
+                    headers=hdrs,
+                    json={"challenge_type": "recaptcha", "novnc_url": _NOVNC,
+                          "message": _msg, "current_url": curr_url},
+                )
+            logger.info("dag_challenge: HITL notice sent — polling up to 300s for resume")
+            for _hw in range(60):
+                await _ac.sleep(5)
+                try:
+                    async with _hx.AsyncClient(timeout=10) as _cl:
+                        _sr = await _cl.get(
+                            f"{xiosync_base}/api/v1/xioflow/events/runs-internal/{run_id}/hitl-status",
+                            headers=hdrs)
+                    if _sr.json().get("hitl_resumed"):
+                        logger.info("dag_challenge: HITL resumed — continuing")
+                        break
+                except Exception:
+                    pass
+            else:
+                logger.warning("dag_challenge: HITL timed out 300s — proceeding anyway")
+            curr_url = page.url
+        except Exception as _he:
+            logger.warning(f"dag_challenge: HITL error: {_he}")
+
+    # ── 'Try another way' (device push / dp) ─────────────────────────────
+    try:
+        _title = await page.title()
+    except Exception:
+        _title = ""
+    _is_challenge = any(k in curr_url for k in [
+        "signin/challenge", "/challenge/dp", "/challenge/sk",
+        "/challenge/ipp", "/challenge/iap",
+    ]) or any(k in _title for k in ["2-Step", "Verification", "Verify it", "Check your"])
+
+    if _is_challenge and "/challenge/totp" not in curr_url and "/challenge/selection" not in curr_url:
+        logger.info("dag_challenge: polling for 'Try another way' (up to 8s)")
+        _taw_js = """(function(){var all=document.querySelectorAll('*');for(var i=0;i<all.length;i++){var t=(all[i].childElementCount===0?(all[i].innerText||all[i].textContent||''):'').toLowerCase().trim();if(t.includes('try another')||t.includes('more options')){all[i].click();return 'clicked';}}return 'not_found';})()"""
+        for _ti in range(16):
+            await _ac.sleep(0.5)
+            try:
+                if await page.evaluate(_taw_js) == "clicked":
+                    logger.info(f"dag_challenge: 'Try another way' clicked (attempt {_ti+1})")
+                    await _ac.sleep(2.5)
+                    curr_url = page.url
+                    break
+            except Exception:
+                pass
+
+    # ── Select Authenticator app ──────────────────────────────────────────
+    _sel_js = """(function(){var d=function(el){el.scrollIntoView({block:'center'});['pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(e){el.dispatchEvent(new MouseEvent(e,{bubbles:true,cancelable:true,view:window}));});};var t=document.querySelector('[data-challengetype="6"],[data-challengetype="12"],[data-challengetype="13"]');if(!t){var els=document.querySelectorAll('div[role="link"],div[role="button"],li,button,a');for(var i=0;i<els.length;i++){var txt=(els[i].innerText||els[i].textContent||'').toLowerCase();if(txt.includes('authenticator')||txt.includes('auth app')||txt.includes('google auth')||txt.includes('verification app')){t=els[i];break;}}}if(t){d(t);return 'selected';}return 'not_found';})()"""
+    curr_url = page.url
+    if _is_challenge and "/challenge/totp" not in curr_url:
+        for _si in range(16):
+            await _ac.sleep(0.5)
+            try:
+                if await page.evaluate(_sel_js) == "selected":
+                    logger.info(f"dag_challenge: authenticator selected (attempt {_si+1})")
+                    for _wi in range(20):
+                        await _ac.sleep(0.5)
+                        curr_url = page.url
+                        if "/challenge/totp" in curr_url or "/challenge/ipp" in curr_url:
+                            logger.info(f"dag_challenge: TOTP page ready")
+                            break
+                    break
+            except Exception:
+                pass
+
+    # ── TOTP fill (window-aware) ──────────────────────────────────────────
+    curr_url = page.url
+    _totp_sec = vars_dict.get("totp_secret", "").replace(" ", "").replace("-", "")
+    if _pt and _totp_sec and ("/challenge/totp" in curr_url or "/challenge/ipp" in curr_url):
+        _rem = 30 - (_tm.time() % 30)
+        if _rem < 5:
+            logger.info(f"dag_challenge: TOTP window {_rem:.1f}s left — waiting for fresh")
+            await _ac.sleep(_rem + 0.8)
+        _code = _pt.TOTP(_totp_sec).now()
+        logger.info(f"dag_challenge: TOTP code={_code} ({30-(_tm.time()%30):.1f}s left)")
+        # Poll for visible input
+        for _ii in range(14):
+            await _ac.sleep(0.5)
+            try:
+                _vis = await page.evaluate("(function(){var all=Array.from(document.querySelectorAll('input:not([type=hidden])'));return all.filter(function(i){var r=i.getBoundingClientRect();return r.width>0&&r.height>0;}).length;})()")
+                if _vis > 0:
+                    break
+            except Exception:
+                pass
+        # Fill via React-compatible native setter
+        _fjs = f"""(function(){{var all=Array.from(document.querySelectorAll('input:not([type=hidden])'));var vis=all.filter(function(i){{var r=i.getBoundingClientRect();return r.width>0&&r.height>0;}});if(vis.length>0){{var inp=vis[0];inp.focus();var s=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;s.call(inp,'{_code}');inp.dispatchEvent(new Event('input',{{bubbles:true}}));inp.dispatchEvent(new Event('change',{{bubbles:true}}));return 'filled';}}return 'no_input';}})()"""  
+        _fr = await page.evaluate(_fjs)
+        if _fr != "filled":
+            for _fs in ["input[type='tel']", "input[type='number']", "input:not([type='hidden'])"]:
+                try:
+                    await page.locator(_fs).first.fill(_code, timeout=4000)
+                    _fr = "locator"
+                    break
+                except Exception:
+                    pass
+        logger.info(f"dag_challenge: TOTP filled ({_fr})")
+        await _ac.sleep(0.5)
+        # Submit
+        _sjs = """(function(){var b=['#totpNext','#next','[jsname="LgbsSe"]','button[type=submit]'];for(var i=0;i<b.length;i++){var el=document.querySelector(b[i]);if(el&&el.getBoundingClientRect().width>0){el.click();return b[i];}}var all=document.querySelectorAll('button,div[role="button"]');for(var i=0;i<all.length;i++){var t=(all[i].innerText||'').toLowerCase();if((t.includes('next')||t.includes('verify'))&&all[i].getBoundingClientRect().width>0){all[i].click();return t;}}return 'not_found';})()"""
+        _sb = await page.evaluate(_sjs)
+        logger.info(f"dag_challenge: TOTP submit → {_sb}")
+        await _ac.sleep(3.0)
+        logger.info(f"dag_challenge: post-TOTP URL = {page.url[:80]}")
+    else:
+        logger.info(f"dag_challenge: skipping inline TOTP ({curr_url[:60]})")
+
+
 async def _execute_dag_run(
     run_id: str,
     task_id: str | None,
@@ -713,6 +855,11 @@ async def _execute_dag_run(
                                 logger.info(f"dag_run.step: {_intent} click T{_t} {_ls!r}")
                                 break
                             except Exception: continue
+
+                    # ── Post-click: Google challenge handler (fires after click_signin) ──
+                    if _step_ok and _intent == "click_signin":
+                        await _google_challenge_handler(
+                            _page, _vars, _XIOSYNC, _HDRS, run_id, logger)
 
                     elif _action == "wait":
                         await _page.wait_for_timeout(_params.get("ms", 2000))

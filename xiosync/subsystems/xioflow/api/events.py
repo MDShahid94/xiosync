@@ -566,3 +566,79 @@ def deploy_trace_nodes_internal(request: Request, payload: dict) -> dict:
                 extra={"org_id": org_id, "domain": domain, "run_id": run_id, "count": inserted})
     return {"deployed": inserted, "domain": domain, "run_id": run_id}
 
+
+class HitlPauseRequest(BaseModel):
+    challenge_type: str
+    novnc_url: str
+    message: str
+    current_url: str
+
+@internal_router.post("/runs-internal/{run_id}/hitl-pause", status_code=200,
+                      summary="[Worker-internal] Pause DAG run for HITL")
+def hitl_pause_internal(run_id: uuid.UUID, payload: HitlPauseRequest, request: Request) -> dict:
+    import os as _os, json as _json
+    from sqlalchemy.orm import Session as _Sess
+    from xiosync.platform.engine_ref import get_engine
+
+    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
+    given = request.headers.get("X-XIOSYNC-Internal", "")
+    if not expected or given != expected:
+        raise HTTPException(status_code=403, detail="invalid_internal_secret")
+
+    with _Sess(get_engine()) as sess:
+        sess.execute(text("""
+            UPDATE xioflow_runs
+            SET state = 'PAUSED',
+                context = jsonb_set(COALESCE(context, '{}'::jsonb), '{hitl}', cast(:hitl as jsonb))
+            WHERE id = :rid
+        """), {
+            "hitl": _json.dumps(payload.model_dump()),
+            "rid": str(run_id)
+        })
+        sess.commit()
+    logger.info("hitl.paused", extra={"run_id": str(run_id), "challenge": payload.challenge_type})
+    return {"status": "paused"}
+
+
+@internal_router.get("/runs-internal/{run_id}/hitl-status", status_code=200,
+                     summary="[Worker-internal] Check if HITL is resolved")
+def hitl_status_internal(run_id: uuid.UUID, request: Request) -> dict:
+    import os as _os
+    from sqlalchemy.orm import Session as _Sess
+    from xiosync.platform.engine_ref import get_engine
+
+    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
+    given = request.headers.get("X-XIOSYNC-Internal", "")
+    if not expected or given != expected:
+        raise HTTPException(status_code=403, detail="invalid_internal_secret")
+
+    with _Sess(get_engine()) as sess:
+        row = sess.execute(text("""
+            SELECT state FROM xioflow_runs WHERE id = :rid
+        """), {"rid": str(run_id)}).fetchone()
+        
+        resumed = row and row.state == 'RUNNING'
+        return {"hitl_resumed": resumed}
+
+
+@internal_router.post("/runs-internal/{run_id}/hitl-resume", status_code=200,
+                      summary="[Worker-internal] Resume DAG run from HITL")
+def hitl_resume_internal(run_id: uuid.UUID, request: Request) -> dict:
+    import os as _os
+    from sqlalchemy.orm import Session as _Sess
+    from xiosync.platform.engine_ref import get_engine
+
+    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
+    given = request.headers.get("X-XIOSYNC-Internal", "")
+    if not expected or given != expected:
+        raise HTTPException(status_code=403, detail="invalid_internal_secret")
+
+    with _Sess(get_engine()) as sess:
+        sess.execute(text("""
+            UPDATE xioflow_runs
+            SET state = 'RUNNING'
+            WHERE id = :rid AND state = 'PAUSED'
+        """), {"rid": str(run_id)})
+        sess.commit()
+    logger.info("hitl.resumed", extra={"run_id": str(run_id)})
+    return {"status": "resumed"}
