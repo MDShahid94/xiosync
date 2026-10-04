@@ -774,7 +774,14 @@ async def _execute_dag_run(
         all_ok      = True
 
         async with _pw() as pw:
-            _brow = await pw.chromium.launch(headless=False, args=_launch_args)
+            # Use pinned /opt/chrome131/chrome if available — avoids patchright version
+            # mismatch when patchright updates its bundled chromium build number.
+            _chrome_bin = "/opt/chrome131/chrome"
+            _launch_kwargs: dict = {"headless": False, "args": _launch_args}
+            if os.path.isfile(_chrome_bin):
+                _launch_kwargs["executable_path"] = _chrome_bin
+                logger.info(f"dag_run: using pinned Chrome at {_chrome_bin}")
+            _brow = await pw.chromium.launch(**_launch_kwargs)
             # Load persisted cookies/session if available
             _st_slug  = dag_domain.replace(".", "_").replace("/", "_")
             _st_path  = f"/content/drive/MyDrive/XIOSYNC-Shared/storage_states/{_st_slug}_storage_state.json"
