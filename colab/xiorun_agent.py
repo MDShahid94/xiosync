@@ -1273,9 +1273,14 @@ async def _execute_dag_run(
                         "previous_intent": results[-2]["intent"] if len(results) >= 2 else None,
                     })
                 if not _step_ok and _action != "wait":
-                    all_ok = False
-                    logger.warning(f"dag_run: step {_intent!r} failed — stopping DAG")
-                    break
+                    # Check if this step is marked fail_ok (non-fatal) in action_params
+                    _fail_ok = bool((_params or {}).get("fail_ok", False))
+                    if _fail_ok:
+                        logger.warning(f"dag_run: step {_intent!r} failed (fail_ok=True) — continuing DAG")
+                    else:
+                        all_ok = False
+                        logger.warning(f"dag_run: step {_intent!r} failed — stopping DAG")
+                        break
 
                 await _page.wait_for_timeout(1500)
 
@@ -1399,8 +1404,8 @@ async def _execute_dag_run(
                 )
         except Exception:
             pass
-    if isinstance(_ex, __import__('asyncio').CancelledError):
-        raise
+        if isinstance(_ex, __import__('asyncio').CancelledError):
+            raise
 
 
 async def _dag_poll_loop() -> None:
