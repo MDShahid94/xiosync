@@ -5354,14 +5354,16 @@ async def _run_agy_local(prompt: str, *, system: str = "", output_format: str = 
     # Environment: set proxy for residential exit + unset DISPLAY to prevent Chrome conflict
     env = dict(os.environ)
     env["DISPLAY"] = ""  # Prevent agy from detecting Chrome CDP
-    # agy is a Go binary — needs socks5h:// (proxy-side DNS) not socks5://
-    # socks5:// causes EOF on TLS handshake in Go's crypto/tls
-    _proxy_raw = os.environ.get("XIOAI_AGY_PROXY") or os.environ.get("SSH_PROXY_URL") or "socks5h://127.0.0.1:19055"
-    proxy = _proxy_raw.replace("socks5://", "socks5h://", 1)  # ensure h variant
-    if proxy:
-        env["HTTPS_PROXY"] = proxy
-        env["ALL_PROXY"]   = proxy
-        env["NO_PROXY"]    = "localhost,127.0.0.1"
+    # agy (Go binary) calls googleapis.com for auth + generation.
+    # These are reachable directly from Colab (Google Cloud → Google APIs = same network).
+    # SOCKS5 proxy causes TLS EOF in Go's crypto/tls — do NOT set proxy for agy.
+    # Only browser/Chrome automation needs the SOCKS5 residential proxy.
+    env.pop("HTTPS_PROXY", None)
+    env.pop("HTTP_PROXY", None)
+    env.pop("ALL_PROXY", None)
+    env.pop("https_proxy", None)
+    env.pop("http_proxy", None)
+    env.pop("all_proxy", None)
     env.setdefault("HOME", os.path.expanduser("~"))
     env["PATH"] = f"{os.path.expanduser('~/.local/bin')}:{env.get('PATH', '/usr/local/bin:/usr/bin:/bin')}"
 
