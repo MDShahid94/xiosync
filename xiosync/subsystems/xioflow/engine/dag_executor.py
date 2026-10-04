@@ -101,7 +101,7 @@ class DAGExecutor:
         context_hash = self.context_hash_router.generate_hash(context)
 
         # Fetch DAG
-        graph = await self.memory_graph.get_workflow_graph(intent, org_id, domain, context_hash)
+        graph = await self.memory_graph.aget_workflow_graph(domain, intent, org_id, {"context_hash": context_hash})
         if not graph:
             logger.warning(f"No workflow graph found for intent: {intent}")
             return False
@@ -246,8 +246,8 @@ class DAGExecutor:
                 from urllib.parse import urlparse as _up  # noqa: PLC0415
                 domain = _up(url).netloc
                 context_hash = self.context_hash_router.generate_hash(execution_context)
-                sub_graph = await self.memory_graph.get_workflow_graph(
-                    target_intent, self._org_id, domain, context_hash
+                sub_graph = await self.memory_graph.aget_workflow_graph(
+                    domain, target_intent, self._org_id, {"context_hash": context_hash}
                 )
                 if not sub_graph:
                     logger.warning(
@@ -275,14 +275,43 @@ class DAGExecutor:
                 return False
 
         elif action_type == 'compute_node':
-            # Compute nodes are not yet implemented (require a sandboxed runtime).
-            # Fail explicitly so the caller knows rather than silently claiming success.
-            logger.error(
-                "dag_executor.compute_node_not_implemented",
-                extra={"intent": intent, "action_params": action_params},
-            )
-            self.circuit_breaker.record_failure()
-            return False
+            # Sandboxed compute execution — Python, Bash, or Docker
+            plugin_name = action_params.get('plugin_name', intent)
+            runtime = action_params.get('runtime', 'python')
+            source_code = action_params.get('source_code', action_params.get('code', ''))
+            compute_timeout = int(action_params.get('timeout', 30))
+            if not source_code:
+                logger.error(f"compute_node {intent!r}: missing source_code")
+                self.circuit_breaker.record_failure()
+                return False
+            try:
+                from xiosync.subsystems.xioflow.compute.compute_runner import ComputeNodeRunner
+                runner = ComputeNodeRunner()
+                result = await runner.execute(
+                    plugin_name=plugin_name,
+                    runtime=runtime,
+                    source_code=source_code,
+                    page=self.page,
+                    action_params=action_params,
+                    workflow_vars=self.workflow_vars,
+                    timeout=compute_timeout,
+                )
+                if result['success']:
+                    self.circuit_breaker.record_success()
+                    output_var = node.get('output_var')
+                    if output_var:
+                        self.workflow_vars[output_var] = result.get('result') or result.get('stdout', '')
+                    if isinstance(result.get('result'), dict):
+                        self.workflow_vars.update(result['result'])
+                    logger.info(f"compute_node {intent!r} succeeded ({runtime})")
+                else:
+                    self.circuit_breaker.record_failure()
+                    logger.warning(f"compute_node {intent!r} failed: {result.get('error')}")
+                    return False
+            except Exception as exc:
+                self.circuit_breaker.record_failure()
+                logger.exception(f"compute_node {intent!r} exception: {exc}")
+                return False
 
         elif action_type == 'conditional':
             # branch_evaluator picks next node, filtering next_nodes below
@@ -308,7 +337,7 @@ class DAGExecutor:
                 return False
             try:
                 from xiosync.subsystems.xiogrid.services.script_runner import (  # noqa: PLC0415
-                    ScriptRunner, ScriptRunnerError,
+                    ScriptRunner,
                 )
                 # Reuse the injected singleton; create a new instance only as last resort.
                 runner = self._script_runner
@@ -385,6 +414,172 @@ class DAGExecutor:
             else:
                 await self.page.wait_for_timeout(action_params.get('timeout', 2000))
 
+        elif action_type == 'assertion':
+            # Validate a condition on workflow_vars — fails the DAG if assertion fails
+            var_name = action_params.get('var')
+            expected = action_params.get('expected')
+            op = action_params.get('op', 'eq')
+            actual = self.workflow_vars.get(var_name, execution_context.get(var_name))
+            if op == 'eq':
+                passed = str(actual) == str(expected)
+            elif op == 'ne':
+                passed = str(actual) != str(expected)
+            elif op == 'contains':
+                passed = str(expected) in str(actual)
+            elif op == 'not_empty':
+                passed = bool(actual)
+            else:
+                passed = str(actual) == str(expected)
+            if not passed:
+                logger.error(
+                    "dag_executor.assertion_failed",
+                    extra={"intent": intent, "var": var_name, "expected": expected, "actual": actual, "op": op},
+                )
+                self.circuit_breaker.record_failure()
+                return False
+            logger.info(f"assertion node {intent!r} passed: {var_name} {op} {expected}")
+
+        elif action_type == 'human_input':
+            # HITL pause — create a notice on the worker and wait for operator resolution.
+            # The DAG blocks here until a resume signal arrives or timeout expires.
+            message = action_params.get('message', f'HITL required at node {intent}')
+            timeout_s = int(action_params.get('timeout', 300))  # 5 min default
+            prompt_var = action_params.get('prompt_var')  # optional: capture operator input
+            try:
+                import httpx
+                worker_url = execution_context.get('xiorun_url') or execution_context.get('worker_url', '')
+                if not worker_url:
+                    logger.error("human_input node: no worker_url in execution_context")
+                    return False
+                # Create HITL notice on worker
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.post(f"{worker_url}/hitl/create", json={
+                        "organization_id": self._org_id,
+                        "session_id": execution_context.get('session_id', self._run_id),
+                        "challenge_type": "dag_human_input",
+                        "message": message,
+                        "instructions": action_params.get('instructions', 'Resolve via XIOVIEW and resume.'),
+                    })
+                    notice = resp.json()
+                    notice_id = notice.get('id', '')
+                logger.info(f"human_input: HITL notice created ({notice_id}), waiting up to {timeout_s}s")
+                _emit_action(self._org_id, self._run_id, "workflow.hitl.waiting",
+                             node.get('id'), intent, action_type, notice_id=notice_id)
+                # Poll for resolution
+                deadline = time.monotonic() + timeout_s
+                while time.monotonic() < deadline:
+                    await asyncio.sleep(5)
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        check = await client.get(f"{worker_url}/hitl/pending")
+                        pending = check.json().get('notices', [])
+                    if not any(n.get('id') == notice_id for n in pending):
+                        logger.info(f"human_input: notice {notice_id} resolved")
+                        if prompt_var:
+                            self.workflow_vars[prompt_var] = notice.get('response', '')
+                        break
+                else:
+                    logger.error(f"human_input: timeout after {timeout_s}s")
+                    return False
+            except Exception as exc:
+                logger.exception(f"human_input node {intent!r} failed: {exc}")
+                self.circuit_breaker.record_failure()
+                return False
+
+        elif action_type == 'ssh_command':
+            # Execute a command on a remote host via SSH (asyncssh or subprocess)
+            host = action_params.get('host', '')
+            command = action_params.get('command', '')
+            user = action_params.get('user', 'root')
+            timeout_s = int(action_params.get('timeout', 60))
+            if not host or not command:
+                logger.error(f"ssh_command node {intent!r}: missing host or command")
+                return False
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    'ssh', '-o', 'StrictHostKeyChecking=no', '-o', f'ConnectTimeout=10',
+                    f'{user}@{host}', command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+                output_var = node.get('output_var')
+                if output_var:
+                    self.workflow_vars[output_var] = stdout.decode('utf-8', errors='replace').strip()
+                if proc.returncode != 0:
+                    logger.warning(f"ssh_command node {intent!r} exited {proc.returncode}: {stderr.decode()[:200]}")
+                    self.circuit_breaker.record_failure()
+                    return False
+                self.circuit_breaker.record_success()
+                logger.info(f"ssh_command node {intent!r} succeeded on {host}")
+            except asyncio.TimeoutError:
+                logger.error(f"ssh_command node {intent!r} timed out after {timeout_s}s")
+                self.circuit_breaker.record_failure()
+                return False
+            except Exception as exc:
+                logger.exception(f"ssh_command node {intent!r} failed: {exc}")
+                self.circuit_breaker.record_failure()
+                return False
+
+        elif action_type == 'llm_prompt':
+            # Send a prompt to an LLM and store the response
+            prompt_text = action_params.get('prompt', '')
+            if not prompt_text:
+                logger.error(f"llm_prompt node {intent!r}: missing prompt")
+                return False
+            try:
+                from xiosync.subsystems.xioai.gateway import AIGateway
+                gw = AIGateway()
+                response = await gw.generate(prompt_text)
+                if not response.success:
+                    logger.error(f"llm_prompt: AIGateway failed for {intent!r}")
+                    return False
+                output_var = node.get('output_var')
+                if output_var:
+                    self.workflow_vars[output_var] = response.text
+                self.circuit_breaker.record_success()
+                logger.info(f"llm_prompt node {intent!r} got {len(response.text)} chars")
+            except Exception as exc:
+                logger.exception(f"llm_prompt node {intent!r} failed: {exc}")
+                self.circuit_breaker.record_failure()
+                return False
+
+        elif action_type == 'webhook_fire':
+            # Fire an outbound webhook — like http_request but with retry and signing
+            try:
+                import httpx
+                url_target = action_params.get('url', '')
+                method = action_params.get('method', 'POST').upper()
+                payload = action_params.get('payload', action_params.get('body', {}))
+                headers = action_params.get('headers', {'Content-Type': 'application/json'})
+                max_retries = int(action_params.get('retries', 3))
+                last_error = None
+                for attempt in range(max_retries):
+                    try:
+                        async with httpx.AsyncClient(timeout=30) as client:
+                            resp = await client.request(method, url_target, headers=headers, json=payload)
+                            resp.raise_for_status()
+                        self.circuit_breaker.record_success()
+                        output_var = node.get('output_var')
+                        if output_var:
+                            try:
+                                self.workflow_vars[output_var] = resp.json()
+                            except Exception:
+                                self.workflow_vars[output_var] = resp.text
+                        logger.info(f"webhook_fire node {intent!r}: {method} {url_target} → {resp.status_code}")
+                        break
+                    except Exception as e:
+                        last_error = e
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(2 ** attempt)  # exponential backoff
+                else:
+                    logger.error(f"webhook_fire node {intent!r} failed after {max_retries} retries: {last_error}")
+                    self.circuit_breaker.record_failure()
+                    return False
+            except Exception as exc:
+                logger.exception(f"webhook_fire node {intent!r} failed: {exc}")
+                self.circuit_breaker.record_failure()
+                return False
+
         elif action_type in ('click', 'type', 'fill', 'extract_data'):
             action_success = False
             url = self.page.url
@@ -412,8 +607,11 @@ class DAGExecutor:
 
                     if resolve_ok:
                         self.circuit_breaker.record_success()
-                        await self.memory_graph.update_locator_priority(mem_node['id'], winning_tier)
-                        await self.memory_graph.update_last_used(mem_node['id'])
+                        # Promote winning tier to front of priority list
+                        _old_priority = mem_node.get('locator_priority') or []
+                        _new_priority = [winning_tier] + [t for t in _old_priority if t != winning_tier]
+                        await self.memory_graph.aupdate_locator_priority(mem_node['id'], _new_priority)
+                        await self.memory_graph.aupdate_last_used(mem_node['id'])
 
                         # Capture extracted text into output_var
                         output_var = node.get('output_var')
@@ -430,10 +628,60 @@ class DAGExecutor:
                     break
 
             if not action_success:
-                logger.warning("All locators failed, invoking AI healer")
-                logger.info("Tier 10 AI healer would be invoked here")
-                self.circuit_breaker.record_failure()
-                return False
+                # Tier 10: AI Healer — LLM-powered DOM analysis as last resort
+                try:
+                    from xiosync.subsystems.xioflow.engine.ai_healer import AIHealer  # noqa: PLC0415
+                    from xiosync.subsystems.xioflow.engine.dom_inspector import DOMInspector  # noqa: PLC0415
+
+                    logger.info(f"All locators failed for {intent!r} — invoking AI Healer (Tier 10)")
+                    dom_inspector = DOMInspector(self.page)
+                    ai_healer = AIHealer()
+                    healed = await ai_healer.heal(self.page, intent, dom_inspector)
+
+                    if healed and healed.get('selector'):
+                        selector = healed['selector']
+                        selector_type = healed.get('selector_type', 'css')
+                        confidence = healed.get('confidence', 0)
+                        logger.info(
+                            f"AI Healer found selector: {selector!r} "
+                            f"(type={selector_type}, confidence={confidence:.2f})"
+                        )
+
+                        # Attempt the action with the AI-suggested selector
+                        try:
+                            if selector_type == 'xpath':
+                                loc = self.page.locator(f'xpath={selector}')
+                            else:
+                                loc = self.page.locator(selector)
+
+                            if _act == 'click':
+                                await loc.first.click(timeout=10_000)
+                            elif _act == 'fill':
+                                await loc.first.fill(action_params.get('text', ''), timeout=10_000)
+                            elif _act == 'extract_data':
+                                extracted = await loc.first.text_content(timeout=10_000)
+                                output_var = node.get('output_var')
+                                if output_var:
+                                    self.workflow_vars[output_var] = extracted
+
+                            action_success = True
+                            self.circuit_breaker.record_success()
+                            _emit_action(
+                                self._org_id, self._run_id, "node.healed",
+                                node.get('id'), intent, action_type,
+                                healed_selector=selector, confidence=confidence,
+                            )
+                            logger.info(f"AI Healer succeeded for {intent!r}")
+                        except Exception as heal_act_err:
+                            logger.warning(f"AI Healer selector failed: {heal_act_err}")
+                    else:
+                        logger.warning(f"AI Healer returned no usable selector for {intent!r}")
+                except Exception as heal_err:
+                    logger.warning(f"AI Healer invocation failed: {heal_err}")
+
+                if not action_success:
+                    self.circuit_breaker.record_failure()
+                    return False
 
         next_nodes = node.get('next_nodes', [])
 

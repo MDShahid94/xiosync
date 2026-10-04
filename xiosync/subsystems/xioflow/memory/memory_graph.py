@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -46,7 +46,7 @@ class MemoryGraph:
         """Creates a new XioflowMemoryNode and returns its ID."""
         node = XioflowMemoryNode(
             id=uuid.uuid4(),
-            org_id=org_id,
+            organization_id=uuid.UUID(org_id) if isinstance(org_id, str) else org_id,
             domain=domain,
             intent=intent,
             face_value=face_value,
@@ -74,6 +74,10 @@ class MemoryGraph:
         self.session.add(node)
         self.session.commit()
         return node.id
+
+    async def asave_new_action(self, **kwargs):
+        import asyncio
+        return await asyncio.to_thread(self.save_new_action, **kwargs)
 
     def get_node(self, node_id: uuid.UUID) -> dict | None:
         """Get a node by ID."""
@@ -103,7 +107,9 @@ class MemoryGraph:
             tiers = ["project_experimental", "project_ground_truth", "organization_shared", "platform_global"]
 
         query = self.session.query(XioflowMemoryNode).filter_by(
-            domain=domain, intent=intent, context_hash=context_hash, org_id=org_id, status="ACTIVE"
+            domain=domain, intent=intent, context_hash=context_hash,
+            organization_id=uuid.UUID(org_id) if isinstance(org_id, str) else org_id,
+            status="ACTIVE"
         ).all()
 
         nodes_by_tier = {n.tier: n for n in query}
@@ -164,13 +170,27 @@ class MemoryGraph:
 
             return result
 
-        return traverse(start_intent, 0)
+        root = traverse(start_intent, 0)
+        if root is None:
+            return None
+        return {"root": root}
 
+    async def aget_workflow_graph(self, domain, start_intent, org_id, context, **kw):
+        import asyncio
+        return await asyncio.to_thread(self.get_workflow_graph, domain, start_intent, org_id, context, **kw)
 
     def update_locator_priority(self, node_id: uuid.UUID, new_priority: list[int]) -> None:
         """Update locator priority array."""
         self.update_node(node_id, locator_priority=new_priority)
 
+    async def aupdate_locator_priority(self, node_id, new_priority):
+        import asyncio
+        await asyncio.to_thread(self.update_locator_priority, node_id, new_priority)
+
     def update_last_used(self, node_id: uuid.UUID) -> None:
         """Update last_used timestamp."""
-        self.update_node(node_id, last_used_at=datetime.utcnow())
+        self.update_node(node_id, last_used=datetime.now(timezone.utc))
+
+    async def aupdate_last_used(self, node_id):
+        import asyncio
+        await asyncio.to_thread(self.update_last_used, node_id)
