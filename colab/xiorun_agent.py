@@ -5963,6 +5963,7 @@ async def session_cascade_check(req: CascadeCheckRequest):
 class PersistSessionRequest(BaseModel):
     identity_id: str
     org_id: str = "00000000-0000-7000-8000-000000000000"
+    email: str | None = None        # used for fingerprint.json
     cookies: list[dict] = []
     profile_dir: str | None = None
     page_url: str | None = None
@@ -6026,26 +6027,44 @@ async def persist_session(req: PersistSessionRequest):
             import tarfile as _tf_ps, hashlib as _hl_ps
             _id_short = req.identity_id.replace("-", "")[:16]
 
-            # Determine canonical profile number: scan existing profiles/ for one
-            # already named for this identity, or allocate the next PRFL-NNN slot.
+            # Determine canonical profile number: resolve via XIOSYNC identity-internal
+            # API first (authoritative DB source), fall back to Drive scan only as last resort.
             _profiles_dir_ps = os.path.join(DRIVE_ROOT, "profiles")
             os.makedirs(_profiles_dir_ps, exist_ok=True)
-            _existing_nums = []
-            _matched_key = None
-            if os.path.isdir(_profiles_dir_ps):
-                for _pf in sorted(os.listdir(_profiles_dir_ps)):
-                    if _pf.endswith(".tar.gz") and _pf.startswith("PRFL-"):
-                        try:
-                            _existing_nums.append(int(_pf[5:8]))
-                        except ValueError:
-                            pass
-
-            # Check if a chrome_profiles/ entry already exists for backwards compat
-            _legacy_key = f"chrome_profiles/PRFL_{_id_short}.tar.gz"
-            _legacy_path = os.path.join(DRIVE_ROOT, _legacy_key)
-
-            # Allocate new serial number if no existing canonical entry found
-            _next_num = (max(_existing_nums) + 1) if _existing_nums else 1
+            _resolved_serial = None
+            if XIOSYNC_BASE and req.identity_id:
+                try:
+                    import httpx as _hx_ps
+                    _idr = _hx_ps.get(
+                        f"{XIOSYNC_BASE}/api/v1/xioflow/events/identity-internal",
+                        params={"identity_id": req.identity_id},
+                        headers={"X-XIOSYNC-Internal": INTERNAL_SECRET},
+                        timeout=10,
+                    )
+                    if _idr.status_code == 200:
+                        _idata = _idr.json()
+                        _resolved_serial = _idata.get("profile_serial")
+                        logger.info(f"persist-session: identity resolved → PRFL-{_resolved_serial:03d}")
+                    else:
+                        logger.warning(f"persist-session: identity-internal {_idr.status_code} — falling back to Drive scan")
+                except Exception as _ie_ps:
+                    logger.warning(f"persist-session: identity resolve failed: {_ie_ps}")
+            
+            if _resolved_serial:
+                _next_num = _resolved_serial
+            else:
+                # Fallback: scan Drive for existing PRFL by identity id_short, else max+1
+                _id_short16 = req.identity_id.replace("-", "")[:16] if req.identity_id else ""
+                _existing_nums = []
+                _matched_num = None
+                if os.path.isdir(_profiles_dir_ps):
+                    for _pf in sorted(os.listdir(_profiles_dir_ps)):
+                        if _pf.endswith(".tar.gz") and _pf.startswith("PRFL-"):
+                            try: _existing_nums.append(int(_pf[5:8]))
+                            except ValueError: pass
+                _next_num = (max(_existing_nums) + 1) if _existing_nums else 1
+                logger.warning(f"persist-session: using fallback PRFL-{_next_num:03d} (identity-resolve unavailable)")
+            
             _profile_key = f"profiles/PRFL-{_next_num:03d}.tar.gz"
             _drive_path = os.path.join(DRIVE_ROOT, _profile_key)
 
@@ -6075,6 +6094,27 @@ async def persist_session(req: PersistSessionRequest):
                 results["profile_key"] = _profile_key
                 results["profile_size"] = _sz
                 logger.info(f"persist-session: profile saved to Drive: {_profile_key} ({_sz:,}b)")
+
+                # ── Write PRFL-NNN.fingerprint.json ──────────────────────────────
+                try:
+                    import json as _fp_json, datetime as _fp_dt
+                    _fp_data = {
+                        "profile_id": f"PRFL-{_next_num:03d}",
+                        "identity_id": req.identity_id or "",
+                        "email": getattr(req, "email", "") or "",
+                        "platform": "google",
+                        "profile_dir": req.profile_dir or "",
+                        "created_at": _fp_dt.datetime.utcnow().isoformat() + "Z",
+                        "cookie_count": results.get("cookie_count", 0),
+                        "node": NODE_NAME,
+                    }
+                    _fp_path = os.path.join(DRIVE_ROOT, "profiles", f"PRFL-{_next_num:03d}.fingerprint.json")
+                    with open(_fp_path, "w") as _fp_f:
+                        _fp_json.dump(_fp_data, _fp_f, indent=2)
+                    logger.info(f"persist-session: fingerprint written → {_fp_path}")
+                    results["fingerprint_key"] = f"profiles/PRFL-{_next_num:03d}.fingerprint.json"
+                except Exception as _fp_e:
+                    logger.warning(f"persist-session: fingerprint write failed: {_fp_e}")
 
                 # Clean up legacy chrome_profiles/ duplicate if it exists
                 if os.path.exists(_legacy_path):
