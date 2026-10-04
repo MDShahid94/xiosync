@@ -549,6 +549,7 @@ async def _execute_dag_run(
                                "XIOSYNC_INTERNAL_SECRET", ""))
     _HDRS    = {"X-XIOSYNC-Internal": _SECRET, "Content-Type": "application/json"}
     _trace   = context.get("trace_mode", False)
+    _trace_requested = _trace   # original flag — never overridden, drives trace_nodes collection
     _vars    = context.get("workflow_vars", {})
     _proxy   = _SSH_PROXY_URL   # socks5://127.0.0.1:19055 (or 19056)
 
@@ -615,7 +616,7 @@ async def _execute_dag_run(
             _bctx = await _brow.new_context(**_ctx_kwargs)
             _page = await _bctx.new_page()
 
-            # Optional: wrap with PageProxy for auto-trace
+            # Optional: wrap with PageProxy for auto-trace (best-effort; Colab workers skip)
             if _trace:
                 try:
                     from xiosync.subsystems.xioflow.ingestion.trace_collector import TraceCollector
@@ -624,8 +625,8 @@ async def _execute_dag_run(
                     _page = PageProxy(_page, _tc)
                     logger.info("dag_run.trace: PageProxy active")
                 except Exception as _te:
-                    logger.warning(f"dag_run.trace: PageProxy unavailable ({_te}), tracing disabled")
-                    _trace = False
+                    logger.info(f"dag_run.trace: PageProxy unavailable ({_te}), using graph-based trace")
+                    _trace = False   # disable PageProxy wrapping only
                     _tc = None
             else:
                 _tc = None
@@ -701,7 +702,7 @@ async def _execute_dag_run(
                              "locator_tier": None, "locator_str": None}
                 results.append(_step_rec)
                 # Record rich node data for trace deployment
-                if _trace:
+                if _trace_requested:
                     trace_nodes.append({
                         "intent": _intent,
                         "action_type": _action,
@@ -735,7 +736,7 @@ async def _execute_dag_run(
             await _brow.close()
 
             # ── Auto-trace: POST executed steps as memory nodes to XIOSYNC ──────
-            if _trace and trace_nodes and all_ok:
+            if _trace_requested and trace_nodes and all_ok:
                 try:
                     _org_id = context.get("organization_id", "00000000-0000-7000-8000-000000000000")
                     async with _hx.AsyncClient(timeout=20) as _cl:
