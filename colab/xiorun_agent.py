@@ -650,9 +650,24 @@ async def _execute_dag_run(
                         logger.info(f"dag_run.step: {_intent} navigate → {_url[:60]}")
 
                     elif _action in ("fill", "type"):
-                        _text = _params.get("text", "")
-                        for _k, _v in _vars.items():
-                            _text = _text.replace(f"{{{_k}}}", str(_v))
+                        # "value" key (new nodes) OR "text" key (legacy) OR from workflow_vars
+                        _text = _params.get("value", _params.get("text", ""))
+                        # ── Resolve {{var}} tokens ─────────────────────────────────────
+                        if "{{totp}}" in str(_text):
+                            _totp_sec = (_params.get("totp_secret") or
+                                         _vars.get("totp_secret", "")).replace(" ", "").replace("-","")
+                            try:
+                                import pyotp as _pt
+                                _text = _pt.TOTP(_totp_sec).now()
+                                logger.info(f"dag_run.step: {_intent} TOTP generated ({_text})")
+                            except Exception as _te:
+                                logger.warning(f"dag_run.step: {_intent} TOTP fail: {_te}")
+                        else:
+                            # Generic {{key}} → workflow_vars lookup
+                            for _k, _v in _vars.items():
+                                _text = str(_text).replace(f"{{{{{_k}}}}}", str(_v))
+                        # ── Wait for field to be visible (password/TOTP fields load async) ──
+                        await _page.wait_for_timeout(1500)
                         for _t in _prio:
                             _fn = _TIER_FN.get(_t)
                             if not _fn: continue
