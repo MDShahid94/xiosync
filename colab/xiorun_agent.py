@@ -1146,6 +1146,67 @@ async def _execute_dag_run(
                         await _page.wait_for_timeout(_params.get("ms", 2000))
                         _step_ok = True
 
+                    elif _action == "script":
+                        # ── P1: Script node runner ────────────────────────────────────────
+                        # Nodes with endpoint= call the worker's own local HTTP API.
+                        # Response JSON is injected into _vars for downstream var resolution.
+                        _s_endpoint = _params.get("endpoint", "")
+
+                        if _intent == "resolve_exit_proxy":
+                            # Resolve exit proxy from worker env (no HTTP call needed)
+                            _vars["proxy_url"] = os.environ.get(
+                                "XIORUN_PROXY",
+                                os.environ.get("PROXY_URL", "socks5://127.0.0.1:19055")
+                            )
+                            _step_ok = True
+                            logger.info(f"dag_run.step: {_intent} [script] proxy={_vars['proxy_url']}")
+
+                        elif _s_endpoint:
+                            # Resolve {{var}} tokens in ALL params
+                            _s_body: dict = {}
+                            for _spk, _spv in _params.items():
+                                _s_val = str(_spv)
+                                for _k, _v in _vars.items():
+                                    _s_val = _s_val.replace(f"{{{{{_k}}}}}", str(_v))
+                                _s_body[_spk] = _s_val
+
+                            _worker_port = os.environ.get("PORT", "9300")
+                            _worker_url  = f"http://127.0.0.1:{_worker_port}{_s_endpoint}"
+                            try:
+                                async with _hx.AsyncClient(timeout=180) as _cl:
+                                    _sr = await _cl.post(_worker_url, json=_s_body)
+                                _ct = _sr.headers.get("content-type", "")
+                                _sd = _sr.json() if "application/json" in _ct else {}
+                                if _sr.status_code in (200, 201):
+                                    _step_ok = True
+                                    # Inject response fields into _vars for downstream nodes
+                                    if isinstance(_sd, dict):
+                                        for _rk, _rv in _sd.items():
+                                            _vars[_rk] = _rv
+                                    logger.info(
+                                        f"dag_run.step: {_intent} [script] {_s_endpoint} "
+                                        f"→ HTTP {_sr.status_code} ok  keys={list(_sd.keys() if isinstance(_sd,dict) else [])}"
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"dag_run.step: {_intent} [script] {_s_endpoint} "
+                                        f"→ HTTP {_sr.status_code} {str(_sd)[:120]}"
+                                    )
+                                    _step_ok = False
+                            except Exception as _sce:
+                                logger.warning(
+                                    f"dag_run.step: {_intent} [script] {_s_endpoint} "
+                                    f"error: {_sce}"
+                                )
+                                _step_ok = False
+
+                        else:
+                            # No endpoint + no known handler — skip with warning
+                            logger.warning(
+                                f"dag_run.step: {_intent} [script] no endpoint — skipping"
+                            )
+                            _step_ok = True
+
                     else:
                         logger.warning(f"dag_run.step: unknown action {_action!r} for {_intent!r} — skipping")
                         _step_ok = True
