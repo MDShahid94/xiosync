@@ -4078,10 +4078,16 @@ def _run_uc_login_sync(
                 logger.info(f"uc-login: skipped email — on challenge page {curr_start[:80]}")
             else:
                 # Normal flow: fill email
-                cdp_click_element(['input[name="identifier"]', 'input[type="email"]', "#identifierId"])
+                cdp_click_element([
+                    'input[name="identifier"]', 'input[type="email"]',
+                    "#identifierId", "#Email", 'input[name="Email"]',
+                ])
                 cdp_type_text(email)
                 time.sleep(rnd(0.5, 1.0))
-                cdp_click_element(['#identifierNext', 'button[jsname="LgbsSe"]', 'div[id="identifierNext"]'])
+                cdp_click_element([
+                    '#identifierNext', 'button[jsname="LgbsSe"]',
+                    'div[id="identifierNext"]', '#next', 'input[id="next"]',
+                ])
                 logger.info("uc-login: email entered")
             time.sleep(2.5)
 
