@@ -642,3 +642,105 @@ def hitl_resume_internal(run_id: uuid.UUID, request: Request) -> dict:
         sess.commit()
     logger.info("hitl.resumed", extra={"run_id": str(run_id)})
     return {"status": "resumed"}
+
+
+@internal_router.post("/runs-internal/{run_id}/persist-session", status_code=200,
+                      summary="[Worker-internal] Persist cookie vault + identity update after DAG login")
+def persist_session_internal(run_id: uuid.UUID, payload: dict, request: Request) -> dict:
+    """Save the Patchright storage_state (cookies) into vaulted_secrets via SessionStateIO.
+
+    Flow:
+      1. Resolve identity_id: use payload["identity_id"] if given, else look up
+         identities WHERE identifier=email AND platform='google'. Create if missing.
+      2. Call SessionStateIO.save() — AES-GCM encrypt, TTL-aware merge, upsert.
+      3. Update identity.last_used_at = now().
+      4. Return {ok, identity_id, profile_serial, cookie_count}.
+    """
+    import os as _os, datetime as _dt
+    from sqlalchemy.orm import Session as _Sess
+    from xiosync.platform.engine_ref import get_engine
+    from xiosync.subsystems.xiorun.session_state import SessionStateIO
+
+    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
+    given    = request.headers.get("X-XIOSYNC-Internal", "")
+    if not expected or given != expected:
+        raise HTTPException(status_code=403, detail="invalid_internal_secret")
+
+    storage_state = payload.get("storage_state", {})
+    email         = payload.get("email", "")
+    identity_id   = payload.get("identity_id", "")
+    org_id        = payload.get("org_id", "00000000-0000-7000-8000-000000000000")
+
+    engine = get_engine()
+
+    with _Sess(engine) as sess:
+        # ── 1. Resolve / create identity ─────────────────────────────────
+        if not identity_id and email:
+            row = sess.execute(text("""
+                SELECT id, profile_serial FROM identities
+                WHERE identifier = :email AND platform = 'google'
+                LIMIT 1
+            """), {"email": email}).fetchone()
+
+            if row:
+                identity_id    = str(row[0])
+                profile_serial = row[1] or 0
+            else:
+                # Create a new identity for this email
+                new_id = uuid.uuid4()
+                # Next profile_serial = MAX(profile_serial) + 1
+                max_row = sess.execute(text(
+                    "SELECT COALESCE(MAX(profile_serial), 0) FROM identities "
+                    "WHERE organization_id = :org"
+                ), {"org": org_id}).fetchone()
+                profile_serial = (max_row[0] or 0) + 1
+                sess.execute(text("""
+                    INSERT INTO identities
+                        (id, organization_id, identifier, platform, display_name,
+                         state, metadata, profile_serial, materialization_mode, created_at, updated_at)
+                    VALUES
+                        (:id, :org, :email, 'google', :name,
+                         'active', '{}', :serial, 'storage_state', now(), now())
+                """), {"id": str(new_id), "org": org_id, "email": email,
+                       "name": email.split("@")[0], "serial": profile_serial})
+                sess.commit()
+                identity_id = str(new_id)
+                logger.info("persist_session.identity_created",
+                            extra={"identity_id": identity_id, "email": email, "serial": profile_serial})
+        elif identity_id:
+            row = sess.execute(text(
+                "SELECT profile_serial FROM identities WHERE id = :iid"
+            ), {"iid": identity_id}).fetchone()
+            profile_serial = (row[0] if row else 0) or 0
+        else:
+            raise HTTPException(status_code=400, detail="email or identity_id required")
+
+        # ── 2. Save cookies to vault via SessionStateIO (AES-GCM + merge) ─
+        sio = SessionStateIO(engine)
+        sio.save(
+            identity_id = identity_id,
+            org_id      = org_id,
+            state       = storage_state,
+            page_url    = "https://myaccount.google.com/",
+        )
+
+        # ── 3. Update identity.last_used_at ───────────────────────────────
+        sess.execute(text("""
+            UPDATE identities SET last_used_at = now(), updated_at = now()
+            WHERE id = :iid
+        """), {"iid": identity_id})
+        sess.commit()
+
+    cookie_count = len(storage_state.get("cookies", []))
+    logger.info("persist_session.done", extra={
+        "run_id":       str(run_id),
+        "identity_id":  identity_id,
+        "cookie_count": cookie_count,
+        "profile_serial": profile_serial,
+    })
+    return {
+        "ok":             True,
+        "identity_id":    identity_id,
+        "profile_serial": profile_serial,
+        "cookie_count":   cookie_count,
+    }

@@ -943,6 +943,31 @@ async def _execute_dag_run(
                 except Exception as _pe:
                     logger.debug(f"dag_run.profile: storage_state save skipped ({_pe})")
 
+                # ── Vault save: AES-GCM encrypt cookies → vaulted_secrets via XIOSYNC ──
+                try:
+                    _email   = _vars.get("email", "")
+                    _iid     = _vars.get("identity_id", "")
+                    _org_id  = context.get("organization_id", "00000000-0000-7000-8000-000000000000")
+                    async with _hx.AsyncClient(timeout=30) as _cl:
+                        _pr = await _cl.post(
+                            f"{_XIOSYNC}/api/v1/xioflow/events/runs-internal/{run_id}/persist-session",
+                            headers=_HDRS,
+                            json={
+                                "storage_state": _st,
+                                "email":         _email,
+                                "identity_id":   _iid,
+                                "org_id":        _org_id,
+                            },
+                        )
+                    _pd = _pr.json()
+                    _serial = _pd.get("profile_serial", 0)
+                    logger.info(
+                        f"dag_run.profile: vault saved → identity={str(_pd.get('identity_id','?'))[:8]} "
+                        f"PRFL-{_serial:03d} ({_pd.get('cookie_count', 0)} cookies encrypted)"
+                    )
+                except Exception as _ve:
+                    logger.warning(f"dag_run.profile: vault save failed ({_ve})")
+
             await _brow.close()
 
             # ── Auto-trace: POST executed steps as memory nodes to XIOSYNC ──────
