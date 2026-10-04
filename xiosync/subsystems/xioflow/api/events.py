@@ -756,6 +756,11 @@ def resolve_identity_internal(
     platform: str = "google",
 ) -> dict:
     """Worker calls this before browser launch to get profile_serial for identity-scoped paths."""
+    import os as _os
+    _exp = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
+    _given = request.headers.get("X-XIOSYNC-Internal", "")
+    if not _exp or _given != _exp:
+        raise HTTPException(status_code=403, detail="invalid_internal_secret")
     from sqlalchemy.orm import Session as _Sess
     from xiosync.platform.engine_ref import get_engine
     from sqlalchemy import text as _t

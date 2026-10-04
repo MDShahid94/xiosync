@@ -65,6 +65,7 @@ _PUBLIC_AUTH_PREFIXES = (
     "/api/v1/xioflow/events/runs-internal/",
     "/api/v1/xioflow/events/memory-graph-internal",
     "/api/v1/xioflow/events/trace-nodes-internal",
+    "/api/v1/xioflow/events/identity-internal",   # P0-2: identity resolve by email (no JWT)
 )
 
 
