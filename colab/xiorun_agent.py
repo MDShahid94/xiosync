@@ -4176,97 +4176,63 @@ def _run_uc_login_sync(
         if _is_challenge:
             logger.info(f"uc-login: challenge page detected ({curr2[:80]})")
 
-            # ── reCAPTCHA short-circuit (XIOBR port) ─────────────────────────
-            # If Google shows a reCAPTCHA challenge, solve it BEFORE trying
-            # 'Try another way' — clicking TAW on reCAPTCHA causes rejection.
+            # ── reCAPTCHA → HITL (default path; auto-solver wired later) ────────────────
+            # Do NOT click "Try another way" on reCAPTCHA — blocks further auth flow.
+            # Always pause and hand off to human operator via HITL (noVNC).
             if "challenge/recaptcha" in curr2:
-                logger.info("uc-login: reCAPTCHA challenge detected — invoking solver")
+                logger.info("uc-login: reCAPTCHA detected — pausing for HITL (human-in-the-loop)")
                 try:
-                    _rc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recaptcha_solver.py")
-                    if os.path.exists(_rc_path):
-                        import importlib.util as _rc_ilu
-                        _rc_spec = _rc_ilu.spec_from_file_location("recaptcha_solver", _rc_path)
-                        _rc_mod = _rc_ilu.module_from_spec(_rc_spec)
-                        _rc_spec.loader.exec_module(_rc_mod)
-                        _rc_solved = _rc_mod.solve_recaptcha(driver, log_fn=lambda m: logger.info(m), sleep_fn=uc_sleep, max_attempts=2)
-                        if _rc_solved:
-                            logger.info("uc-login: reCAPTCHA solved — checking post-solve URL")
-                            uc_sleep(2.0, 3.0)
-                            _url_after_rc = driver.current_url
-                            # Google may show password page after reCAPTCHA (email→reCAPTCHA→pwd flow)
-                            if "challenge/pwd" in _url_after_rc:
-                                logger.info("uc-login: password challenge after reCAPTCHA — entering password")
-                                try:
-                                    _rc_pw = WebDriverWait(driver, 12).until(
-                                        EC.visibility_of_element_located((By.CSS_SELECTOR, "input[type='password']")))
-                                    cdp_click_element("input[type='password']")
-                                    uc_sleep(0.3, 0.5)
-                                    cdp_type_text(password)
-                                    uc_sleep(0.4, 0.6)
-                                    cdp_click_element('#passwordNext, button[type=submit]')
-                                    uc_sleep(3.0, 5.0)
-                                except Exception as _rc_pwd_e:
-                                    logger.warning(f"uc-login: post-reCAPTCHA password entry failed: {_rc_pwd_e}")
-                            # Re-evaluate challenge state after reCAPTCHA
-                            curr2 = driver.current_url
-                            _is_challenge = "challenge/" in curr2 and "challenge/pwd" not in curr2
-                            if not _is_challenge:
-                                logger.info("uc-login: no more challenges after reCAPTCHA — proceeding to verify")
-                        else:
-                            logger.warning("uc-login: reCAPTCHA solver returned False")
+                    import uuid as _rc_uuid, time as _rc_time
+                    _xv_url = (
+                        f"{XIOSYNC_BASE}/api/v1/xioview/sessions/{NODE_NAME or 'uc-login'}/view"
+                        if XIOSYNC_BASE else "XIOVIEW: uc-login"
+                    )
+                    _novnc_hint = f"\n⚡ noVNC (direct): {_NOVNC_URL}" if _NOVNC_URL else ""
+                    _rc_notice = HITLNotice(
+                        organization_id=_rc_uuid.UUID("00000000-0000-7000-8000-000000000000"),
+                        session_id=NODE_NAME or "uc-login",
+                        challenge_type="recaptcha",
+                        message=(
+                            f"🔒 reCAPTCHA — {email}\n"
+                            f"👁 Solve via noVNC: {_NOVNC_URL or _xv_url}{_novnc_hint}\n"
+                            f"URL: {curr2[:120]}\n"
+                            "Tick \'I\'m not a robot\', complete any image challenge, then Resume."
+                        ),
+                        instructions=(
+                            f"noVNC: {_NOVNC_URL or 'N/A'}. "
+                            "Solve the reCAPTCHA — do NOT click \'Try another way\'. "
+                            "After checkbox clears, POST /hitl/{id}/resume."
+                        ),
+                    )
+                    _hitl_store.create(_rc_notice)
+                    _rc_notice_id = str(_rc_notice.id)
+                    logger.info(
+                        f"uc-login: ✅ reCAPTCHA HITL id={_rc_notice_id} — "
+                        f"noVNC={_NOVNC_URL or 'N/A'} — waiting up to 600s"
+                    )
+                    # Poll for resume (threading-safe — asyncio.Event can't be awaited from thread)
+                    _rc_deadline = _rc_time.time() + 600
+                    while _rc_time.time() < _rc_deadline:
+                        _rc_time.sleep(3.0)
+                        _rc_notice_state = _hitl_store._notices.get(_rc_notice.id)
+                        if _rc_notice_state and _rc_notice_state.state == HITLState.RESUMED:
+                            logger.info("uc-login: reCAPTCHA HITL resumed ✅ — re-evaluating")
+                            break
                     else:
-                        logger.warning(f"uc-login: recaptcha_solver.py not found at {_rc_path} — triggering HITL")
-                        # ── reCAPTCHA HITL: pause login and hand off to operator ──
-                        try:
-                            import uuid as _rc_uuid
-                            _xv_url = (
-                                f"{XIOSYNC_BASE}/api/v1/xioview/sessions/prfl002-login/view"
-                                if XIOSYNC_BASE else "XIOVIEW: prfl002-login"
-                            )
-                            _novnc_hint = f"\n⚡ noVNC (direct/low-lag): {_NOVNC_URL}" if _NOVNC_URL else ""
-                            _rc_notice = HITLNotice(
-                                organization_id=_rc_uuid.UUID("00000000-0000-7000-8000-000000000000"),
-                                session_id="prfl002-login",
-                                challenge_type="recaptcha",
-                                message=(
-                                    f"🔒 reCAPTCHA challenge for {email}\n"
-                                    f"👁 Watch & solve live: {_xv_url}{_novnc_hint}\n"
-                                    f"URL: {curr2[:120]}\n"
-                                    "Click 'I'm not a robot' checkbox or 'Try another way' in XIOVIEW, then Resume."
-                                ),
-                                instructions=(
-                                    f"Open {_xv_url} — solve the reCAPTCHA or choose another verification method. "
-                                    f"noVNC (direct, low-lag): {_NOVNC_URL or 'N/A'}. "
-                                    "Then POST /hitl/{id}/resume to continue."
-                                ),
-                            )
-                            _hitl_store.create(_rc_notice)
-                            _rc_notice_id = str(_rc_notice.id)
-                            logger.info(
-                                f"uc-login: ✅ reCAPTCHA HITL created id={_rc_notice_id} — "
-                                f"view={_xv_url} — blocking 300s for operator"
-                            )
-                            _rc_event = _hitl_store._events.get(_rc_notice.id)
-                            if _rc_event:
-                                _rc_event.wait(timeout=300)
-                            _rc_resumed = _hitl_store._notices.get(_rc_notice.id)
-                            if _rc_resumed and _rc_resumed.state == HITLState.RESUMED:
-                                logger.info("uc-login: reCAPTCHA HITL resumed — re-evaluating page")
-                                curr2 = driver.current_url
-                                _is_challenge = "challenge/" in curr2 and "challenge/pwd" not in curr2
-                                if not _is_challenge:
-                                    logger.info("uc-login: ✅ reCAPTCHA cleared after HITL")
-                            else:
-                                logger.warning("uc-login: reCAPTCHA HITL timed out — proceeding anyway")
-                        except Exception as _rc_hitl_e:
-                            logger.warning(f"uc-login: reCAPTCHA HITL error: {_rc_hitl_e}")
-                except Exception as _rc_e:
-                    logger.warning(f"uc-login: reCAPTCHA handling error: {_rc_e}")
+                        logger.warning("uc-login: reCAPTCHA HITL timed out (600s) — proceeding")
+                    curr2 = driver.current_url
+                    _is_challenge = "challenge/" in curr2 and "challenge/pwd" not in curr2
+                    if not _is_challenge:
+                        logger.info("uc-login: ✅ reCAPTCHA cleared — continuing login")
+                    else:
+                        logger.warning(f"uc-login: still on challenge after HITL: {curr2[:80]}")
+                except Exception as _rc_hitl_e:
+                    logger.warning(f"uc-login: reCAPTCHA HITL error: {_rc_hitl_e}")
 
             # ── Step 1: "Try another way" — poll up to 8s for React render ──
             # /challenge/dp (Google device push) renders its links via React AFTER
             # the main page load. A static find() will miss it. We must poll.
-            if "/challenge/totp" not in curr2 and "/challenge/selection" not in curr2:
+            if "/challenge/totp" not in curr2 and "/challenge/selection" not in curr2 and "/challenge/recaptcha" not in curr2:
                 logger.info("uc-login: polling for 'Try another way' button...")
                 _taw_result = False
                 for _taw_i in range(16):   # up to 8s @ 0.5s interval
