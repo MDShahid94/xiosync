@@ -5072,7 +5072,7 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
     if XIOSYNC_BASE:
         try:
             import urllib.request, json as _json_lk
-            _lk_url = f"{XIOSYNC_BASE}/workers/lock/pg/acquire"
+            _lk_url = f"{XIOSYNC_BASE}/api/v1/workers/lock/pg/acquire"
             _lk_data = _json_lk.dumps({
                 "resource_key": _lock_resource,
                 "node_name": NODE_NAME,
@@ -5212,11 +5212,8 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
         # wait for an operator or AI agent to resume before returning failure.
         if not result.get("ok"):
             _error_msg = result.get("error", "")
-            # Classify as recoverable if it's a challenge/verification issue (not infra)
-            _recoverable = any(k in _error_msg.lower() for k in [
-                "sign-in page", "rejected", "verification", "challenge",
-                "totp", "2fa", "captcha",
-            ]) or "final_url" in str(result)
+            # Always treat login failure as recoverable — operator can complete in noVNC
+            _recoverable = True  # any ok=False from run-uc-login gets HITL
             if _recoverable:
                 try:
                     import uuid as _hitl_uuid
@@ -5266,21 +5263,56 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
 
                         _resumed_notice = _hitl_store._notices.get(_notice.id)
                         if _resumed_notice and _resumed_notice.state == HITLState.RESUMED:
-                            logger.info("run-uc-login: HITL resumed by operator — re-checking login state")
+                            logger.info("run-uc-login: HITL resumed by operator — checking state via CDP")
                             try:
-                                _post_hitl_url = driver.current_url
-                                logger.info(f"run-uc-login: post-HITL URL: {_post_hitl_url[:100]}")
-                                if "myaccount.google.com" in _post_hitl_url or "mail.google.com" in _post_hitl_url:
-                                    result["ok"] = True
-                                    result["error"] = ""
-                                    result["hitl_state"] = "RESUMED_SUCCESS"
-                                    logger.info("run-uc-login: ✅ Login succeeded after HITL resume!")
-                                elif "accounts.google.com" not in _post_hitl_url:
-                                    result["ok"] = True
-                                    result["hitl_state"] = "RESUMED_SUCCESS"
-                                    logger.info(f"run-uc-login: ✅ Navigated away from Google login after HITL: {_post_hitl_url[:80]}")
+                                # Chrome process stays alive after driver.quit() —
+                                # check via CDP HTTP on the debug port (not via dead Selenium driver)
+                                import urllib.request as _ur_cdp, json as _jr_cdp
+                                import websocket as _ws_cdp, time as _tc_cdp
+                                _cdp_port = _uc_port or result.get("uc_port", 0)
+                                _post_hitl_url = ""
+                                _hitl_cookies = []
+                                if _cdp_port:
+                                    _tabs = _jr_cdp.loads(
+                                        _ur_cdp.urlopen(
+                                            f"http://127.0.0.1:{_cdp_port}/json", timeout=4
+                                        ).read()
+                                    )
+                                    _pg = next((t for t in _tabs if t.get("type") == "page"), None)
+                                    if _pg:
+                                        _post_hitl_url = _pg.get("url", "")
+                                        logger.info(f"run-uc-login: post-HITL CDP URL: {_post_hitl_url[:100]}")
+                                        # Extract cookies if on authenticated page
+                                        if ("mail.google.com" in _post_hitl_url
+                                                or "myaccount.google.com" in _post_hitl_url):
+                                            _ws2 = _ws_cdp.create_connection(
+                                                _pg["webSocketDebuggerUrl"], timeout=8)
+                                            _ws2.send(_jr_cdp.dumps(
+                                                {"id": 1, "method": "Network.getAllCookies", "params": {}}))
+                                            _tc_cdp.sleep(1.5)
+                                            _ws2.settimeout(8)
+                                            _cr = _jr_cdp.loads(_ws2.recv())
+                                            _hitl_cookies = _cr.get("result", {}).get("cookies", [])
+                                            _ws2.close()
+                                            result["ok"] = True
+                                            result["error"] = ""
+                                            result["cookies"] = _hitl_cookies
+                                            result["final_url"] = _post_hitl_url
+                                            result["hitl_state"] = "RESUMED_SUCCESS"
+                                            logger.info(
+                                                f"run-uc-login: ✅ HITL login verified — "
+                                                f"{len(_hitl_cookies)} cookies extracted"
+                                            )
+                                        elif "accounts.google.com" not in _post_hitl_url and _post_hitl_url:
+                                            result["ok"] = True
+                                            result["hitl_state"] = "RESUMED_SUCCESS"
+                                            logger.info(f"run-uc-login: ✅ Navigated away from Google login: {_post_hitl_url[:80]}")
+                                        else:
+                                            logger.warning(f"run-uc-login: still on login page after HITL: {_post_hitl_url[:80]}")
+                                else:
+                                    logger.warning("run-uc-login: no CDP port — cannot verify post-HITL state")
                             except Exception as _phr:
-                                logger.warning(f"run-uc-login: post-HITL URL check error: {_phr}")
+                                logger.warning(f"run-uc-login: post-HITL CDP check error: {_phr}")
                         else:
                             logger.warning("run-uc-login: HITL timed out (300s) — no operator action")
                             result["hitl_state"] = "EXPIRED"
@@ -5299,7 +5331,7 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
         if _lock_acquired and XIOSYNC_BASE:
             try:
                 import urllib.request, json as _json_lkr
-                _lkr_url = f"{XIOSYNC_BASE}/workers/lock/pg/release"
+                _lkr_url = f"{XIOSYNC_BASE}/api/v1/workers/lock/pg/release"
                 _lkr_data = _json_lkr.dumps({
                     "resource_key": _lock_resource,
                     "node_name": NODE_NAME,
