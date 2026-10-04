@@ -7,7 +7,7 @@ import logging
 import uuid
 from typing import Any, cast
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
@@ -16,6 +16,9 @@ from sqlalchemy.orm import Session as OrmSession
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/xioflow/events", tags=["XIOFLOW Events"])
+
+# Separate router for worker-internal endpoints — mounted WITHOUT RBAC in app.py
+internal_router = APIRouter(prefix="/xioflow/events", tags=["XIOFLOW Internal"])
 
 
 def _session(request: Request) -> OrmSession:
@@ -54,7 +57,7 @@ async def _sse_generator(org_id: str, queue: asyncio.Queue):
             try:
                 data = await asyncio.wait_for(queue.get(), timeout=30)
                 yield f"data: {data}\n\n"
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Heartbeat keepalive — prevents proxy timeouts
                 yield ": keepalive\n\n"
     finally:
@@ -302,7 +305,6 @@ class CompleteRunRequest(BaseModel):
 def complete_run(run_id: uuid.UUID, payload: CompleteRunRequest, request: Request) -> dict:
     """Colab worker calls this after executing a DAG run locally."""
     from xiosync.domain.context import OrgContext
-    import json as _json
     success = payload.success
     task_id = payload.task_id
     result = payload.result or {}
@@ -338,3 +340,165 @@ def complete_run(run_id: uuid.UUID, payload: CompleteRunRequest, request: Reques
     logger.info("run_completed_by_worker",
                 extra={"run_id": str(run_id), "state": run_state})
     return {"run_id": str(run_id), "state": run_state}
+
+@internal_router.get("/runs/pending-dag-internal",
+            summary="[Worker-internal] Poll for a PENDING xioflow_dag run — no JWT, uses X-XIOSYNC-Internal",
+            include_in_schema=True)
+def claim_pending_dag_run_internal(request: Request) -> dict:
+    """Internal endpoint for Colab workers — authenticated by X-XIOSYNC-Internal header.
+    
+    Replaces the JWT-authenticated /runs/pending-dag for worker polling.
+    Workers use XIORUN_INTERNAL_SECRET as the X-XIOSYNC-Internal header value.
+    """
+    import os as _os
+    from fastapi.responses import Response as _Resp
+    from xiosync.platform.ids import new_id
+    
+    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
+    given = request.headers.get("X-XIOSYNC-Internal", "")
+    if not expected or not given or given != expected:
+        raise HTTPException(status_code=403, detail="invalid_internal_secret")
+    
+    # Use a raw DB session — bypass org scoping since this is internal
+    from sqlalchemy.orm import Session as _Sess
+    from xiosync.platform.engine_ref import get_engine
+    from sqlalchemy import text
+    from xiosync.platform.ids import new_id
+    
+    with _Sess(get_engine()) as sess:
+        row = sess.execute(text("""
+            WITH claimed AS (
+                SELECT r.id, r.context, r.organization_id,
+                       t.name AS template_name,
+                       t.dag_domain, t.dag_root_intent
+                FROM   xioflow_runs r
+                JOIN   workflow_templates t ON t.id = r.template_id
+                WHERE  r.state = 'PENDING'
+                  AND  t.template_type = 'xioflow_dag'
+                ORDER  BY r.started_at
+                LIMIT  1
+                FOR UPDATE OF r SKIP LOCKED
+            )
+            UPDATE xioflow_runs
+            SET    state = 'RUNNING'
+            FROM   claimed
+            WHERE  xioflow_runs.id = claimed.id
+            RETURNING
+                xioflow_runs.id,
+                claimed.context,
+                claimed.organization_id,
+                claimed.template_name,
+                claimed.dag_domain,
+                claimed.dag_root_intent
+        """)).fetchone()
+        
+        if not row:
+            return _Resp(status_code=204)
+        
+        task_id = str(new_id())
+        sess.execute(text("""
+            INSERT INTO xioflow_tasks
+              (id, run_id, node_intent, state, attempt_count, claimed_at)
+            VALUES (:id, :run_id, :intent, 'CLAIMED', 1, now())
+        """), {"id": task_id, "run_id": str(row.id), "intent": row.template_name or "dag_root"})
+        sess.commit()
+    
+    return {
+        "run_id": str(row.id),
+        "task_id": task_id,
+        "organization_id": str(row.organization_id),
+        "context": row.context or {},
+        "template_name": row.template_name,
+        "dag_domain": row.dag_domain,
+        "dag_root_intent": row.dag_root_intent,
+    }
+
+@internal_router.post("/runs-internal/{run_id}/complete", status_code=200,
+             summary="[Worker-internal] Report DAG run completion — no JWT")
+def complete_run_internal(run_id: uuid.UUID, payload: CompleteRunRequest, request: Request) -> dict:
+    """Internal version of complete — used by Colab worker polling loop."""
+    import os as _os
+    import json
+    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
+    given = request.headers.get("X-XIOSYNC-Internal", "")
+    if not expected or not given or given != expected:
+        raise HTTPException(status_code=403, detail="invalid_internal_secret")
+    
+    from sqlalchemy.orm import Session as _Sess
+    from xiosync.platform.engine_ref import get_engine
+    from sqlalchemy import text
+    from datetime import UTC, datetime
+    
+    run_state = "SUCCESS" if payload.success else "FAILED"
+    now = datetime.now(UTC)
+    
+    with _Sess(get_engine()) as sess:
+        if payload.task_id:
+            task_state = "SUCCESS" if payload.success else "FAILED"
+            sess.execute(text("""
+                UPDATE xioflow_tasks SET state = :s, finished_at = :now, error = :error, result = cast(:res as jsonb)
+                WHERE id = :tid
+            """), {"s": task_state, "now": now, "tid": payload.task_id, "error": payload.error, "res": json.dumps(payload.result or {})})
+        
+        sess.execute(text("""
+            UPDATE xioflow_runs
+            SET state = :s,
+                finished_at = :now,
+                error = :error,
+                context = context || cast(:result as jsonb)
+            WHERE id = :rid
+        """), {
+            "s": run_state, "now": now,
+            "error": payload.error,
+            "result": json.dumps({"worker_result": payload.result or {}, "error": payload.error}),
+            "rid": str(run_id)
+        })
+        sess.commit()
+    
+    return {"run_id": str(run_id), "state": run_state}
+
+@internal_router.get("/memory-graph-internal", summary="[Worker-internal] Get DAG graph for execution")
+def get_memory_graph_internal(request: Request, domain: str, intent: str) -> dict:
+    import os as _os
+    expected = _os.environ.get('XIOSYNC_INTERNAL_SECRET', '')
+    given = request.headers.get('X-XIOSYNC-Internal', '')
+    if not expected or given != expected:
+        raise HTTPException(status_code=403, detail='invalid_internal_secret')
+    
+    from sqlalchemy.orm import Session as _Sess
+    from xiosync.platform.engine_ref import get_engine
+    from sqlalchemy import text
+    
+    with _Sess(get_engine()) as sess:
+        # BFS from root intent
+        visited = set()
+        queue = [intent]
+        nodes = []
+        while queue:
+            current_intent = queue.pop(0)
+            if current_intent in visited:
+                continue
+            visited.add(current_intent)
+            row = sess.execute(text("""
+                SELECT intent, action_type, action_params, place_value, face_value,
+                       locator_priority, status
+                FROM xioflow_memory_nodes
+                WHERE domain = :domain AND intent = :intent AND status = 'ACTIVE'
+                ORDER BY tier DESC LIMIT 1
+            """), {'domain': domain, 'intent': current_intent}).fetchone()
+            if not row:
+                continue
+            node_dict = {
+                'intent': row.intent,
+                'action_type': row.action_type,
+                'action_params': row.action_params or {},
+                'place_value': row.place_value or {},
+                'face_value': row.face_value or {},
+                'locator_priority': row.locator_priority or [6,1,2,3,4,5],
+            }
+            nodes.append(node_dict)
+            # Queue next intents from action_params
+            next_intents = (row.action_params or {}).get('next_intents', [])
+            queue.extend(next_intents)
+        
+        return {'domain': domain, 'root_intent': intent, 'nodes': nodes}

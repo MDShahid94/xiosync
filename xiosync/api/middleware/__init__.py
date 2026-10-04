@@ -60,6 +60,10 @@ _PUBLIC_AUTH_PREFIXES = (
     "/api/v1/xioview/attach",        # uses internal-secret in body, not Bearer
     "/api/v1/xioview/observable",    # read-only list — no secrets
     "/api/v1/xioai/",                # AI gateway — internal callers use X-XIOSYNC-Internal
+    # XIOFlow worker-internal: DAG polling, completion, graph fetch (X-XIOSYNC-Internal auth)
+    "/api/v1/xioflow/events/runs/pending-dag-internal",
+    "/api/v1/xioflow/events/runs-internal/",
+    "/api/v1/xioflow/events/memory-graph-internal",
 )
 
 

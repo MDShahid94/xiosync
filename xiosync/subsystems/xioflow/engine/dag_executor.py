@@ -111,7 +111,53 @@ class DAGExecutor:
             logger.warning("Graph missing root node")
             return False
 
-        return await self._execute_node(root_node, execution_context)
+        # ── Auto-Trace: wrap page with PageProxy when trace_mode=True ────────
+        _trace_mode = execution_context.get("trace_mode") or context.get("trace_mode")
+        _trace_collector = None
+        _original_page   = self.page
+
+        if _trace_mode:
+            try:
+                from xiosync.subsystems.xioflow.ingestion.trace_collector import TraceCollector
+                from xiosync.subsystems.xioflow.ingestion.page_proxy import PageProxy
+                _trace_collector = TraceCollector(
+                    org_id=str(org_id),
+                    domain=domain,
+                    run_id=self._run_id,
+                )
+                # DOMInspector is optional — skip if not available
+                _dom_inspector = getattr(self, "dom_inspector", None)
+                self.page = PageProxy(self.page, _trace_collector, _dom_inspector)
+                logger.info(f"dag_executor.trace: PageProxy active for run={self._run_id} domain={domain}")
+            except Exception as _te:
+                logger.warning(f"dag_executor.trace: PageProxy setup failed ({_te}) — tracing disabled")
+                _trace_mode = False
+
+        try:
+            result = await self._execute_node(root_node, execution_context)
+        finally:
+            # Restore original page reference regardless of success/failure
+            self.page = _original_page
+
+        # ── Deploy trace as memory nodes if execution succeeded ───────────────
+        if _trace_mode and _trace_collector and result:
+            try:
+                from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+                from xiosync.subsystems.xioflow.ingestion.dag_deployer import DAGDeployer
+                _new_nodes = DAGGraphBuilder().build(_trace_collector, context)
+                if _new_nodes and hasattr(self.memory_graph, "_session"):
+                    DAGDeployer(self.memory_graph._session).deploy(
+                        _new_nodes, org_id=org_id
+                    )
+                    self.memory_graph._session.commit()
+                    logger.info(
+                        f"dag_executor.trace: deployed {len(_new_nodes)} memory nodes "
+                        f"from auto-trace (run={self._run_id})"
+                    )
+            except Exception as _dep_err:
+                logger.warning(f"dag_executor.trace: deploy failed ({_dep_err})")
+
+        return result
 
     async def _execute_node(self, node: dict, execution_context: dict, _visited: set | None = None, _depth: int = 0) -> bool:
         """

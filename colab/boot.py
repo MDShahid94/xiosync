@@ -688,7 +688,16 @@ _p("  Phase 2.5: Antigravity Auth Restore")
 _p("═" * 60)
 
 _agy_drive_root = _drive_root or "/content/drive/MyDrive/XIOSYNC-Shared"
-_agy_creds_tar = os.path.join(_agy_drive_root, "cache", "agy-credentials.tar.gz")
+_agy_cache_dir  = os.path.join(_agy_drive_root, "cache")
+# Try account-bound backup first (agy-credentials-{email_slug}.tar.gz),
+# fall back to the generic agy-credentials.tar.gz
+import glob as _agy_glob
+_acct_tars = sorted(_agy_glob.glob(os.path.join(_agy_cache_dir, "agy-credentials-*.tar.gz")))
+if _acct_tars:
+    _agy_creds_tar = _acct_tars[-1]  # most recently saved
+    _p(f"  📎 Account-bound agy backup: {os.path.basename(_agy_creds_tar)}")
+else:
+    _agy_creds_tar = os.path.join(_agy_cache_dir, "agy-credentials.tar.gz")
 if os.path.isfile(_agy_creds_tar):
     try:
         import tarfile as _agy_tf

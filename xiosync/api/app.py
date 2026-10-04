@@ -230,6 +230,13 @@ def create_app(
         dependencies=[require_capability("workflow.manage")],
     )
 
+    # --- XIOFLOW: worker-internal endpoints (no JWT/RBAC — X-XIOSYNC-Internal auth)
+    from xiosync.subsystems.xioflow.api.events import internal_router as xioflow_internal_router
+    application.include_router(
+        xioflow_internal_router, prefix="/api/v1",
+        # No dependencies — internal_router validates X-XIOSYNC-Internal header itself
+    )
+
     # --- XIOFLOW: memory node recording + graph (teacher extension + operators)
     from xiosync.subsystems.xioflow.api.memory import router as xioflow_memory_router
     application.include_router(

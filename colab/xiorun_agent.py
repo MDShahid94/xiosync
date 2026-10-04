@@ -518,6 +518,10 @@ async def _lifespan(application):
     except Exception as _uce:
         logger.debug(f"lifespan: UC Chrome stealth inject (non-fatal): {_uce}")
 
+    # ── XIOFlow DAG polling loop ─────────────────────────────────────────────
+    asyncio.create_task(_dag_poll_loop())
+    logger.info("lifespan: DAG polling loop started")
+
     yield
 
     # ── Shutdown: quit UC drivers + kill SSH tunnel ───────────────────────────
@@ -526,6 +530,263 @@ async def _lifespan(application):
         except Exception: pass
     if _ssh_tunnel_proc and _ssh_tunnel_proc.poll() is None:
         _ssh_tunnel_proc.terminate()
+
+# ── XIOFlow DAG Polling Loop ──────────────────────────────────────────────────
+# Background task that polls XIOSYNC every 5s for pending DAG runs, claims
+# them, executes locally with Patchright, and reports results back.
+# Auth: X-XIOSYNC-Internal header (XIOSYNC_INTERNAL_SECRET / XIORUN_INTERNAL_SECRET).
+
+async def _execute_dag_run(
+    run_id: str,
+    task_id: str | None,
+    dag_domain: str,
+    dag_root_intent: str,
+    context: dict,
+) -> None:
+    """Execute a DAG run claimed from XIOSYNC using local Patchright."""
+    _XIOSYNC = os.environ.get("XIORUN_XIOSYNC_BASE", os.environ.get("XIOSYNC_BASE", ""))
+    _SECRET  = os.environ.get("XIORUN_INTERNAL_SECRET", os.environ.get(
+                               "XIOSYNC_INTERNAL_SECRET", ""))
+    _HDRS    = {"X-XIOSYNC-Internal": _SECRET, "Content-Type": "application/json"}
+    _trace   = context.get("trace_mode", False)
+    _vars    = context.get("workflow_vars", {})
+    _proxy   = _SSH_PROXY_URL   # socks5://127.0.0.1:19055 (or 19056)
+
+    logger.info(f"dag_run.start: run={run_id} domain={dag_domain} intent={dag_root_intent} trace={_trace}")
+
+    try:
+        import httpx as _hx
+        from patchright.async_api import async_playwright as _pw
+
+        # 1. Fetch DAG graph from XIOSYNC
+        async with _hx.AsyncClient(timeout=30) as _cl:
+            _gr = await _cl.get(
+                f"{_XIOSYNC}/api/v1/xioflow/events/memory-graph-internal",
+                params={"domain": dag_domain, "intent": dag_root_intent},
+                headers=_HDRS,
+            )
+            if _gr.status_code != 200:
+                raise RuntimeError(f"graph fetch {_gr.status_code}: {_gr.text[:200]}")
+            _graph = _gr.json()
+
+        nodes  = _graph.get("nodes", [])
+        logger.info(f"dag_run.graph: {len(nodes)} nodes for {dag_domain}/{dag_root_intent}")
+
+        # 2. Launch Patchright browser
+        _launch_args = [
+            "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage",
+            "--window-size=1920,1080",
+            "--disable-blink-features=AutomationControlled",
+            "--lang=en-US",
+        ]
+        if _proxy:
+            _launch_args.append(f"--proxy-server={_proxy}")
+
+        _TIER_FN = {
+            1: lambda pv: f'[data-testid="{pv["test_id"]}"]' if pv.get("test_id") else None,
+            2: lambda pv: f'[aria-label="{pv["aria_label"]}"]' if pv.get("aria_label") else None,
+            3: lambda pv: pv.get("axes_xpath"),
+            4: lambda pv: f'text="{pv["inner_text"]}"' if pv.get("inner_text") else None,
+            5: lambda pv: f"xpath={pv['xpath']}" if pv.get("xpath") else None,
+            6: lambda pv: pv.get("css"),
+        }
+
+        results  = []
+        all_ok   = True
+
+        async with _pw() as pw:
+            _brow = await pw.chromium.launch(headless=False, args=_launch_args)
+            _bctx = await _brow.new_context(
+                viewport={"width": 1920, "height": 1080},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/131.0.0.0 Safari/537.36"
+                ),
+                locale="en-US",
+            )
+            _page = await _bctx.new_page()
+
+            # Optional: wrap with PageProxy for auto-trace
+            if _trace:
+                try:
+                    from xiosync.subsystems.xioflow.ingestion.trace_collector import TraceCollector
+                    from xiosync.subsystems.xioflow.ingestion.page_proxy import PageProxy
+                    _tc = TraceCollector(org_id="internal", domain=dag_domain, run_id=run_id)
+                    _page = PageProxy(_page, _tc)
+                    logger.info("dag_run.trace: PageProxy active")
+                except Exception as _te:
+                    logger.warning(f"dag_run.trace: PageProxy unavailable ({_te}), tracing disabled")
+                    _trace = False
+                    _tc = None
+            else:
+                _tc = None
+
+            for _node in nodes:
+                _intent  = _node.get("intent", "?")
+                _action  = _node.get("action_type", "")
+                _params  = _node.get("action_params", {})
+                _pv      = _node.get("place_value") or {}
+                _prio    = _node.get("locator_priority") or [6, 1, 2, 3, 4, 5, 7]
+                _step_ok = False
+
+                try:
+                    if _action == "navigate":
+                        _url = _params.get("url", "")
+                        for _k, _v in _vars.items():
+                            _url = _url.replace(f"{{{_k}}}", str(_v))
+                        await _page.goto(_url, wait_until="domcontentloaded", timeout=30000)
+                        await _page.wait_for_timeout(2000)
+                        _step_ok = True
+                        logger.info(f"dag_run.step: {_intent} navigate → {_url[:60]}")
+
+                    elif _action in ("fill", "type"):
+                        _text = _params.get("text", "")
+                        for _k, _v in _vars.items():
+                            _text = _text.replace(f"{{{_k}}}", str(_v))
+                        for _t in _prio:
+                            _fn = _TIER_FN.get(_t)
+                            if not _fn: continue
+                            _ls = _fn(_pv)
+                            if not _ls: continue
+                            try:
+                                _loc = _page.locator(_ls)
+                                if await _loc.count() == 0: continue
+                                await _loc.first.fill(_text, timeout=8000)
+                                _step_ok = True
+                                logger.info(f"dag_run.step: {_intent} fill T{_t} {_ls!r}")
+                                break
+                            except Exception: continue
+
+                    elif _action == "click":
+                        for _t in _prio:
+                            _fn = _TIER_FN.get(_t)
+                            if not _fn: continue
+                            _ls = _fn(_pv)
+                            if not _ls: continue
+                            try:
+                                _loc = _page.locator(_ls)
+                                if await _loc.count() == 0: continue
+                                await _loc.first.click(timeout=8000)
+                                _step_ok = True
+                                logger.info(f"dag_run.step: {_intent} click T{_t} {_ls!r}")
+                                break
+                            except Exception: continue
+
+                    elif _action == "wait":
+                        await _page.wait_for_timeout(_params.get("ms", 2000))
+                        _step_ok = True
+
+                    else:
+                        logger.warning(f"dag_run.step: unknown action {_action!r} for {_intent!r} — skipping")
+                        _step_ok = True
+
+                except Exception as _se:
+                    logger.error(f"dag_run.step_error: {_intent} [{_action}] {_se}")
+                    _step_ok = False
+
+                results.append({"intent": _intent, "action": _action, "ok": _step_ok})
+                if not _step_ok and _action != "wait":
+                    all_ok = False
+                    logger.warning(f"dag_run: step {_intent!r} failed — stopping DAG")
+                    break
+
+                await _page.wait_for_timeout(1500)
+
+            # Auto-trace: save recorded actions as memory nodes
+            if _trace and _tc and all_ok:
+                try:
+                    from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+                    from xiosync.subsystems.xioflow.ingestion.dag_deployer import DAGDeployer
+                    from sqlalchemy import create_engine as _ce
+                    from sqlalchemy.orm import Session as _TS
+                    import uuid as _uuid
+                    _db_url = os.environ.get("DATABASE_URL", "")
+                    if _db_url:
+                        _eng = _ce(_db_url)
+                        with _TS(_eng) as _sess:
+                            _dag_nodes = DAGGraphBuilder().build(_tc, context={})
+                            DAGDeployer(_sess).deploy(_dag_nodes, org_id=None)
+                            _sess.commit()
+                        logger.info(f"dag_run.trace: deployed {len(_dag_nodes)} memory nodes from trace")
+                except Exception as _tre:
+                    logger.warning(f"dag_run.trace: deploy failed ({_tre})")
+
+            await _brow.close()
+
+        # 3. Report results back to XIOSYNC
+        async with _hx.AsyncClient(timeout=30) as _cl:
+            await _cl.post(
+                f"{_XIOSYNC}/api/v1/xioflow/events/runs-internal/{run_id}/complete",
+                headers=_HDRS,
+                json={"success": all_ok, "task_id": task_id,
+                      "result": {"steps": results}},
+            )
+        logger.info(f"dag_run.done: run={run_id} ok={all_ok} steps={len(results)}")
+
+    except Exception as _ex:
+        logger.error(f"dag_run.fatal: run={run_id} {_ex}")
+        try:
+            import httpx as _hx2
+            async with _hx2.AsyncClient(timeout=10) as _cl:
+                await _cl.post(
+                    f"{_XIOSYNC}/api/v1/xioflow/events/runs-internal/{run_id}/complete",
+                    headers=_HDRS,
+                    json={"success": False, "task_id": task_id, "error": str(_ex)},
+                )
+        except Exception:
+            pass
+
+
+async def _dag_poll_loop() -> None:
+    """Background task — poll XIOSYNC for pending DAG runs every 5s."""
+    import httpx as _hx
+
+    _XIOSYNC = os.environ.get("XIORUN_XIOSYNC_BASE", os.environ.get("XIOSYNC_BASE", ""))
+    _SECRET  = os.environ.get("XIORUN_INTERNAL_SECRET", os.environ.get(
+                               "XIOSYNC_INTERNAL_SECRET", ""))
+
+    if not _XIOSYNC or not _SECRET:
+        logger.warning("dag_poll: XIORUN_XIOSYNC_BASE or XIORUN_INTERNAL_SECRET not set — disabled")
+        return
+
+    _HDRS     = {"X-XIOSYNC-Internal": _SECRET}
+    _active: set[str] = set()
+    logger.info(f"dag_poll: polling {_XIOSYNC}/api/v1/xioflow/events/runs/pending-dag-internal every 5s")
+
+    while True:
+        await asyncio.sleep(5)
+        try:
+            async with _hx.AsyncClient(timeout=10) as _cl:
+                _resp = await _cl.get(
+                    f"{_XIOSYNC}/api/v1/xioflow/events/runs/pending-dag-internal",
+                    headers=_HDRS,
+                )
+            if _resp.status_code == 204:
+                continue  # nothing pending
+            if _resp.status_code != 200:
+                logger.debug(f"dag_poll: status {_resp.status_code}")
+                continue
+            _run = _resp.json()
+            _rid = _run.get("run_id")
+            if not _rid or _rid in _active:
+                continue
+            _active.add(_rid)
+            logger.info(f"dag_poll: claimed run_id={_rid} domain={_run.get('dag_domain')} intent={_run.get('dag_root_intent')}")
+            asyncio.create_task(
+                _execute_dag_run(
+                    run_id=_rid,
+                    task_id=_run.get("task_id"),
+                    dag_domain=_run.get("dag_domain", ""),
+                    dag_root_intent=_run.get("dag_root_intent", ""),
+                    context=_run.get("context", {}),
+                )
+            ).add_done_callback(lambda _t: _active.discard(_rid))
+        except asyncio.CancelledError:
+            break
+        except Exception as _pe:
+            logger.debug(f"dag_poll: error {_pe}")
+
 
 app = FastAPI(title="XIORUN Agent", version="1.0.0", lifespan=_lifespan)
 
@@ -6247,6 +6508,26 @@ async def ai_install_agy() -> dict:
             _sh.move(_agy_creds_dst + ".tmp", _agy_creds_dst)
             result["creds_persisted"] = True
             logger.info(f"ai_install_agy: credentials persisted to Drive {_agy_creds_dst}")
+            # Also save account-bound copy: agy-credentials-{email_slug}.tar.gz
+            try:
+                import base64 as _b64cred, json as _jcred
+                _tok_fp = os.path.expanduser("~/.gemini/antigravity-cli/antigravity-oauth-token")
+                if os.path.isfile(_tok_fp):
+                    _tok_d = _jcred.loads(open(_tok_fp).read())
+                    _id_tok = _tok_d.get("id_token", "")
+                    _parts  = _id_tok.split(".")
+                    if len(_parts) >= 2:
+                        _payload = _jcred.loads(_b64cred.b64decode(_parts[1] + "===").decode())
+                        _email   = _payload.get("email", "")
+                        if _email:
+                            _slug     = _email.replace("@", "_at_").replace(".", "_")
+                            _acct_dst = os.path.join(DRIVE_ROOT, f"cache/agy-credentials-{_slug}.tar.gz")
+                            import shutil as _shcred
+                            _shcred.copy2(_agy_creds_dst, _acct_dst)
+                            result["creds_account_key"] = _slug
+                            logger.info(f"ai_install_agy: account-bound backup saved → agy-credentials-{_slug}.tar.gz")
+            except Exception as _acct_err:
+                logger.warning(f"ai_install_agy: account-bound copy failed: {_acct_err}")
         except Exception as cp_err:
             logger.warning(f"ai_install_agy: creds persist failed: {cp_err}")
 
