@@ -6046,9 +6046,10 @@ async def session_cascade_check(req: CascadeCheckRequest):
                 await page.goto("https://myaccount.google.com/", wait_until="domcontentloaded", timeout=20000)
                 await asyncio.sleep(1.5)
 
-                prefix = req.email.split("@")[0].lower()
-                body_text = await page.evaluate("document.body.innerText.toLowerCase()")
-                is_valid = prefix in body_text and "sign in" not in (await page.title()).lower()
+                _title = (await page.title()).lower()
+                _url = page.url
+                is_valid = "myaccount.google.com" in _url and "sign in" not in _title
+                logger.info(f"cascade-check: L2 url={_url} title={_title!r} valid={is_valid}")
 
                 await context.close()
 
