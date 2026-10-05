@@ -4298,25 +4298,43 @@ def _run_uc_login_sync(
                     if _already_done:
                         logger.info("uc-login: ✅ already authenticated post-reCAPTCHA — skipping password/TOTP")
                     elif "challenge/pwd" in curr2 or "signin/v2/challenge/pwd" in curr2:
-                        # Password page appeared after reCAPTCHA cleared
+                        # Password page appeared after reCAPTCHA cleared.
+                        # Use Selenium send_keys (not raw CDP) — fires proper keyboard
+                        # events that React controlled inputs recognise, and is frame-safe.
                         logger.info("uc-login: password page post-reCAPTCHA — auto-entering password")
                         try:
-                            _pw_sels = [
-                                'input[type="password"]', 'input[name="Passwd"]',
-                                'input[name="password"]', 'input[autocomplete="current-password"]',
-                            ]
-                            cdp_click_element(_pw_sels, 12)
+                            from selenium.webdriver.support.ui import WebDriverWait as _WDW
+                            from selenium.webdriver.support import expected_conditions as _EC
+                            from selenium.webdriver.common.by import By as _By
+                            from selenium.webdriver.common.keys import Keys as _Keys
+                            _pw_sels_css = (
+                                'input[type="password"], input[name="Passwd"], '
+                                'input[name="password"], input[autocomplete="current-password"]'
+                            )
+                            _pw_el = _WDW(driver, 12).until(
+                                _EC.element_to_be_clickable((_By.CSS_SELECTOR, _pw_sels_css))
+                            )
+                            _pw_el.click()
+                            uc_sleep(0.2, 0.4)
+                            _pw_el.clear()
+                            _pw_el.send_keys(password)
                             uc_sleep(0.3, 0.5)
-                            cdp_type_text(password)
-                            uc_sleep(0.4, 0.6)
-                            cdp_click_element(
-                                ['#passwordNext', 'button[jsname="LgbsSe"]',
-                                 'button[type="submit"]', 'div[id="passwordNext"]'], 5)
+                            # Click Next via Selenium
+                            try:
+                                _next_el = driver.find_element(
+                                    _By.CSS_SELECTOR,
+                                    '#passwordNext, button[jsname="LgbsSe"], '
+                                    'button[type="submit"], div[id="passwordNext"]'
+                                )
+                                _next_el.click()
+                            except Exception:
+                                _pw_el.send_keys(_Keys.RETURN)
                             uc_sleep(4.0, 6.0)
                             curr2 = driver.current_url
                             logger.info(f"uc-login: pwd post-reCAPTCHA submitted → {curr2[:80]}")
                         except Exception as _pwd_post_rc:
                             logger.warning(f"uc-login: post-reCAPTCHA pwd failed: {_pwd_post_rc}")
+
                     elif "challenge/recaptcha" in curr2 or "challenge/az" in curr2:
                         logger.warning(f"uc-login: still on challenge after HITL: {curr2[:80]}")
                     # else: totp / selection / other challenge — handled below
