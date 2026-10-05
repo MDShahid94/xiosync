@@ -6110,8 +6110,25 @@ async def session_cascade_check(req: CascadeCheckRequest):
         if _found_tar:
             logger.info(f"cascade-check: L3 Drive profile found: {_found_tar}")
             try:
+                import uuid as _uuid_cc, shutil as _shutil_cc
+                _stage_id = _uuid_cc.uuid4().hex[:8]
+                _stage_dir = f"/tmp/xiorun_profiles/_stage_{_stage_id}"
+                os.makedirs(_stage_dir, exist_ok=True)
+                
                 with _tf_cc.open(_found_tar, "r:gz") as tf:
-                    tf.extractall(path="/tmp/xiorun_profiles")
+                    tf.extractall(path=_stage_dir)
+                
+                _extracted_items = [os.path.join(_stage_dir, p) for p in os.listdir(_stage_dir)]
+                _extracted_root = _extracted_items[0] if _extracted_items else None
+                
+                if _extracted_root and os.path.isdir(_extracted_root):
+                    if os.path.exists(_profile_dir):
+                        _shutil_cc.rmtree(_profile_dir, ignore_errors=True)
+                    _shutil_cc.move(_extracted_root, _profile_dir)
+                    _shutil_cc.rmtree(_stage_dir, ignore_errors=True)
+                else:
+                    logger.warning(f"cascade-check: L3 extract produced no root dir in {_stage_dir}")
+                    
                 logger.info(f"cascade-check: L3 profile extracted to {_profile_dir}")
                 return {"valid": False, "profile_dir": _profile_dir, "level": "DRIVE_PULL",
                         "needs_verify": True, "source_tar": _found_tar}
