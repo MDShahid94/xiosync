@@ -4157,37 +4157,44 @@ def _run_uc_login_sync(
 
         # ── Password — CDP Input (isTrusted=true, native interaction) ────────
         curr_pw = driver.current_url
-        logger.info(f"uc-login: filling password on {curr_pw[:80]}")
-        
-        try:
-            cdp_click_element(['input[type="password"]', 'input[name="Passwd"]', 'input[name="password"]'], 15)
-            uc_sleep(0.4, 0.8)
-            cdp_type_text(password)
-            logger.info("uc-login: password typed via cdp_type_text (isTrusted)")
-        except Exception as pw_err:
-            logger.warning(f"uc-login: password CDP failed ({pw_err}) — fallback to cdp_type_text")
+        # Skip password fill when reCAPTCHA is already blocking the page — the
+        # HITL block below will handle password entry after the challenge clears.
+        _skip_pw_fill = any(k in curr_pw for k in ("challenge/recaptcha", "challenge/az"))
+        if _skip_pw_fill:
+            logger.info(f"uc-login: skipping password fill — reCAPTCHA/AZ challenge active ({curr_pw[:60]})")
+        else:
+            logger.info(f"uc-login: filling password on {curr_pw[:80]}")
             try:
-                cdp_click_element(['input[type="password"]', 'input[name="Passwd"]', 'input[name="password"]'], 8)
-                uc_sleep(0.2, 0.4)
+                cdp_click_element(['input[type="password"]', 'input[name="Passwd"]', 'input[name="password"]'], 15)
+                uc_sleep(0.4, 0.8)
                 cdp_type_text(password)
-            except Exception as pw2:
-                logger.warning(f"uc-login: cdp_type_text also failed: {pw2}")
+                logger.info("uc-login: password typed via cdp_type_text (isTrusted)")
+            except Exception as pw_err:
+                logger.warning(f"uc-login: password CDP failed ({pw_err}) — fallback to cdp_type_text")
+                try:
+                    cdp_click_element(['input[type="password"]', 'input[name="Passwd"]', 'input[name="password"]'], 8)
+                    uc_sleep(0.2, 0.4)
+                    cdp_type_text(password)
+                except Exception as pw2:
+                    logger.warning(f"uc-login: cdp_type_text also failed: {pw2}")
 
-        uc_sleep(0.5, 1.0)
-        try:
-            cdp_click_element(['#passwordNext', 'button[jsname="LgbsSe"]', 'div[id="passwordNext"]', 'button[type="submit"]'], 5)
-        except Exception as _btn_err:
-            logger.warning(f"uc-login: password next button fallback ({_btn_err})")
-        logger.info("uc-login: password submitted")
+            uc_sleep(0.5, 1.0)
+            try:
+                cdp_click_element(['#passwordNext', 'button[jsname="LgbsSe"]', 'div[id="passwordNext"]', 'button[type="submit"]'], 5)
+            except Exception as _btn_err:
+                logger.warning(f"uc-login: password next button fallback ({_btn_err})")
+            logger.info("uc-login: password submitted")
         
         # Poll for URL transition away from password page (up to 15s)
-        for _wait_i in range(30):
-            curr2 = driver.current_url
-            if "challenge/pwd" not in curr2 and "signin/identifier" not in curr2:
-                break
-            time.sleep(0.5)
-            
-        uc_sleep(1.0, 2.0) # Additional buffer for React render on new page
+        # Skip this poll when password fill was skipped (reCAPTCHA was active) —
+        # the HITL handler below takes over in that case.
+        if not _skip_pw_fill:
+            for _wait_i in range(30):
+                curr2 = driver.current_url
+                if "challenge/pwd" not in curr2 and "signin/identifier" not in curr2:
+                    break
+                time.sleep(0.5)
+            uc_sleep(1.0, 2.0)  # Additional buffer for React render on new page
         curr2 = driver.current_url
 
         # ── 2FA / Challenge handling (XIOBR full port) ──────────────────────────
@@ -4249,37 +4256,77 @@ def _run_uc_login_sync(
                         f"uc-login: ✅ reCAPTCHA HITL id={_rc_notice_id} — "
                         f"noVNC={_NOVNC_URL or 'N/A'} — waiting up to 600s"
                     )
-                    # Poll for resume (threading-safe — asyncio.Event can't be awaited from thread)
+                    # Poll for resume — check both manual HITL signal AND Chrome URL change.
+                    # Auto-resume fires when the user solves reCAPTCHA and Chrome navigates
+                    # away — no manual POST to /hitl/resume needed.
                     _rc_deadline = _rc_time.time() + 600
                     while _rc_time.time() < _rc_deadline:
-                        _rc_time.sleep(3.0)
+                        _rc_time.sleep(2.0)
+                        # 1. Check manual HITL resume signal
                         _rc_notice_state = _hitl_store._notices.get(_rc_notice.id)
                         if _rc_notice_state and _rc_notice_state.state == HITLState.RESUMED:
-                            logger.info("uc-login: reCAPTCHA HITL resumed ✅ — re-evaluating")
+                            logger.info("uc-login: reCAPTCHA HITL resumed via manual signal ✅")
                             break
-                    else:
-                        logger.warning("uc-login: reCAPTCHA HITL timed out (600s) — proceeding")
-                    curr2 = driver.current_url
-                    # Auto-enter password if reCAPTCHA cleared to /challenge/pwd
-                    if "challenge/pwd" in curr2:
-                        logger.info("uc-login: password page post-reCAPTCHA — auto-entering")
+                        # 2. Auto-detect: Chrome navigated away from reCAPTCHA
                         try:
-                            cdp_click_element("input[type='password']")
+                            _rc_curr = driver.current_url
+                            _still_recaptcha = any(k in _rc_curr for k in ("challenge/recaptcha", "challenge/az"))
+                            if not _still_recaptcha:
+                                logger.info(
+                                    f"uc-login: reCAPTCHA cleared (auto-detect) → {_rc_curr[:70]} — "
+                                    "auto-resuming HITL"
+                                )
+                                # Mark HITL as resumed so external callers see it too
+                                try:
+                                    _hitl_store._notices[_rc_notice.id].state = HITLState.RESUMED
+                                except Exception:
+                                    pass
+                                break
+                        except Exception:
+                            pass
+                    else:
+                        logger.warning("uc-login: reCAPTCHA HITL timed out (600s) — proceeding anyway")
+
+                    curr2 = driver.current_url
+                    logger.info(f"uc-login: post-reCAPTCHA URL: {curr2[:80]}")
+
+                    # ── Post-reCAPTCHA branch: handle wherever Chrome landed ──────────────
+                    _already_done = any(k in curr2 for k in (
+                        "mail.google.com", "myaccount.google.com", "accounts.google.com/b/",
+                        "google.com/account", "accounts.google.com/SignOutOptions",
+                    ))
+                    if _already_done:
+                        logger.info("uc-login: ✅ already authenticated post-reCAPTCHA — skipping password/TOTP")
+                    elif "challenge/pwd" in curr2 or "signin/v2/challenge/pwd" in curr2:
+                        # Password page appeared after reCAPTCHA cleared
+                        logger.info("uc-login: password page post-reCAPTCHA — auto-entering password")
+                        try:
+                            _pw_sels = [
+                                'input[type="password"]', 'input[name="Passwd"]',
+                                'input[name="password"]', 'input[autocomplete="current-password"]',
+                            ]
+                            cdp_click_element(_pw_sels, 12)
                             uc_sleep(0.3, 0.5)
                             cdp_type_text(password)
-                            uc_sleep(0.4, 0.7)
+                            uc_sleep(0.4, 0.6)
                             cdp_click_element(
-                                "#passwordNext, button[jsname='LgbsSe'], button[type='submit']")
+                                ['#passwordNext', 'button[jsname="LgbsSe"]',
+                                 'button[type="submit"]', 'div[id="passwordNext"]'], 5)
                             uc_sleep(4.0, 6.0)
                             curr2 = driver.current_url
                             logger.info(f"uc-login: pwd post-reCAPTCHA submitted → {curr2[:80]}")
                         except Exception as _pwd_post_rc:
                             logger.warning(f"uc-login: post-reCAPTCHA pwd failed: {_pwd_post_rc}")
+                    elif "challenge/recaptcha" in curr2 or "challenge/az" in curr2:
+                        logger.warning(f"uc-login: still on challenge after HITL: {curr2[:80]}")
+                    # else: totp / selection / other challenge — handled below
+
                     _is_challenge = "challenge/" in curr2 and "challenge/pwd" not in curr2
                     if not _is_challenge:
-                        logger.info("uc-login: ✅ reCAPTCHA cleared — continuing login")
+                        logger.info("uc-login: ✅ reCAPTCHA resolved — continuing login flow")
                     else:
-                        logger.warning(f"uc-login: still on challenge after HITL: {curr2[:80]}")
+                        logger.info(f"uc-login: challenge remaining: {curr2[:80]}")
+
                 except Exception as _rc_hitl_e:
                     logger.warning(f"uc-login: reCAPTCHA HITL error: {_rc_hitl_e}")
 
