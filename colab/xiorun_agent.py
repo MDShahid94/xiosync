@@ -1186,15 +1186,19 @@ async def _execute_dag_run(
                                 _ct = _sr.headers.get("content-type", "")
                                 _sd = _sr.json() if "application/json" in _ct else {}
                                 if _sr.status_code in (200, 201):
-                                    _step_ok = True
-                                    # Inject response fields into _vars for downstream nodes
-                                    if isinstance(_sd, dict):
-                                        for _rk, _rv in _sd.items():
-                                            _vars[_rk] = _rv
-                                    logger.info(
-                                        f"dag_run.step: {_intent} [script] {_s_endpoint} "
-                                        f"→ HTTP {_sr.status_code} ok  keys={list(_sd.keys() if isinstance(_sd,dict) else [])}"
-                                    )
+                                    if isinstance(_sd, dict) and _sd.get("ok") is False:
+                                        _step_ok = False
+                                        logger.warning(f"dag_run.script: {_intent} returned ok=False — {_sd.get('error', 'unknown error')}")
+                                    else:
+                                        _step_ok = True
+                                        # Inject response fields into _vars for downstream nodes
+                                        if isinstance(_sd, dict):
+                                            for _rk, _rv in _sd.items():
+                                                _vars[_rk] = _rv
+                                        logger.info(
+                                            f"dag_run.step: {_intent} [script] {_s_endpoint} "
+                                            f"→ HTTP {_sr.status_code} ok  keys={list(_sd.keys() if isinstance(_sd,dict) else [])}"
+                                        )
                                 else:
                                     logger.warning(
                                         f"dag_run.step: {_intent} [script] {_s_endpoint} "
@@ -1272,23 +1276,24 @@ async def _execute_dag_run(
                         "action_params": _params or {},
                         "previous_intent": results[-2]["intent"] if len(results) >= 2 else None,
                     })
+                # Special case: Phase 0 short-circuit.
+                # If UC login returned final_url pointing to myaccount (Phase 0 shortcut),
+                # the user is authenticated. Skip all native nodes (navigate_to_signin, type_email etc).
+                if _intent == "navigate_to_signin":
+                    _uc_final = _vars.get("final_url", "")
+                    if _uc_final and "accounts.google.com" not in _uc_final and "signin" not in _uc_final:
+                        logger.info(
+                            f"dag_run.preflight: phase0 auth confirmed → {_uc_final[:60]} "
+                            f"— shortcircuiting DAG"
+                        )
+                        all_ok = True
+                        break  # skip type_email, type_password, etc.
+
                 if not _step_ok and _action != "wait":
                     # Check if this step is marked fail_ok (non-fatal) in action_params
                     _fail_ok = bool((_params or {}).get("fail_ok", False))
                     if _fail_ok:
                         logger.warning(f"dag_run: step {_intent!r} failed (fail_ok=True) — continuing DAG")
-                        # Special case: navigate_to_signin fail_ok + Phase 0 already confirmed auth.
-                        # If UC login returned final_url pointing to myaccount (Phase 0 shortcut),
-                        # the user is authenticated — short-circuit exactly like the preflight redirect does.
-                        if _intent == "navigate_to_signin":
-                            _uc_final = _vars.get("final_url", "")
-                            if _uc_final and "accounts.google.com" not in _uc_final and "signin" not in _uc_final:
-                                logger.info(
-                                    f"dag_run.preflight: phase0 auth confirmed → {_uc_final[:60]} "
-                                    f"— shortcircuiting DAG (SOCKS drop on navigate_to_signin)"
-                                )
-                                all_ok = True
-                                break  # skip type_email, type_password, etc.
                     else:
                         all_ok = False
                         logger.warning(f"dag_run: step {_intent!r} failed — stopping DAG")
