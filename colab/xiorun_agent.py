@@ -5198,13 +5198,21 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
             # ── Auto-expose: make Chrome CDP accessible on Tailscale via TCP forwarder ──
             # UC Chrome binds remote-debugging to 127.0.0.1 only (chromedriver security
             # default). Use our asyncio TCP forwarder to punch it through to Tailscale.
+            # Ensure session_id is always a string (CDPExposeRequest.session_id: str)
+            _uc_session_id = req.session_id or str(uuid.uuid4())
+            # Register session with auto-generated id before expose
+            if _uc_session_id not in _sessions:
+                _sessions[_uc_session_id] = {
+                    "context": None, "proxy_url": _proxy_url,
+                    "cdp_ws_url": f"ws://{_tailscale_ip}:{_uc_port}",
+                }
             try:
-                _expose_req = CDPExposeRequest(session_id=req.session_id, local_port=_uc_port)
+                _expose_req = CDPExposeRequest(session_id=_uc_session_id, local_port=_uc_port)
                 _expose_result = await cdp_expose(_expose_req)
                 _cdp_ws = _expose_result["cdp_ws_url"]
-                _sessions[req.session_id]["cdp_ws_url"] = _cdp_ws
+                _sessions[_uc_session_id]["cdp_ws_url"] = _cdp_ws
                 logger.info(
-                    f"run-uc-login: CDP exposed session={req.session_id} "
+                    f"run-uc-login: CDP exposed session={_uc_session_id} "
                     f"tailscale={_expose_result['cdp_http_url']}"
                 )
             except Exception as _expose_exc:
@@ -5213,7 +5221,7 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
 
             result["cdp_ws_url"] = _cdp_ws
             result["cdp_http_url"] = _cdp_ws.replace("ws://", "http://")
-            result["session_id"] = req.session_id          # fix: mjs reads ucResult.session_id
+            result["session_id"] = _uc_session_id          # fix: mjs reads ucResult.session_id
             result["profile_dir"] = _login_profile_dir     # fix: mjs reads ucResult.profile_dir
             logger.info(
                 f"run-uc-login: session registered session={req.session_id} port={_uc_port} "
@@ -5233,7 +5241,7 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
                     "ua": result.get("ua_string", ""),
                     "timezone": result.get("timezone", "UTC"),
                     "locale": result.get("locale", "en-US"),
-                    "created_at": _dt.datetime.now(datetime.UTC).isoformat(),
+                    "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
                 }
                 _fp_path = f"/content/drive/MyDrive/XIOSYNC-Shared/profiles/PRFL_{_prfl_id}.fingerprint.json"
                 os.makedirs(os.path.dirname(_fp_path), exist_ok=True)
@@ -6121,14 +6129,15 @@ async def persist_session(req: PersistSessionRequest):
             _profiles_dir_ps = os.path.join(DRIVE_ROOT, "profiles")
             os.makedirs(_profiles_dir_ps, exist_ok=True)
             _resolved_serial = None
-            if XIOSYNC_BASE and req.identity_id:
+            # Resolve serial via API (requires email+platform, NOT identity_id)
+            if XIOSYNC_BASE and req.email:
                 # Try API with 2 retries (SSL EOF is transient on Tailscale)
                 for _retry_ps in range(2):
                     try:
                         import httpx as _hx_ps
                         _idr = _hx_ps.get(
                             f"{XIOSYNC_BASE}/api/v1/xioflow/events/identity-internal",
-                            params={"identity_id": req.identity_id},
+                            params={"email": req.email, "platform": "google"},
                             headers={"X-XIOSYNC-Internal": os.environ.get("XIORUN_INTERNAL_SECRET", os.environ.get("XIOSYNC_INTERNAL_SECRET", ""))},
                             timeout=10,
                         )
@@ -6218,7 +6227,7 @@ async def persist_session(req: PersistSessionRequest):
                         "email": getattr(req, "email", "") or "",
                         "platform": "google",
                         "profile_dir": req.profile_dir or "",
-                        "created_at": _fp_dt.datetime.utcnow().isoformat() + "Z",
+                        "created_at": _fp_dt.datetime.now(_fp_dt.timezone.utc).isoformat(),
                         "cookie_count": results.get("cookie_count", 0),
                         "node": NODE_NAME,
                     }
