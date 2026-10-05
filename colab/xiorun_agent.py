@@ -4291,10 +4291,14 @@ def _run_uc_login_sync(
                     logger.info(f"uc-login: post-reCAPTCHA URL: {curr2[:80]}")
 
                     # ── Post-reCAPTCHA branch: handle wherever Chrome landed ──────────────
-                    _already_done = any(k in curr2 for k in (
-                        "mail.google.com", "myaccount.google.com", "accounts.google.com/b/",
-                        "google.com/account", "accounts.google.com/SignOutOptions",
-                    ))
+                    _already_done = (
+                        "challenge/" not in curr2 and "signin/" not in curr2 and
+                        any(k in curr2 for k in (
+                            "mail.google.com", "myaccount.google.com", "accounts.google.com/b/",
+                            "google.com/account", "accounts.google.com/SignOutOptions",
+                        ))
+                    )
+                    
                     if _already_done:
                         logger.info("uc-login: ✅ already authenticated post-reCAPTCHA — skipping password/TOTP")
                     elif "challenge/pwd" in curr2 or "signin/v2/challenge/pwd" in curr2:
