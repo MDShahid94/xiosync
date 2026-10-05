@@ -6043,7 +6043,7 @@ async def session_cascade_check(req: CascadeCheckRequest):
                     no_viewport=False,
                 )
                 page = context.pages[0] if context.pages else await context.new_page()
-                await page.goto("https://myaccount.google.com/", wait_until="networkidle", timeout=20000)
+                await page.goto("https://myaccount.google.com/", wait_until="domcontentloaded", timeout=20000)
                 await asyncio.sleep(1.5)
 
                 prefix = req.email.split("@")[0].lower()
