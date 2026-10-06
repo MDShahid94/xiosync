@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from xiosync.persistence.models.authorization import Event
 from xiosync.persistence.models.identity import (
     Actor,
-    AuthIdentity,
+    MemberAuth,
     Membership,
     Organization,
 )
@@ -179,8 +179,8 @@ def test_genesis_first_run_creates_all_expected_entities_without_password() -> N
     assert "actor.manage" in cap_group_names
     assert "workflow.manage" in cap_group_names
 
-    # 5. AuthIdentity / Membership should not be created when no password provided
-    auth_identities = [e for e in added_entities if isinstance(e, AuthIdentity)]
+    # 5. MemberAuth / Membership should not be created when no password provided
+    auth_identities = [e for e in added_entities if isinstance(e, MemberAuth)]
     memberships = [e for e in added_entities if isinstance(e, Membership)]
     assert len(auth_identities) == 0
     assert len(memberships) == 0
@@ -222,8 +222,8 @@ def test_genesis_first_run_creates_admin_identity_with_password() -> None:
 
     added_entities = _collect_added_entities(session)
 
-    # Verify AuthIdentity created
-    identities = [e for e in added_entities if isinstance(e, AuthIdentity)]
+    # Verify MemberAuth created
+    identities = [e for e in added_entities if isinstance(e, MemberAuth)]
     assert len(identities) == 1
     identity = identities[0]
     assert identity.id == result.auth_identity_id

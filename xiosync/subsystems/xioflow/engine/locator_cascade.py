@@ -132,7 +132,7 @@ class LocatorCascade:
             if intent and dom_inspector:
                 result = await healer.heal(self.page, intent, dom_inspector)
                 if result:
-                    loc = result.get("locator")
+                    loc = result.get("selector")
                     if loc:
                         await self._perform_action(loc, action, params, timeout)
                         return True, loc

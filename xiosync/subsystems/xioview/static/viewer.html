@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XIOVIEW — {{SESSION_ID}}</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a0f; color: #e0e0e0; font-family: 'SF Mono', 'Fira Code', monospace;
+       display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+#statusbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 12px; background: #111118; border-bottom: 1px solid #222;
+  font-size: 11px; flex-shrink: 0; user-select: none;
+}
+#status-dot { width: 8px; height: 8px; border-radius: 50%; background: #f44; flex-shrink: 0; }
+#status-dot.connected { background: #4f4; }
+#status-dot.reconnecting { background: #fa0; animation: pulse 0.8s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+#status-label { color: #aaa; }
+#session-id { color: #666; font-size: 10px; }
+#profile-badge { font-size: 10px; padding: 1px 7px; border-radius: 3px;
+                 background: #1a1a3a; color: #8af; border: 1px solid #2a2a5a; display: none; }
+#profile-badge.active { display: inline; }
+#url-display { flex: 1; color: #7af; font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#fps-display { color: #8f8; }
+#mode-select { background: #1a1a2a; color: #ccc; border: 1px solid #333; border-radius: 3px;
+               padding: 2px 6px; font-size: 10px; cursor: pointer; }
+#focus-badge { font-size: 10px; padding: 1px 7px; border-radius: 3px;
+               background: #1a3a1a; color: #4f4; border: 1px solid #2a5a2a; display: none; }
+#focus-badge.active { display: inline; }
+#ctrl-hint { color: #555; font-size: 10px; }
+
+/* Canvas area — cursor:none so our SVG overlay cursor shows instead */
+#canvas-wrap { flex: 1; position: relative; display: flex; align-items: center;
+               justify-content: center; overflow: hidden; cursor: none; background: #050508; }
+canvas { max-width: 100%; max-height: 100%; image-rendering: auto; display: block; }
+
+/* ── HITL Banner ─────────────────────────────────────────────────── */
+#hitl-banner {
+  display: none; flex-direction: column; gap: 8px;
+  padding: 10px 16px; background: #1a0f00; border-bottom: 2px solid #f80;
+  font-size: 11px; flex-shrink: 0;
+}
+#hitl-banner.active { display: flex; }
+#hitl-header { display: flex; align-items: center; gap: 10px; }
+#hitl-icon { font-size: 18px; }
+#hitl-type { color: #f80; font-weight: bold; font-size: 12px; text-transform: uppercase; }
+#hitl-id { color: #666; font-size: 10px; font-family: monospace; }
+#hitl-msg { color: #ddb; font-size: 11px; white-space: pre-wrap; max-height: 60px; overflow-y: auto; }
+#hitl-actions { display: flex; gap: 8px; align-items: center; }
+#hitl-resume-btn {
+  padding: 4px 14px; background: #0a5a0a; color: #4f4; border: 1px solid #0f8a0f;
+  border-radius: 4px; cursor: pointer; font-size: 11px; font-family: monospace;
+}
+#hitl-resume-btn:hover { background: #0f7a0f; }
+#hitl-resume-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+#hitl-novnc-btn {
+  padding: 4px 14px; background: #1a2a4a; color: #7af; border: 1px solid #2a4a7a;
+  border-radius: 4px; cursor: pointer; font-size: 11px; font-family: monospace; text-decoration: none;
+}
+#hitl-novnc-btn:hover { background: #2a3a5a; }
+#hitl-status { color: #888; font-size: 10px; }
+
+/* ── noVNC iframe embed ──────────────────────────────────────────── */
+#novnc-wrap {
+  flex: 1; display: none; position: relative; background: #050508;
+}
+#novnc-wrap.active { display: flex; }
+#novnc-frame { width: 100%; height: 100%; border: none; }
+#novnc-label {
+  position: absolute; top: 8px; left: 8px; z-index: 10;
+  padding: 2px 8px; background: rgba(0,0,0,0.7); border-radius: 3px;
+  color: #fa0; font-size: 10px; pointer-events: none;
+}
+
+/* ── Custom cursor overlay ─────────────────────────────────────────── */
+#cursor {
+  position: absolute; pointer-events: none; z-index: 999;
+  transform: translate(-2px, -2px);   /* hot-spot at top-left tip */
+  display: none;
+  will-change: left, top;
+  filter: drop-shadow(0 0 3px rgba(0,0,0,0.9)) drop-shadow(0 0 1px rgba(0,0,0,1));
+}
+#cursor.visible { display: block; }
+
+/* Click ripple */
+#ripple {
+  position: absolute; pointer-events: none; z-index: 998;
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 2px solid rgba(100,180,255,0.8);
+  transform: translate(-50%,-50%) scale(0); opacity: 0;
+}
+#ripple.pop { animation: ripple-anim 0.35s ease-out forwards; }
+@keyframes ripple-anim {
+  0%   { transform: translate(-50%,-50%) scale(0.2); opacity: 0.9; }
+  100% { transform: translate(-50%,-50%) scale(2.2); opacity: 0; }
+}
+
+/* Interaction feedback flash */
+#interaction-flash {
+  position: absolute; inset: 0; pointer-events: none; z-index: 997;
+  background: transparent; transition: background 0.15s;
+}
+#interaction-flash.success { background: rgba(80,255,80,0.06); }
+#interaction-flash.fail    { background: rgba(255,80,80,0.08); }
+
+/* DAG Running badge */
+#dag-badge {
+  position: absolute; top: 8px; right: 8px; z-index: 100;
+  padding: 4px 12px; border-radius: 4px; font-size: 11px;
+  background: rgba(200,100,0,0.85); color: #fff; display: none;
+  animation: pulse 1.2s infinite;
+}
+#dag-badge.visible { display: block; }
+
+/* Latency display */
+#latency-display { color: #aaa; font-size: 10px; }
+
+/* Frame drop indicator */
+#drop-display { color: #f88; font-size: 10px; display: none; }
+#drop-display.active { display: inline; }
+
+/* Connection overlay */
+#overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex;
+           align-items: center; justify-content: center; z-index: 100; }
+#overlay.hidden { display: none; }
+.overlay-box { background: #111; border: 1px solid #333; border-radius: 8px;
+               padding: 32px 40px; text-align: center; }
+.overlay-box h2 { color: #fa0; margin-bottom: 8px; }
+.overlay-box p  { color: #888; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div id="statusbar">
+  <div id="status-dot"></div>
+  <span id="status-label">Connecting...</span>
+  <span id="session-id">{{SESSION_ID}}</span>
+  <span id="profile-badge">{{PROFILE_ID}}</span>
+  <span id="url-display">-</span>
+  <span id="fps-display">- fps</span>
+  <select id="mode-select">
+    <option value="screenshot">Screenshot</option>
+    <option value="cdp_screencast" selected>CDP Screencast</option>
+    <option value="cdp_dom_snapshot">DOM Snapshot</option>
+    <option value="dom_overlay">DOM Overlay</option>
+    <option value="dom_stream">DOM Stream (rrweb)</option>
+  </select>
+  <span id="focus-badge">LIVE CONTROL</span>
+  <span id="latency-display"></span>
+  <span id="drop-display">⚠ drops</span>
+  <span id="ctrl-hint">Click or move mouse into view to control &nbsp;·&nbsp; Esc to release</span>
+</div>
+
+<!-- ── HITL Banner — shown when a HITL notice is pending ────────────── -->
+<div id="hitl-banner">
+  <div id="hitl-header">
+    <span id="hitl-icon">🔒</span>
+    <span id="hitl-type">HITL Challenge</span>
+    <span id="hitl-id"></span>
+  </div>
+  <div id="hitl-msg"></div>
+  <div id="hitl-actions">
+    <button id="hitl-resume-btn" onclick="resumeHITL()">✅ Mark Resolved</button>
+    <a id="hitl-novnc-btn" target="_blank">🖥 Open noVNC (direct)</a>
+    <span id="hitl-status"></span>
+  </div>
+</div>
+
+<!-- ── noVNC iframe embed — auto-shown during HITL ──────────────────── -->
+<div id="novnc-wrap">
+  <div id="novnc-label">⚡ Direct X11 — low latency HITL control</div>
+  <iframe id="novnc-frame" allow="fullscreen" sandbox="allow-same-origin allow-scripts allow-forms allow-popups"></iframe>
+</div>
+
+<div id="canvas-wrap">
+  <canvas id="screen"></canvas>
+
+  <!-- Custom SVG pointer cursor — larger + dual stroke for visibility on any background -->
+  <svg id="cursor" width="28" height="32" viewBox="0 0 28 32" fill="none"
+       xmlns="http://www.w3.org/2000/svg">
+    <path d="M3 3 L3 27 L9.5 21 L14.5 30 L17.5 28.5 L12.5 19.5 L21 19.5 Z"
+          fill="white" stroke="#111" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M3 3 L3 27 L9.5 21 L14.5 30 L17.5 28.5 L12.5 19.5 L21 19.5 Z"
+          fill="none" stroke="rgba(80,200,255,0.6)" stroke-width="0.8" stroke-linejoin="round"/>
+  </svg>
+
+  <!-- Click ripple feedback -->
+  <div id="ripple"></div>
+
+  <!-- Interaction feedback flash -->
+  <div id="interaction-flash"></div>
+
+  <!-- DAG Running badge -->
+  <div id="dag-badge">&#9654; WORKFLOW RUNNING — VIEW ONLY</div>
+</div>
+
+<div id="overlay">
+  <div class="overlay-box">
+    <h2>XIOVIEW</h2>
+    <p id="overlay-msg">Connecting to session...</p>
+  </div>
+</div>
+
+<script>
+const SESSION_ID   = "{{SESSION_ID}}";
+const WS_BASE      = "{{WS_URL}}";
+const NOVNC_URL    = "{{NOVNC_URL}}";
+const PROFILE_ID   = "{{PROFILE_ID}}";
+const HITL_NOTICE  = {{HITL_NOTICE_JSON}};
+
+const canvas   = document.getElementById("screen");
+const ctx      = canvas.getContext("2d");
+const wrap     = document.getElementById("canvas-wrap");
+const dot      = document.getElementById("status-dot");
+const label    = document.getElementById("status-label");
+const urlDisp  = document.getElementById("url-display");
+const fpsDisp  = document.getElementById("fps-display");
+const modesel  = document.getElementById("mode-select");
+const overlay  = document.getElementById("overlay");
+const ovMsg    = document.getElementById("overlay-msg");
+const cursorEl = document.getElementById("cursor");
+const ripple   = document.getElementById("ripple");
+const badge    = document.getElementById("focus-badge");
+const dagBadge = document.getElementById("dag-badge");
+const iFlash   = document.getElementById("interaction-flash");
+const latDisp  = document.getElementById("latency-display");
+const dropDisp = document.getElementById("drop-display");
+const hitlBanner  = document.getElementById("hitl-banner");
+const hitlType    = document.getElementById("hitl-type");
+const hitlId      = document.getElementById("hitl-id");
+const hitlMsg     = document.getElementById("hitl-msg");
+const hitlStatus  = document.getElementById("hitl-status");
+const hitlResumeBtn = document.getElementById("hitl-resume-btn");
+const hitlNovncBtn  = document.getElementById("hitl-novnc-btn");
+const novncWrap   = document.getElementById("novnc-wrap");
+const novncFrame  = document.getElementById("novnc-frame");
+const profileBadge = document.getElementById("profile-badge");
+const canvasWrap  = document.getElementById("canvas-wrap");
+
+let ws = null;
+let focused = false;
+let frameCount = 0, lastFpsTime = Date.now();
+let pageW = 1920, pageH = 1080;
+let reconnectDelay = 1000;
+let dagRunning = false;
+let lastInteractionTs = 0;
+let _lastCursorX = 0, _lastCursorY = 0;
+let dropCount = 0;
+
+// ── Profile badge ─────────────────────────────────────────────────────────────
+if (PROFILE_ID) {
+  profileBadge.textContent = PROFILE_ID;
+  profileBadge.className = "active";
+}
+
+// ── HITL + noVNC management ───────────────────────────────────────────────────
+let _activeHitl = HITL_NOTICE;  // may be null on load
+let _hitlPollTimer = null;
+
+function showHITL(notice) {
+  if (!notice) return;
+  _activeHitl = notice;
+
+  // Banner
+  hitlType.textContent = "🔒 HITL — " + (notice.challenge_type || "challenge");
+  hitlId.textContent = notice.id ? notice.id.slice(0,8) + "…" : "";
+  hitlMsg.textContent = notice.message || "";
+  hitlStatus.textContent = "";
+  hitlResumeBtn.disabled = false;
+  hitlBanner.className = "active";
+
+  // noVNC button link
+  const nvUrl = notice.novnc_url || NOVNC_URL;
+  if (nvUrl) {
+    hitlNovncBtn.href = nvUrl;
+    hitlNovncBtn.style.display = "inline";
+  } else {
+    hitlNovncBtn.style.display = "none";
+  }
+
+  // Embed noVNC iframe — switch off canvas, show iframe
+  if (nvUrl && novncFrame.src !== nvUrl) {
+    novncFrame.src = nvUrl;
+  }
+  if (nvUrl) {
+    canvasWrap.style.display = "none";
+    novncWrap.className = "active";
+  }
+}
+
+function clearHITL() {
+  _activeHitl = null;
+  hitlBanner.className = "";
+  novncWrap.className = "";
+  novncFrame.src = "";
+  canvasWrap.style.display = "";
+  hitlStatus.textContent = "";
+  // Reconnect WS to resume frame stream
+  if (ws) ws.close();
+}
+
+async function resumeHITL() {
+  if (!_activeHitl) return;
+  hitlResumeBtn.disabled = true;
+  hitlStatus.textContent = "Resuming…";
+  try {
+    const resumeUrl = _activeHitl.resume_url;
+    if (!resumeUrl) { hitlStatus.textContent = "No resume URL"; hitlResumeBtn.disabled=false; return; }
+    const r = await fetch(resumeUrl, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({action:"resume", resumed_by:"HUMAN"})
+    });
+    const d = await r.json();
+    if (d.state === "RESUMED" || d.ok) {
+      hitlStatus.textContent = "✅ Resumed — switching back to stream";
+      setTimeout(clearHITL, 1500);
+    } else {
+      hitlStatus.textContent = "⚠ " + JSON.stringify(d);
+      hitlResumeBtn.disabled = false;
+    }
+  } catch(e) {
+    hitlStatus.textContent = "Error: " + e.message;
+    hitlResumeBtn.disabled = false;
+  }
+}
+
+// Poll for new/cleared HITL notices every 8s (best-effort, never blocks)
+async function pollHITL() {
+  // Derive worker agent URL from NOVNC_URL (e.g. http://IP:6080 → http://IP:9300)
+  if (!NOVNC_URL) return;
+  try {
+    const workerIP = NOVNC_URL.split("://")[1].split(":")[0];
+    const r = await fetch(`http://${workerIP}:9300/hitl/pending`, {signal: AbortSignal.timeout(3000)});
+    const d = await r.json();
+    const notices = (d.notices || []).filter(n => n.session_id === SESSION_ID && n.state === "PENDING");
+    if (notices.length > 0) {
+      const n = notices[notices.length - 1];
+      n.novnc_url = NOVNC_URL;
+      n.resume_url = `http://${workerIP}:9300/hitl/${n.id}/resume`;
+      if (!_activeHitl || _activeHitl.id !== n.id) showHITL(n);
+    } else if (_activeHitl) {
+      clearHITL();
+    }
+  } catch(_) {}  // silent — worker may be unreachable from XIOVIEW browser
+}
+
+// Init on load
+if (HITL_NOTICE) showHITL(HITL_NOTICE);
+_hitlPollTimer = setInterval(pollHITL, 8000);
+
+// FPS counter
+setInterval(() => {
+  const now = Date.now();
+  const elapsed = (now - lastFpsTime) / 1000;
+  const fps = elapsed > 0 ? (frameCount / elapsed).toFixed(1) : "0.0";
+  fpsDisp.textContent = fps + " fps";
+  frameCount = 0; lastFpsTime = now;
+}, 2000);
+
+// ── Focus / cursor management ────────────────────────────────────────────────
+function setFocused(v) {
+  focused = v;
+  badge.className = v ? "active" : "";
+  wrap.style.outline = v ? "2px solid #4af" : "";
+}
+
+// Pointer-events:none on overlay children prevents spurious mouseleave
+document.querySelectorAll("#cursor, #ripple, #interaction-flash").forEach(el => {
+  el.style.pointerEvents = "none";
+});
+
+wrap.addEventListener("mouseenter", () => {
+  cursorEl.classList.add("visible");
+  setFocused(true);
+});
+
+wrap.addEventListener("mouseleave", () => {
+  cursorEl.classList.remove("visible");
+  // Don't clear focused — moving to browser chrome should not drop control.
+  // Only Esc explicitly releases control.
+});
+
+// Interaction feedback flash
+function flashInteraction(success) {
+  iFlash.className = success ? "success" : "fail";
+  setTimeout(() => { iFlash.className = ""; }, 200);
+}
+
+// WebSocket
+function connect() {
+  const mode = modesel.value;
+  dot.className = "reconnecting";
+  label.textContent = "Connecting...";
+  ovMsg.textContent = "Connecting to session...";
+  overlay.classList.remove("hidden");
+
+  ws = new WebSocket(WS_BASE + "?mode=" + mode);
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = () => {
+    reconnectDelay = 1000;
+    dot.className = "connected";
+    label.textContent = "Connected";
+    overlay.classList.add("hidden");
+  };
+
+  ws.onmessage = (e) => {
+    let msg;
+    try { msg = JSON.parse(e.data); } catch { return; }
+    switch (msg.type) {
+      case "frame": {
+        if (!msg.jpeg_b64) break;
+        const img = new Image();
+        img.onload = () => {
+          if (canvas.width !== img.width || canvas.height !== img.height) {
+            canvas.width = img.width; canvas.height = img.height;
+            pageW = img.width; pageH = img.height;
+          }
+          ctx.drawImage(img, 0, 0);
+          frameCount++;
+        };
+        img.src = "data:image/jpeg;base64," + msg.jpeg_b64;
+        break;
+      }
+      case "connected":   label.textContent = "Live - " + msg.mode; break;
+      case "session_info":
+        if (msg.url)    urlDisp.textContent = msg.url;
+        if (msg.width)  pageW = msg.width;
+        if (msg.height) pageH = msg.height;
+        break;
+      case "interaction_ack": {
+        const latMs = Date.now() - lastInteractionTs;
+        if (lastInteractionTs > 0) latDisp.textContent = latMs + "ms";
+        flashInteraction(msg.success !== false);
+        break;
+      }
+      case "interaction_blocked":
+        dagRunning = true;
+        dagBadge.className = "visible";
+        break;
+      case "frame_dropped":
+        dropCount++;
+        dropDisp.textContent = "\u26a0 " + dropCount + " drops";
+        dropDisp.className = "active";
+        break;
+      case "error":
+        ovMsg.textContent = "Error: " + (msg.detail || "unknown");
+        overlay.classList.remove("hidden");
+        break;
+    }
+  };
+
+  ws.onclose = () => {
+    dot.className = "";
+    label.textContent = "Disconnected - reconnecting in " + (reconnectDelay/1000).toFixed(0) + "s";
+    overlay.classList.remove("hidden");
+    ovMsg.textContent = "Reconnecting...";
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 1.5, 15000);
+  };
+  ws.onerror = () => ws.close();
+}
+
+function send(msg) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    lastInteractionTs = Date.now();
+    ws.send(JSON.stringify(msg));
+  }
+}
+
+// Coordinate mapping: translate viewer pixel → remote page pixel.
+// All event handlers are on #wrap; we project through the canvas rect
+// so letterbox/pillarbox areas map to the nearest page edge.
+function canvasCoords(clientX, clientY) {
+  const cRect = canvas.getBoundingClientRect();
+  // Clamp to canvas bounds (handles letterbox clicks)
+  const cx = Math.max(cRect.left, Math.min(cRect.right,  clientX));
+  const cy = Math.max(cRect.top,  Math.min(cRect.bottom, clientY));
+  const scaleX = cRect.width  > 0 ? pageW / cRect.width  : 1;
+  const scaleY = cRect.height > 0 ? pageH / cRect.height : 1;
+  return {
+    x: Math.max(0, Math.min(pageW, Math.round((cx - cRect.left) * scaleX))),
+    y: Math.max(0, Math.min(pageH, Math.round((cy - cRect.top)  * scaleY))),
+  };
+}
+
+// Throttle mouse_move to max 20/s (50ms) — avoids flooding the server
+let _lastMoveSent = 0;
+
+// Cursor overlay — always track position relative to wrap
+wrap.addEventListener("mousemove", (e) => {
+  const wRect = wrap.getBoundingClientRect();
+  cursorEl.style.left = (e.clientX - wRect.left) + "px";
+  cursorEl.style.top  = (e.clientY - wRect.top)  + "px";
+  // Track cursor position for scroll dispatch (S-4 fix)
+  _lastCursorX = e.clientX;
+  _lastCursorY = e.clientY;
+  if (!focused) return;
+  const now = Date.now();
+  if (now - _lastMoveSent < 50) return;  // throttle
+  _lastMoveSent = now;
+  const {x, y} = canvasCoords(e.clientX, e.clientY);
+  send({ type: "mouse_move", x, y });
+});
+
+// ── Mouse interaction events ─────────────────────────────────────────────────
+// FIX (S-5): Only send `click` to server — NOT separate mousedown/mouseup.
+// The server's click handler performs the full press→delay→release CDP sequence.
+// Sending both mousedown AND click caused double mousePressed events.
+
+wrap.addEventListener("mousedown", (e) => {
+  // Activate focus and show ripple — but do NOT send mousedown to server
+  setFocused(true);
+  cursorEl.classList.add("visible");
+  e.preventDefault();
+  // Ripple effect
+  const wRect = wrap.getBoundingClientRect();
+  ripple.style.left = (e.clientX - wRect.left) + "px";
+  ripple.style.top  = (e.clientY - wRect.top)  + "px";
+  ripple.className = "";
+  void ripple.offsetWidth;
+  ripple.className = "pop";
+});
+
+// click — the ONLY mouse button event sent to the server
+wrap.addEventListener("click", (e) => {
+  if (!focused) return;
+  const {x, y} = canvasCoords(e.clientX, e.clientY);
+  send({ type: "click", x, y, button: ["left","middle","right"][e.button] || "left" });
+});
+
+wrap.addEventListener("dblclick", (e) => {
+  if (!focused) return;
+  e.preventDefault();
+  const {x, y} = canvasCoords(e.clientX, e.clientY);
+  send({ type: "dblclick", x, y });
+});
+
+// Right-click: prevent browser menu, send right-click to remote
+wrap.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  if (!focused) return;
+  const {x, y} = canvasCoords(e.clientX, e.clientY);
+  send({ type: "click", x, y, button: "right" });
+});
+
+// FIX (S-4): Scroll uses actual cursor position, not hardcoded center
+wrap.addEventListener("wheel", (e) => {
+  if (!focused) return;
+  e.preventDefault();
+  const {x, y} = canvasCoords(_lastCursorX, _lastCursorY);
+  send({ type: "scroll", x, y, deltaX: e.deltaX, deltaY: e.deltaY });
+}, { passive: false });
+
+document.addEventListener("keydown", (e) => {
+  if (!focused) return;
+  if (e.key === "Escape") { setFocused(false); return; }
+  e.preventDefault();
+  const mods = [];
+  if (e.ctrlKey)  mods.push("Control");
+  if (e.altKey)   mods.push("Alt");
+  if (e.shiftKey) mods.push("Shift");
+  if (e.metaKey)  mods.push("Meta");
+  if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    send({ type: "type", text: e.key });
+  } else {
+    send({ type: "key", key: e.key, modifiers: mods });
+  }
+});
+
+modesel.addEventListener("change", () => { if (ws) ws.close(); });
+connect();
+</script>
+</body>
+</html>

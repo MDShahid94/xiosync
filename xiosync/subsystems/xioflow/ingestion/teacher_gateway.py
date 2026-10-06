@@ -29,16 +29,15 @@ class TeacherGateway:
         parsed_url = urlparse(url)
         domain = parsed_url.netloc
 
-        node_id = await self.memory_graph.save_new_action(
+        node_id = await self.memory_graph.asave_new_action(
             org_id=org_id,
             domain=domain,
-            url=url,
             intent=intent,
             face_value=face_value,
             place_value=place_value,
             action_type=action_type,
             action_params=action_params,
-            previous_node_id=previous_node_id,
+            previous_intent=previous_node_id,
             recorded_by='teacher_extension',
             project_id=project_id,
             recording_method='teacher_extension'

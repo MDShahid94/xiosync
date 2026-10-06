@@ -1,0 +1,42 @@
+{
+  "timestamp": "2026-09-25T08:10:08.483174+00:00",
+  "chrome": "131.0.6778.204",
+  "proxy": "socks5://127.0.0.1:19055",
+  "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.204 Safari/537.36",
+  "init_script_layers": 26,
+  "vectors": {
+    "ip_reputation": {
+      "ip": "223.181.55.172",
+      "is_datacenter": false,
+      "company": "Bharti Airtel Ltd.",
+      "asn": "AS24560 Bharti Airtel Limited",
+      "city": "Burla",
+      "country": "India",
+      "timezone": "Asia/Kolkata",
+      "pass": true
+    },
+    "sannysoft": {
+      "error": "Page.screenshot: Timeout 30000ms exceeded.\nCall log:\n  - taking page screenshot\n  - waiting for fonts to load...\n  - fonts loaded\n",
+      "pass": false
+    },
+    "creepjs": {
+      "headless_pct": "38",
+      "stealth_pct": "60",
+      "fp_text": "FP ID: e497ee3cac4aa9f639c492a38d407b8a786116b2c0b8a0a39e381cd698193165\nFuzzy: 9",
+      "page_text_snippet": "FP ID: e497ee3cac4aa9f639c492a38d407b8a786116b2c0b8a0a39e381cd698193165\nFuzzy: 922a01335b2c1a66db195ae1edc2d7c1efa575c05fdc42f89c15000000000000\n4354.80 ms\nWebRTC4c4f525c\nhost connection:\nblocked\nfoundation/ip:\nunsupported\nblocked\nsdp capabilities: 979f41d7\nstun connection:\nblocked\ndevices (1):\nwebca",
+      "h_pct": 38,
+      "s_pct": 60,
+      "pass": false
+    },
+    "cf_challenge": {
+      "text": "NOWSECURE\nBY NODRIVER\nNOWSECURE\nBY NODRIVER",
+      "pass": true
+    },
+    "turnstile": {
+      "token": "XXXX.DUMMY.TOKEN.XXXX",
+      "widget_fired": true,
+      "pass": true
+    }
+  },
+  "score": "3/5"
+}

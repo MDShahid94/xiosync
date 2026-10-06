@@ -4,7 +4,7 @@ import uuid
 from typing import Any, cast
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 router = APIRouter(tags=["workers"])
 
@@ -104,7 +104,6 @@ def self_enroll(payload: SelfEnrollRequest, request: Request) -> dict[str, Any] 
     secret is valid (self-approval mode for trusted runtimes).
     """
     import os
-    from datetime import UTC, datetime
     from sqlalchemy import text
     from sqlalchemy.orm import Session as OrmSession
     from xiosync.domain.context import OrgContext
@@ -123,7 +122,7 @@ def self_enroll(payload: SelfEnrollRequest, request: Request) -> dict[str, Any] 
     # by worker_org_secret in the body, not a Bearer token, so request.state
     # has no org_context. We construct one directly.
     import uuid as _uuid  # noqa: PLC0415
-    from xiosync.domain.context import OrgContext, PlatformRole, MembershipRole  # noqa: PLC0415
+    from xiosync.domain.context import PlatformRole, MembershipRole  # noqa: PLC0415
     from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
     _ORG_ZERO = _uuid.UUID("00000000-0000-7000-8000-000000000000")
     ctx = OrgContext(
@@ -136,7 +135,7 @@ def self_enroll(payload: SelfEnrollRequest, request: Request) -> dict[str, Any] 
     svc = WorkerService(session)
 
     # Generate a one-time enrollment token derived from org secret + timestamp
-    import hashlib, secrets
+    import secrets
     enrollment_token = secrets.token_urlsafe(32)
 
     # Create a system actor for this worker so the FK constraint is satisfied

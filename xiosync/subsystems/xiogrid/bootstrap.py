@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from xiosync.domain.context import OrgContext
 from xiosync.persistence.models.ontology import TypeRegistry
-from xiosync.persistence.models.registry import CapabilityGroup, RegistryCategory
+from xiosync.persistence.models.registry import CapabilityGroup
 from xiosync.platform.ids import new_id
 from xiosync.services.projects import ProjectService
 

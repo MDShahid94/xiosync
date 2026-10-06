@@ -1,0 +1,270 @@
+{
+  "timestamp": "2026-09-25T09:15:52.623762+00:00",
+  "chrome": "131.0.6778.204",
+  "proxy": "socks5://127.0.0.1:19055",
+  "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.204 Safari/537.36",
+  "init_script_layers": 26,
+  "vectors": {
+    "ip_reputation": {
+      "ip": "223.181.55.219",
+      "is_datacenter": false,
+      "company": "Bharti Airtel Ltd.",
+      "asn": "AS24560 Bharti Airtel Limited",
+      "city": "Burla",
+      "country": "India",
+      "timezone": "Asia/Kolkata",
+      "pass": true
+    },
+    "sannysoft": {
+      "tests": {
+        "User Agent\n(Old)": {
+          "value": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.204 Safari/537.36",
+          "pass": true
+        },
+        "WebDriver\n(New)": {
+          "value": "missing (passed)",
+          "pass": true
+        },
+        "WebDriver Advanced": {
+          "value": "passed",
+          "pass": true
+        },
+        "Chrome\n(New)": {
+          "value": "present (passed)",
+          "pass": true
+        },
+        "Permissions\n(New)": {
+          "value": "prompt",
+          "pass": true
+        },
+        "Plugins Length\n(Old)": {
+          "value": "5",
+          "pass": true
+        },
+        "Plugins is of type PluginArray": {
+          "value": "passed",
+          "pass": true
+        },
+        "Languages\n(Old)": {
+          "value": "en-US,en;q=0.9",
+          "pass": true
+        },
+        "WebGL Vendor": {
+          "value": "Google Inc. (Google)",
+          "pass": true
+        },
+        "WebGL Renderer": {
+          "value": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+          "pass": false
+        },
+        "Broken Image Dimensions": {
+          "value": "16x16",
+          "pass": true
+        },
+        "PHANTOM_UA": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_PROPERTIES": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_ETSL": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_LANGUAGE": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_WEBSOCKET": {
+          "value": "ok",
+          "pass": true
+        },
+        "MQ_SCREEN": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_OVERFLOW": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_WINDOW_HEIGHT": {
+          "value": "ok",
+          "pass": true
+        },
+        "HEADCHR_UA": {
+          "value": "ok",
+          "pass": true
+        },
+        "HEADCHR_CHROME_OBJ": {
+          "value": "ok",
+          "pass": true
+        },
+        "HEADCHR_PERMISSIONS": {
+          "value": "ok",
+          "pass": true
+        },
+        "HEADCHR_PLUGINS": {
+          "value": "ok",
+          "pass": true
+        },
+        "HEADCHR_IFRAME": {
+          "value": "ok",
+          "pass": true
+        },
+        "CHR_DEBUG_TOOLS": {
+          "value": "ok",
+          "pass": true
+        },
+        "SELENIUM_DRIVER": {
+          "value": "ok",
+          "pass": true
+        },
+        "CHR_BATTERY": {
+          "value": "ok",
+          "pass": true
+        },
+        "CHR_MEMORY": {
+          "value": "ok",
+          "pass": true
+        },
+        "TRANSPARENT_PIXEL": {
+          "value": "ok",
+          "pass": true
+        },
+        "SEQUENTUM": {
+          "value": "ok",
+          "pass": true
+        },
+        "VIDEO_CODECS": {
+          "value": "ok",
+          "pass": true
+        },
+        "navigator.cookieEnabled": {
+          "value": "true",
+          "pass": false
+        },
+        "navigator.doNotTrack": {
+          "value": "null",
+          "pass": false
+        },
+        "navigator.msDoNotTrack": {
+          "value": "undefined",
+          "pass": false
+        },
+        "navigator.sendBeacon": {
+          "value": "",
+          "pass": false
+        },
+        "navigator.userAgent": {
+          "value": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.204 Safari/537.36",
+          "pass": false
+        },
+        "navigator.appName": {
+          "value": "Netscape",
+          "pass": false
+        },
+        "navigator.vendor": {
+          "value": "Google Inc.",
+          "pass": false
+        },
+        "navigator.appCodeName": {
+          "value": "Mozilla",
+          "pass": false
+        },
+        "navigator.getUserMedia": {
+          "value": "",
+          "pass": false
+        },
+        "navigator.sayswho": {
+          "value": "undefined",
+          "pass": false
+        },
+        "navigator.javaEnabled": {
+          "value": "false",
+          "pass": false
+        },
+        "navigator.plugins": {
+          "value": "{\"0\":{\"0\":{},\"1\":{}},\"1\":{\"0\":{},\"1\":{}},\"2\":{\"0\":{},\"1\":{}},\"3\":{\"0\":{},\"1\":{}},\"4\":{\"0\":{},\"1\":{}}}",
+          "pass": false
+        },
+        "screen.width": {
+          "value": "1920",
+          "pass": false
+        },
+        "screen.height": {
+          "value": "1080",
+          "pass": false
+        },
+        "screen.colorDepth": {
+          "value": "24",
+          "pass": false
+        },
+        "navigator.language": {
+          "value": "en-US",
+          "pass": false
+        },
+        "navigator.loadPurpose": {
+          "value": "undefined",
+          "pass": false
+        },
+        "navigator.platform": {
+          "value": "Linux x86_64",
+          "pass": false
+        },
+        "navigator.mediaDevices": {
+          "value": "",
+          "pass": false
+        },
+        "navigator.getBattery details": {
+          "value": "Charging: true\nLevel: 1",
+          "pass": false
+        },
+        "Canvas1": {
+          "value": "Hash: -1101727535",
+          "pass": false
+        },
+        "Canvas2": {
+          "value": "Hash: -1101727535",
+          "pass": false
+        },
+        "Canvas3 (iframe sandbox)": {
+          "value": "Hash: -1101727535",
+          "pass": false
+        },
+        "Canvas4 (iframe sandbox)": {
+          "value": "Hash: -1101727535",
+          "pass": false
+        },
+        "Canvas5 (iframe)": {
+          "value": "Hash: -1101727535",
+          "pass": false
+        }
+      },
+      "passed": 30,
+      "total": 56,
+      "critical_pass": true,
+      "pass": true
+    },
+    "creepjs": {
+      "headless_pct": "25",
+      "stealth_pct": "0",
+      "fp_text": "FP ID: 83f535fec65da87c99231fb67474d031b44db71c221df7a74021dce7718dc8e8\nFuzzy: 9",
+      "page_text_snippet": "FP ID: 83f535fec65da87c99231fb67474d031b44db71c221df7a74021dce7718dc8e8\nFuzzy: 947af1e35b2c1a6b4d9910e1edd5dbc1fff575fcffdc42f89c15000000000000\n3328.80 ms\nWebRTC4c4f525c\nhost connection:\nblocked\nfoundation/ip:\nunsupported\nblocked\nsdp capabilities: 979f41d7\nstun connection:\nblocked\ndevices (1):\nwebca",
+      "h_pct": 25,
+      "s_pct": 0,
+      "pass": false
+    },
+    "cf_challenge": {
+      "text": "NOWSECURE\nBY NODRIVER\nNOWSECURE\nBY NODRIVER",
+      "pass": true
+    },
+    "turnstile": {
+      "token": "XXXX.DUMMY.TOKEN.XXXX",
+      "widget_fired": true,
+      "pass": true
+    }
+  },
+  "score": "4/5"
+}

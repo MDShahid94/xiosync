@@ -1,0 +1,193 @@
+{
+  "dag_domain": "accounts.google.com",
+  "dag_root_intent": "google_signin",
+  "nodes": [
+    {
+      "domain": "accounts.google.com",
+      "url": "",
+      "intent": "resolve_exit_proxy",
+      "action_type": "script",
+      "face_value": {
+        "description": "Resolve PPPoE/SSH SOCKS5 proxy URL for the login session",
+        "text": ""
+      },
+      "place_value": {
+        "css": "",
+        "aria_label": "",
+        "test_id": "",
+        "xpath": ""
+      },
+      "action_params": {
+        "step": "resolve_exit_proxy"
+      },
+      "output_var": "proxy_url",
+      "previous_node_id": null,
+      "execution_mode": "sequential"
+    },
+    {
+      "domain": "accounts.google.com",
+      "url": "",
+      "intent": "phase0_cascade_check",
+      "action_type": "script",
+      "face_value": {
+        "description": "Check if session is valid via cascade check",
+        "text": ""
+      },
+      "place_value": {
+        "css": "",
+        "aria_label": "",
+        "test_id": "",
+        "xpath": ""
+      },
+      "action_params": {
+        "endpoint": "/session-cascade-check",
+        "identity_id": "{{identity_id}}",
+        "email": "{{email}}",
+        "proxy_url": "{{proxy_url}}"
+      },
+      "output_var": "cascade_result",
+      "previous_node_id": "resolve_exit_proxy",
+      "execution_mode": "sequential"
+    },
+    {
+      "domain": "accounts.google.com",
+      "url": "https://myaccount.google.com/",
+      "intent": "phase0_browser_check",
+      "action_type": "navigate",
+      "face_value": {
+        "description": "Navigate to myaccount.google.com and check if already signed in",
+        "text": ""
+      },
+      "place_value": {
+        "css": "",
+        "aria_label": "",
+        "test_id": "",
+        "xpath": ""
+      },
+      "action_params": {
+        "url": "https://myaccount.google.com/"
+      },
+      "output_var": null,
+      "previous_node_id": "phase0_cascade_check",
+      "execution_mode": "sequential"
+    },
+    {
+      "domain": "accounts.google.com",
+      "url": "https://accounts.google.com",
+      "intent": "phase1_uc_stealth_login",
+      "action_type": "script",
+      "face_value": {
+        "description": "Run UC stealth login with credentials via xiorun_agent",
+        "text": ""
+      },
+      "place_value": {
+        "css": "",
+        "aria_label": "",
+        "test_id": "",
+        "xpath": ""
+      },
+      "action_params": {
+        "endpoint": "/run-uc-login",
+        "email": "{{email}}",
+        "password": "{{password}}",
+        "totp_secret": "{{totp_secret}}",
+        "proxy_url": "{{proxy_url}}"
+      },
+      "output_var": "ucSessionId",
+      "previous_node_id": "phase0_browser_check",
+      "execution_mode": "sequential"
+    },
+    {
+      "domain": "accounts.google.com",
+      "url": "https://mail.google.com/mail/u/0/#inbox",
+      "intent": "phase2_navigate_to_gmail",
+      "action_type": "script",
+      "face_value": {
+        "description": "Navigate UC session to Gmail inbox",
+        "text": ""
+      },
+      "place_value": {
+        "css": "",
+        "aria_label": "",
+        "test_id": "",
+        "xpath": ""
+      },
+      "action_params": {
+        "endpoint": "/navigate",
+        "session_id": "{{ucSessionId}}",
+        "url": "https://mail.google.com/mail/u/0/#inbox"
+      },
+      "output_var": null,
+      "previous_node_id": "phase1_uc_stealth_login",
+      "execution_mode": "sequential"
+    },
+    {
+      "domain": "accounts.google.com",
+      "url": "https://myaccount.google.com/",
+      "intent": "phase3_verify",
+      "action_type": "script",
+      "face_value": {
+        "description": "Verify Google account login via navigation in xiorun_agent",
+        "text": ""
+      },
+      "place_value": {
+        "css": "",
+        "aria_label": "",
+        "test_id": "",
+        "xpath": ""
+      },
+      "action_params": {
+        "endpoint": "/navigate",
+        "session_id": "{{ucSessionId}}",
+        "url": "https://myaccount.google.com/"
+      },
+      "output_var": null,
+      "previous_node_id": "phase2_navigate_to_gmail",
+      "execution_mode": "sequential"
+    },
+    {
+      "domain": "accounts.google.com",
+      "url": "",
+      "intent": "phase3_5_persist_session",
+      "action_type": "script",
+      "face_value": {
+        "description": "Persist cookies and profile to storage via xiorun_agent",
+        "text": ""
+      },
+      "place_value": {
+        "css": "",
+        "aria_label": "",
+        "test_id": "",
+        "xpath": ""
+      },
+      "action_params": {
+        "endpoint": "/persist-session",
+        "identity_id": "{{identity_id}}",
+        "profile_dir": "{{profile_dir}}"
+      },
+      "output_var": "persist_result",
+      "previous_node_id": "phase3_verify",
+      "execution_mode": "sequential"
+    },
+    {
+      "domain": "accounts.google.com",
+      "url": "",
+      "intent": "done",
+      "action_type": "done",
+      "face_value": {
+        "description": "Return success result",
+        "text": ""
+      },
+      "place_value": {
+        "css": "",
+        "aria_label": "",
+        "test_id": "",
+        "xpath": ""
+      },
+      "action_params": {},
+      "output_var": null,
+      "previous_node_id": "phase3_5_persist_session",
+      "execution_mode": "sequential"
+    }
+  ]
+}

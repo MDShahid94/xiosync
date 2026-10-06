@@ -9,7 +9,6 @@ from typing import Any
 from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
-    Index,
     Text,
     UniqueConstraint,
     text,

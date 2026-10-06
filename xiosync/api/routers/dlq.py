@@ -135,4 +135,116 @@ def purge_dlq_webhook(
         raise HTTPException(status_code=404, detail="Webhook not found or not dead-lettered")
     return {"ok": True, "deleted_failures": res.rowcount}
 
+
+# ── Task dead-letter governance endpoints (INV-DLQ-2, INV-DLQ-3) ──────────────
+
+from fastapi import Request  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
+from pydantic import BaseModel, model_validator  # noqa: E402
+from typing import Any  # noqa: E402
+from xiosync.services.workflows import (  # noqa: E402
+    WorkflowService,
+    DeadLetterNotFoundError,
+)
+
+
+def _dlq_problem(code: str, detail: str, status: int) -> dict:
+    return {"code": code, "detail": detail, "status": status}
+
+
+@router.get("/dlq/{dead_letter_id}")
+def get_dead_letter(
+    dead_letter_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """INV-DLQ-1: retrieve a task dead-letter record by ID."""
+    ctx = request.state.org_context
+    svc = WorkflowService(db)
+    record = svc.get_dead_letter(ctx, dead_letter_id)
+    if record is None:
+        return JSONResponse(
+            status_code=404,
+            content=_dlq_problem("dead_letter_not_found", f"Dead letter {dead_letter_id} not found", 404),
+            media_type="application/problem+json",
+        )
+    return {
+        "id": str(record.id),
+        "task_id": str(record.task_id),
+        "state": record.state,
+        "failure_reason": record.failure_reason,
+        "proposal_id": str(record.proposal_id) if record.proposal_id else None,
+        "attempts": record.attempts,
+        "diagnosis": record.diagnosis,
+        "stack_trace": record.stack_trace,
+    }
+
+
+class ProposeRequest(BaseModel):
+    diagnosis: dict[str, Any]
+
+
+@router.post("/dlq/{dead_letter_id}/propose")
+def propose_dlq_correction(
+    dead_letter_id: uuid.UUID,
+    body: ProposeRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """INV-DLQ-2: attach a diagnosis proposal to an open dead-letter record."""
+    ctx = request.state.org_context
+    svc = WorkflowService(db)
+    try:
+        proposal_id = svc.propose_dlq_correction(ctx, dead_letter_id, diagnosis=body.diagnosis)
+    except DeadLetterNotFoundError:
+        return JSONResponse(
+            status_code=404,
+            content=_dlq_problem("dead_letter_not_found", f"Dead letter {dead_letter_id} not found", 404),
+            media_type="application/problem+json",
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=409,
+            content=_dlq_problem("proposal_not_accepted", str(exc), 409),
+        )
+    return {"proposal_id": str(proposal_id), "state": "investigating"}
+
+
+class ResolveRequest(BaseModel):
+    explicit_approval: bool
+
+    @model_validator(mode="after")
+    def require_explicit_approval(self) -> "ResolveRequest":
+        if not self.explicit_approval:
+            raise ValueError("explicit_approval must be true to resolve a dead letter")
+        return self
+
+
+@router.post("/dlq/{dead_letter_id}/resolve")
+def resolve_dead_letter(
+    dead_letter_id: uuid.UUID,
+    body: ResolveRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """INV-DLQ-3: resolve a dead-letter record that has been investigated."""
+    ctx = request.state.org_context
+    svc = WorkflowService(db)
+    try:
+        svc.resolve_dead_letter(ctx, dead_letter_id, explicit_approval=body.explicit_approval)
+    except DeadLetterNotFoundError:
+        return JSONResponse(
+            status_code=404,
+            content=_dlq_problem("dead_letter_not_found", f"Dead letter {dead_letter_id} not found", 404),
+            media_type="application/problem+json",
+        )
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=409,
+            content=_dlq_problem("resolve_not_permitted", str(exc), 409),
+        )
+    return {"state": "resolved"}
+
+
 register_router(router, prefix='/api/v1', tags=['DLQ'], dependencies=[require_capability('dlq.manage')])
+

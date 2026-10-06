@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -242,12 +242,29 @@ class XioflowTriggerService:
         rec = self.get_trigger(ctx, trigger_id)
         merged_ctx = {**rec.context_defaults, **(extra_context or {})}
         run_id = str(new_id())
+        # Snapshot template at dispatch for versioning
+        tmpl_snap = None
+        if rec.template_id:
+            snap = self._session.execute(text("""
+                SELECT slug, dag_domain, dag_root_intent, template_type,
+                       COALESCE(config, '{}'::jsonb) as config
+                FROM workflow_templates WHERE id = :tid
+            """), {"tid": str(rec.template_id)}).fetchone()
+            if snap:
+                tmpl_snap = json.dumps({
+                    "slug": snap.slug, "dag_domain": snap.dag_domain,
+                    "dag_root_intent": snap.dag_root_intent,
+                    "template_type": snap.template_type,
+                    "config": snap.config if isinstance(snap.config, dict) else {},
+                })
         self._session.execute(
             text("""
                 INSERT INTO xioflow_runs
-                  (id, organization_id, template_id, trigger_id, state, context, started_at)
+                  (id, organization_id, template_id, trigger_id, state, context,
+                   template_snapshot, started_at)
                 VALUES
-                  (:id, :org, :tmpl, :trig, 'PENDING', cast(:ctx as jsonb), now())
+                  (:id, :org, :tmpl, :trig, 'PENDING', cast(:ctx as jsonb),
+                   cast(:snap as jsonb), now())
             """),
             {
                 "id": run_id,
@@ -255,6 +272,7 @@ class XioflowTriggerService:
                 "tmpl": str(rec.template_id),
                 "trig": str(trigger_id),
                 "ctx": json.dumps(merged_ctx),
+                "snap": tmpl_snap,
             },
         )
         self._session.execute(

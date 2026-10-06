@@ -71,16 +71,56 @@ def bound_context(
 
 
 class JsonFormatter(logging.Formatter):
-    """Render every record as one JSON object per line (doc 09 §6)."""
+    """Render every record as one JSON object per line (doc 09 §6).
+
+    PII scrubbing:
+      - Extra dict keys matching _SECRET_KEY_MARKERS are replaced with [REDACTED].
+      - Email addresses and phone patterns in message strings are masked.
+
+    Distributed tracing:
+      - If OpenTelemetry is active, trace_id and span_id are included.
+    """
+
+    # Email: user@domain → u***@domain
+    _EMAIL_RE = __import__('re').compile(
+        r'\b([a-zA-Z0-9._%+-])[a-zA-Z0-9._%+-]*@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b'
+    )
+    # Phone-like: 10+ digits optionally with +, -, spaces
+    _PHONE_RE = __import__('re').compile(
+        r'(?<!\d)(\+?\d[\d\s\-]{8,}\d)(?!\d)'
+    )
+
+    @classmethod
+    def _scrub_pii(cls, msg: str) -> str:
+        """Mask emails and phone numbers in log message strings."""
+        msg = cls._EMAIL_RE.sub(r'\1***@\2', msg)
+        msg = cls._PHONE_RE.sub('[PHONE_REDACTED]', msg)
+        return msg
 
     def format(self, record: logging.LogRecord) -> str:
+        message = record.getMessage()
+        # Scrub PII from the message text itself
+        message = self._scrub_pii(message)
+
         payload: dict[str, Any] = {
             "timestamp": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": message,
             "request_id": request_id_var.get(),
         }
+
+        # OpenTelemetry trace context propagation
+        try:
+            from opentelemetry import trace as _otrace
+            _span = _otrace.get_current_span()
+            _ctx = _span.get_span_context()
+            if _ctx and _ctx.trace_id:
+                payload["trace_id"] = format(_ctx.trace_id, '032x')
+                payload["span_id"] = format(_ctx.span_id, '016x')
+        except (ImportError, Exception):
+            pass
+
         organization_id = organization_id_var.get()
         if organization_id is not None:
             payload["organization_id"] = organization_id
@@ -90,7 +130,12 @@ class JsonFormatter(logging.Formatter):
         for key, value in record.__dict__.items():
             if key in _RESERVED_ATTRS or key in payload:
                 continue
-            payload[key] = _REDACTED if _is_secret_key(key) else value
+            if _is_secret_key(key):
+                payload[key] = _REDACTED
+            elif isinstance(value, str):
+                payload[key] = self._scrub_pii(value)
+            else:
+                payload[key] = value
         if record.exc_info and record.exc_info[0] is not None:
             payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload, default=str, separators=(",", ":"))

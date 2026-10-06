@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  XIOSYNC Slot Watchdog — PPPoE health monitor + auto-reconnect
+  Runs every 5 minutes. Checks all PPPoE slots, auto-rotates any DOWN slot.
+  
+  Install:
+    cp com.xiogrid.slot-watchdog.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.xiogrid.slot-watchdog.plist
+-->
+<dict>
+  <key>Label</key>
+  <string>com.xiogrid.slot-watchdog</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/karmareturns/projects/XIOSYNC/scripts/xio_slot_watchdog.py</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>XIOSYNC_URL</key>
+    <string>http://localhost:8000</string>
+    <key>XIOSYNC_ADMIN_EMAIL</key>
+    <string>admin@xiogrid.dev</string>
+    <key>XIOSYNC_ADMIN_PASS</key>
+    <string>Xiogrid2026!Admin</string>
+    <key>XIOSYNC_ORG_ID</key>
+    <string>00000000-0000-7000-8000-000000000000</string>
+  </dict>
+
+  <!-- Run every 5 minutes -->
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/xio_slot_watchdog.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/xio_slot_watchdog.log</string>
+</dict>
+</plist>

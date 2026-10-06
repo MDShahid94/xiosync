@@ -25,7 +25,6 @@ import os
 import signal
 import sys
 import threading
-import time
 from typing import Callable
 
 from sqlalchemy import Engine

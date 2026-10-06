@@ -91,7 +91,7 @@ def test_verify_session_success_failed(org_context: OrgContext, mock_session: Ma
     mock_session.scalar.return_value = mock_row
 
     record = svc.verify_session(org_context, session_id)
-    assert record.status == "immediate"
+    assert record.status == "dead"  # terminal state 'failed' maps to 'dead'
 
 def test_verify_session_success_suspended(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserSessionService(mock_session)

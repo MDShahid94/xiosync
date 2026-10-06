@@ -25,7 +25,7 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from xiosync.persistence.models.authorization import Capability, Event, Grant
+from xiosync.persistence.models.authorization import Event
 from xiosync.persistence.models.identity import (
     Actor,
     MemberAuth,
@@ -34,7 +34,7 @@ from xiosync.persistence.models.identity import (
 )
 from xiosync.persistence.models.ontology import TypeRegistry
 from xiosync.persistence.models.operations import Operation
-from xiosync.persistence.models.registry import CapabilityGroup, RegistryCategory
+from xiosync.persistence.models.registry import CapabilityGroup
 from xiosync.platform.crypto import hash_password
 from xiosync.platform.ids import new_id
 

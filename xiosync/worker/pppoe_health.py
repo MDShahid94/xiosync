@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 from xiosync.subsystems.xiogrid.domain.pppoe import PPPoESlotState
 from xiosync.subsystems.xiogrid.models.exit_node import PPPoEExitNode, PPPoEHost
 from xiosync.subsystems.xiogrid.services.ssh_exec import vm_script
+
 
 logger = logging.getLogger(__name__)
 

@@ -147,7 +147,7 @@ async def _lifespan(application):
     # via Tailscale Funnel regardless of ACL peer restrictions.
     _xiosync_base   = os.environ.get("XIORUN_XIOSYNC_BASE", "")
     _internal_sec   = os.environ.get("XIORUN_INTERNAL_SECRET", "")
-    _pppoe_proxy    = os.environ.get("XIORUN_PPPOE_PROXY", "100.106.81.15:10001")
+    _pppoe_proxy    = os.environ.get("XIORUN_PPPOE_PROXY", "")
     _WS_SOCKS5_PORT = 19055
     _ws_bridge_task = None
 
@@ -201,7 +201,7 @@ async def _lifespan(application):
                     try:
                         import socket as _sock_mod  # noqa: PLC0415
                         ws = await websockets.connect(
-                            _ws_tunnel_url,  # wss://.../proxy/tunnel?target=100.106.81.15:10001
+                            _ws_tunnel_url,  # wss://.../proxy/tunnel?target={pppoe_host}:{port}
                             additional_headers={"x-internal-secret": _internal_sec},
                             ping_interval=20, ping_timeout=20,
                             open_timeout=10,
@@ -524,17 +524,84 @@ async def _lifespan(application):
 
     yield
 
-    # ── Shutdown: quit UC drivers + kill SSH tunnel ───────────────────────────
+    # ── Graceful Shutdown (Phase 4 audit — Fix 25) ────────────────────────
+    logger.info("shutdown: graceful shutdown started")
+    _shutdown_errors = 0
+
+    # 1. Terminate all active browser sessions
+    for _sid, _info in list(_sessions.items()):
+        try:
+            _pid = _info.get("pid")
+            if _pid:
+                import signal as _sig
+                os.kill(_pid, _sig.SIGTERM)
+            _browser = _info.get("browser")
+            if _browser:
+                try:
+                    await _browser.close()
+                except Exception:
+                    pass
+            _guard = _info.get("guard_task")
+            if _guard and not _guard.done():
+                _guard.cancel()
+        except Exception as _se:
+            _shutdown_errors += 1
+            logger.debug(f"shutdown: session {_sid} cleanup error: {_se}")
+    _sessions.clear()
+
+    # 2. Quit UC drivers
     for _drv in list(_uc_drivers.values()):
         try: _drv.quit()
-        except Exception: pass
+        except Exception: _shutdown_errors += 1
+
+    # 3. Kill SSH tunnel
     if _ssh_tunnel_proc and _ssh_tunnel_proc.poll() is None:
         _ssh_tunnel_proc.terminate()
+
+    logger.info(f"shutdown: complete — {_shutdown_errors} errors")
 
 # ── XIOFlow DAG Polling Loop ──────────────────────────────────────────────────
 # Background task that polls XIOSYNC every 5s for pending DAG runs, claims
 # them, executes locally with Patchright, and reports results back.
 # Auth: X-XIOSYNC-Internal header (XIOSYNC_INTERNAL_SECRET / XIORUN_INTERNAL_SECRET).
+
+# ── Retry Backoff for DOM Actions (Phase 4 audit — Fix 26) ───────────────────
+async def _dom_retry_backoff(coro_fn, *, max_retries: int = 3,
+                              base_delay: float = 1.0, label: str = "dom_action"):
+    """Execute a DOM action coroutine with exponential backoff retry.
+
+    Args:
+        coro_fn: Async callable (no args) returning the result.
+        max_retries: Maximum number of retry attempts.
+        base_delay: Initial delay in seconds (doubles each retry).
+        label: Human-readable label for logging.
+
+    Raises the last exception if all retries fail.
+    """
+    _delay = base_delay
+    for _attempt in range(max_retries + 1):
+        try:
+            return await coro_fn()
+        except Exception as _e:
+            if _attempt == max_retries:
+                raise
+            logger.debug(f"{label}: attempt {_attempt+1} failed ({_e}) — retrying in {_delay}s")
+            await asyncio.sleep(_delay)
+            _delay = min(_delay * 2, 10.0)
+
+# ── Domain-Agnostic Post-Action Handler Registry ─────────────────────────────
+# Instead of hardcoding domain-specific logic (e.g. Google challenge pages)
+# inside the generic DAG runner, handlers are registered per (domain, intent)
+# pair and dispatched dynamically after each step completes.
+#
+# Handler signature:
+#   async def handler(page, vars_dict, xiosync_base, hdrs, run_id, logger) -> None
+#
+# Register with:
+#   _DAG_POST_ACTION_HANDLERS[("accounts.google.com", "click_signin")] = [handler1, handler2]
+#
+# The DAG runner calls all registered handlers after a successful step.
+_DAG_POST_ACTION_HANDLERS: dict[tuple[str, str], list] = {}
 
 async def _google_challenge_handler(page, vars_dict, xiosync_base, hdrs, run_id, logger):
     """Handle all Google 2SV challenge pages after password entry.
@@ -548,7 +615,7 @@ async def _google_challenge_handler(page, vars_dict, xiosync_base, hdrs, run_id,
     except ImportError:
         _pt = None
 
-    _NOVNC = "http://100.111.130.118:6080/vnc.html?autoconnect=true&resize=scale"
+    _NOVNC = (_NOVNC_URL or "http://localhost:6080/vnc.html") + "?autoconnect=true&resize=scale"
 
     try:
         await page.wait_for_load_state("domcontentloaded", timeout=8000)
@@ -680,7 +747,7 @@ async def _google_challenge_handler(page, vars_dict, xiosync_base, hdrs, run_id,
             logger.info(f"dag_challenge: TOTP window {_rem:.1f}s left — waiting for fresh")
             await _ac.sleep(_rem + 0.8)
         _code = _pt.TOTP(_totp_sec).now()
-        logger.info(f"dag_challenge: TOTP code={_code} ({30-(_tm.time()%30):.1f}s left)")
+        logger.info(f"dag_challenge: TOTP code=****{_code[-2:]} ({30-(_tm.time()%30):.1f}s left)")
         # Poll for visible input
         for _ii in range(14):
             await _ac.sleep(0.5)
@@ -716,6 +783,9 @@ async def _google_challenge_handler(page, vars_dict, xiosync_base, hdrs, run_id,
 async def _google_post_login_handler(
     page,
     workflow_vars: dict,
+    xiosync_base,       # unused — accepted for unified handler signature
+    hdrs,               # unused — accepted for unified handler signature
+    run_id,             # unused — accepted for unified handler signature
     logger,
     *,
     max_rounds: int = 5,
@@ -820,6 +890,15 @@ async def _google_post_login_handler(
                     logger.warning(f"dag_post_login: email '{_target_email}' NOT found in myaccount body")
         except Exception as _ve:
             logger.warning(f"dag_post_login: email verify skipped ({_ve})")
+
+
+# ── Register Google-specific post-action handlers ────────────────────────────
+# These fire after the named intent completes successfully in DAGs where
+# dag_domain == "accounts.google.com". Other domains register their own.
+_DAG_POST_ACTION_HANDLERS[("accounts.google.com", "click_signin")] = [
+    _google_challenge_handler,
+    _google_post_login_handler,
+]
 
 
 async def _execute_dag_run(
@@ -1045,6 +1124,7 @@ async def _execute_dag_run(
             else:
                 _tc = None
 
+            _uc_succeeded = False   # set True by phase1_uc_stealth_login on success
             for _node in nodes:
                 _intent  = _node.get("intent", "?")
                 _action  = _node.get("action_type", "")
@@ -1054,11 +1134,21 @@ async def _execute_dag_run(
                 _step_ok = False
 
                 try:
-                    if _action == "navigate":
+                    # Skip native patchright nodes when UC login already succeeded.
+                    # Script nodes (phase2_navigate_to_gmail, phase3_verify, phase3_5_persist_session)
+                    # must still run — they use xiorun_agent HTTP endpoints, not patchright browser.
+                    _patchright_native = _action in ("navigate", "fill", "click", "wait")
+                    if _uc_succeeded and _patchright_native:
+                        logger.info(f"dag_run.step: {_intent} [{_action}] skipped (UC login already succeeded)")
+                        _step_ok = True
+                    elif _action == "navigate":
                         _url = _params.get("url", "")
                         for _k, _v in _vars.items():
                             _url = _url.replace(f"{{{_k}}}", str(_v))
-                        await _page.goto(_url, wait_until="domcontentloaded", timeout=30000)
+                        await _dom_retry_backoff(
+                            lambda: _page.goto(_url, wait_until="domcontentloaded", timeout=30000),
+                            max_retries=2, base_delay=2.0, label=f"navigate:{_intent}",
+                        )
                         await _page.wait_for_timeout(2000)
                         _step_ok = True
                         _final_url = _page.url
@@ -1186,19 +1276,15 @@ async def _execute_dag_run(
                                 _ct = _sr.headers.get("content-type", "")
                                 _sd = _sr.json() if "application/json" in _ct else {}
                                 if _sr.status_code in (200, 201):
-                                    if isinstance(_sd, dict) and _sd.get("ok") is False:
-                                        _step_ok = False
-                                        logger.warning(f"dag_run.script: {_intent} returned ok=False — {_sd.get('error', 'unknown error')}")
-                                    else:
-                                        _step_ok = True
-                                        # Inject response fields into _vars for downstream nodes
-                                        if isinstance(_sd, dict):
-                                            for _rk, _rv in _sd.items():
-                                                _vars[_rk] = _rv
-                                        logger.info(
-                                            f"dag_run.step: {_intent} [script] {_s_endpoint} "
-                                            f"→ HTTP {_sr.status_code} ok  keys={list(_sd.keys() if isinstance(_sd,dict) else [])}"
-                                        )
+                                    _step_ok = True
+                                    # Inject response fields into _vars for downstream nodes
+                                    if isinstance(_sd, dict):
+                                        for _rk, _rv in _sd.items():
+                                            _vars[_rk] = _rv
+                                    logger.info(
+                                        f"dag_run.step: {_intent} [script] {_s_endpoint} "
+                                        f"→ HTTP {_sr.status_code} ok  keys={list(_sd.keys() if isinstance(_sd,dict) else [])}"
+                                    )
                                 else:
                                     logger.warning(
                                         f"dag_run.step: {_intent} [script] {_s_endpoint} "
@@ -1239,26 +1325,35 @@ async def _execute_dag_run(
                                     )
 
                             elif _intent == "phase1_uc_stealth_login":
-                                # UC login succeeded — session established; persist will
-                                # happen via phase3_5 script node or the persistence block
+                                # UC login succeeded — session fully established.
+                                # Set a flag so the native patchright re-login nodes
+                                # (navigate_to_signin, type_email, type_password, click_signin,
+                                # verify_signed_in) are skipped, but script nodes
+                                # (phase2_navigate_to_gmail, phase3_verify, phase3_5_persist_session)
+                                # still execute normally.
                                 if _vars.get("ok") is True or _vars.get("success") is True:
                                     logger.info(
                                         "dag_run.script: phase1 UC login success → "
-                                        "continuing to phase2/3 verification"
+                                        "skipping patchright re-login nodes"
                                     )
-                                # If UC login failed, _step_ok is already False; DAG will
-                                # continue to the native Patchright navigate/fill/click nodes
+                                    _uc_succeeded = True
+                                # If UC login failed, fall through to native patchright nodes.
 
                     else:
                         logger.warning(f"dag_run.step: unknown action {_action!r} for {_intent!r} — skipping")
                         _step_ok = True
 
-                    # ── Post-click: Google challenge handler (fires after click_signin) ──
-                    if _step_ok and _intent == "click_signin":
-                        await _google_challenge_handler(
-                            _page, _vars, _XIOSYNC, _HDRS, run_id, logger)
-                        # P0-3/P0-4: dismiss interstitials, verify logged-in email
-                        await _google_post_login_handler(_page, _vars, logger)
+                    # ── Post-action handlers (domain-agnostic registry) ──────
+                    # Dispatches registered handlers for this (domain, intent)
+                    # pair. E.g. Google challenge/post-login handlers fire after
+                    # click_signin on accounts.google.com, but any domain can
+                    # register its own handlers without modifying this runner.
+                    _post_handlers = _DAG_POST_ACTION_HANDLERS.get(
+                        (dag_domain, _intent), []
+                    )
+                    if _step_ok and _post_handlers:
+                        for _ph in _post_handlers:
+                            await _ph(_page, _vars, _XIOSYNC, _HDRS, run_id, logger)
 
                 except Exception as _se:
                     logger.error(f"dag_run.step_error: {_intent} [{_action}] {_se}")
@@ -1276,24 +1371,23 @@ async def _execute_dag_run(
                         "action_params": _params or {},
                         "previous_intent": results[-2]["intent"] if len(results) >= 2 else None,
                     })
-                # Special case: Phase 0 short-circuit.
-                # If UC login returned final_url pointing to myaccount (Phase 0 shortcut),
-                # the user is authenticated. Skip all native nodes (navigate_to_signin, type_email etc).
-                if _intent == "navigate_to_signin":
-                    _uc_final = _vars.get("final_url", "")
-                    if _uc_final and "accounts.google.com" not in _uc_final and "signin" not in _uc_final:
-                        logger.info(
-                            f"dag_run.preflight: phase0 auth confirmed → {_uc_final[:60]} "
-                            f"— shortcircuiting DAG"
-                        )
-                        all_ok = True
-                        break  # skip type_email, type_password, etc.
-
                 if not _step_ok and _action != "wait":
                     # Check if this step is marked fail_ok (non-fatal) in action_params
                     _fail_ok = bool((_params or {}).get("fail_ok", False))
                     if _fail_ok:
                         logger.warning(f"dag_run: step {_intent!r} failed (fail_ok=True) — continuing DAG")
+                        # Special case: navigate_to_signin fail_ok + Phase 0 already confirmed auth.
+                        # If UC login returned final_url pointing to myaccount (Phase 0 shortcut),
+                        # the user is authenticated — short-circuit exactly like the preflight redirect does.
+                        if _intent == "navigate_to_signin":
+                            _uc_final = _vars.get("final_url", "")
+                            if _uc_final and "accounts.google.com" not in _uc_final and "signin" not in _uc_final:
+                                logger.info(
+                                    f"dag_run.preflight: phase0 auth confirmed → {_uc_final[:60]} "
+                                    f"— shortcircuiting DAG (SOCKS drop on navigate_to_signin)"
+                                )
+                                all_ok = True
+                                break  # skip type_email, type_password, etc.
                     else:
                         all_ok = False
                         logger.warning(f"dag_run: step {_intent!r} failed — stopping DAG")
@@ -1434,7 +1528,7 @@ async def _execute_dag_run(
 
 
 async def _dag_poll_loop() -> None:
-    """Background task — poll XIOSYNC for pending DAG runs every 5s."""
+    """Background task — poll XIOSYNC for pending DAG runs with adaptive backoff."""
     import httpx as _hx
 
     _XIOSYNC = os.environ.get("XIORUN_XIOSYNC_BASE", os.environ.get("XIOSYNC_BASE", ""))
@@ -1445,12 +1539,17 @@ async def _dag_poll_loop() -> None:
         logger.warning("dag_poll: XIORUN_XIOSYNC_BASE or XIORUN_INTERNAL_SECRET not set — disabled")
         return
 
-    _HDRS     = {"X-XIOSYNC-Internal": _SECRET}
+    # Unified auth: send both headers for compatibility
+    _HDRS     = {"X-XIOSYNC-Internal": _SECRET, "X-Worker-Secret": _SECRET}
     _active: set[str] = set()
-    logger.info(f"dag_poll: polling {_XIOSYNC}/api/v1/xioflow/events/runs/pending-dag-internal every 5s")
+    _poll_interval = 5.0   # Start at 5s
+    _MIN_POLL = 2.0        # Fast poll after claiming a run
+    _MAX_POLL = 15.0       # Slow poll when idle
+    _idle_ticks = 0        # Count consecutive empty polls
+    logger.info(f"dag_poll: polling {_XIOSYNC}/api/v1/xioflow/events/runs/pending-dag-internal (adaptive {_MIN_POLL}-{_MAX_POLL}s)")
 
     while True:
-        await asyncio.sleep(5)
+        await asyncio.sleep(_poll_interval)
         try:
             async with _hx.AsyncClient(timeout=10) as _cl:
                 _resp = await _cl.get(
@@ -1458,15 +1557,21 @@ async def _dag_poll_loop() -> None:
                     headers=_HDRS,
                 )
             if _resp.status_code == 204:
+                _idle_ticks += 1
+                _poll_interval = min(_MAX_POLL, _poll_interval + 1.0)
                 continue  # nothing pending
             if _resp.status_code != 200:
                 logger.debug(f"dag_poll: status {_resp.status_code}")
+                _idle_ticks += 1
+                _poll_interval = min(_MAX_POLL, _poll_interval + 2.0)
                 continue
             _run = _resp.json()
             _rid = _run.get("run_id")
             if not _rid or _rid in _active:
                 continue
             _active.add(_rid)
+            _idle_ticks = 0
+            _poll_interval = _MIN_POLL  # Speed up: work available
             logger.info(f"dag_poll: claimed run_id={_rid} domain={_run.get('dag_domain')} intent={_run.get('dag_root_intent')}")
             asyncio.create_task(
                 _execute_dag_run(
@@ -1481,6 +1586,7 @@ async def _dag_poll_loop() -> None:
             break
         except Exception as _pe:
             logger.debug(f"dag_poll: error {_pe}")
+            _poll_interval = min(_MAX_POLL, _poll_interval + 3.0)
 
 
 app = FastAPI(title="XIORUN Agent", version="1.0.0", lifespan=_lifespan)
@@ -2402,6 +2508,7 @@ _STEALTH_JS = r"""
 #               "cdp_ws_url": str, "proxy_url": str|None,
 #               "profile_dir": str|None, "guard_task": Task}
 _sessions: dict[str, dict[str, Any]] = {}
+_sessions_lock = asyncio.Lock()  # Atomic capacity check + registration
 
 # UC driver registry — keeps selenium UC drivers alive after login so the
 # authenticated Chrome process remains open and usable without switching browsers.
@@ -2458,8 +2565,14 @@ class PushProfileRequest(BaseModel):
 
 
 # ── Drive FUSE helpers ─────────────────────────────────────────────────────────
-def _drive_path(object_key: str) -> Path:
-    """Resolve an object key to its full Drive FUSE path."""
+def _drive_path(object_key: str, org_id: str = "") -> Path:
+    """Resolve an object key to its full Drive FUSE path.
+
+    If org_id is provided and the key isn't already org-namespaced,
+    the path is scoped under org_id/ to prevent cross-org access.
+    """
+    if org_id and not object_key.startswith(f"org/{org_id}/") and not object_key.startswith("org/"):
+        return Path(DRIVE_ROOT) / "org" / org_id / object_key
     return Path(DRIVE_ROOT) / object_key
 
 
@@ -2473,8 +2586,39 @@ def _trim_profile(path: Path) -> None:
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health() -> dict:
+    _checks: dict[str, bool | str] = {}
+
+    # ── Chrome binary check ──────────────────────────────────────────────
+    _chrome_bin = _find_patchright_chromium()
+    _checks["chrome_binary"] = bool(_chrome_bin)
+
+    # ── Drive FUSE mount check ───────────────────────────────────────────
+    try:
+        _drive = Path(DRIVE_ROOT)
+        _checks["drive_mounted"] = _drive.is_dir() and any(_drive.iterdir())
+    except Exception:
+        _checks["drive_mounted"] = False
+
+    # ── XIOSYNC server reachability ──────────────────────────────────────
+    _xio_base = os.environ.get("XIORUN_XIOSYNC_BASE", "")
+    if _xio_base:
+        try:
+            import httpx as _hx_h
+            _r = _hx_h.get(f"{_xio_base}/live", timeout=5)
+            _checks["xiosync_reachable"] = _r.status_code == 200
+        except Exception:
+            _checks["xiosync_reachable"] = False
+    else:
+        _checks["xiosync_reachable"] = "not_configured"
+
+    # ── Proxy check (SSH SOCKS5 or WS bridge) ────────────────────────────
+    _checks["ssh_proxy"] = bool(_SSH_PROXY_URL)
+
+    # Overall status: ok if Chrome is present
+    _overall = _checks.get("chrome_binary", False) is True
+
     return {
-        "ok":              True,
+        "ok":              _overall,
         "node":            NODE_NAME,
         "active_sessions": len(_sessions),
         "max_sessions":    _MAX_SESSIONS,
@@ -2483,10 +2627,9 @@ async def health() -> dict:
         "sys_ram_gb":      _RUNTIME_CAP["sys_ram_gb"],
         "gpu_vram_gb":     _RUNTIME_CAP["gpu_vram_gb"],
         "cpu_count":       _RUNTIME_CAP["cpu_count"],
-        # SSH SOCKS5 proxy — routes traffic via Mac's residential ISP
         "ssh_proxy_url":   _SSH_PROXY_URL,
-        # Direct noVNC URL for HITL interaction (zero-relay, X11 stream)
         "novnc_url":       _NOVNC_URL,
+        "checks":          _checks,
     }
 
 
@@ -2581,24 +2724,29 @@ async def launch_browser(req: LaunchRequest) -> dict:
     """
     # NOTE: patchright import intentionally deferred — Strategy A works without it.
 
-    if req.session_id in _sessions:
-        # Idempotent: return existing
-        info = _sessions[req.session_id]
-        return {"cdp_ws_url": info["cdp_ws_url"], "pid": info["pid"], "port": info["port"]}
+    # ── Atomic check: idempotency + capacity gate under lock ──────────────
+    async with _sessions_lock:
+        if req.session_id in _sessions:
+            info = _sessions[req.session_id]
+            if not info.get("_reserving"):
+                return {"cdp_ws_url": info["cdp_ws_url"], "pid": info["pid"], "port": info["port"]}
+            # Another request is already launching this session — wait briefly
+            raise HTTPException(status_code=409, detail="session_launch_in_progress")
 
-    # ── Capacity gate: enforce max sessions per runtime type ──────────────────
-    active = len(_sessions)
-    if active >= _MAX_SESSIONS:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                f"Runtime at capacity: {active}/{_MAX_SESSIONS} sessions active "
-                f"({_RUNTIME_CAP['runtime_type']} runtime, "
-                f"{_RUNTIME_CAP['sys_ram_gb']} GB sys, "
-                f"{_RUNTIME_CAP['gpu_vram_gb']} GB GPU). "
-                "Terminate an existing session or use a different runtime."
-            ),
-        )
+        active = len(_sessions)
+        if active >= _MAX_SESSIONS:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Runtime at capacity: {active}/{_MAX_SESSIONS} sessions active "
+                    f"({_RUNTIME_CAP['runtime_type']} runtime, "
+                    f"{_RUNTIME_CAP['sys_ram_gb']} GB sys, "
+                    f"{_RUNTIME_CAP['gpu_vram_gb']} GB GPU). "
+                    "Terminate an existing session or use a different runtime."
+                ),
+            )
+        # Reserve slot atomically — concurrent launches can't both pass capacity gate
+        _sessions[req.session_id] = {"_reserving": True}
 
     # ── Resolve full geo profile from exit node's public IP ───────────────────
     _exit_ip = req.exit_node_public_ip
@@ -4518,7 +4666,7 @@ def _run_uc_login_sync(
                     time.sleep(_totp_remaining + 0.5)
                 totp_code = pyotp.TOTP(totp_secret.replace(" ", "")).now()
                 logger.info(f"TOTP generated with {30 - (time.time() % 30):.1f}s remaining in window")
-                logger.info(f"uc-login: TOTP code={totp_code} url={curr3[:60]}")
+                logger.info(f"uc-login: TOTP code=****{totp_code[-2:]} url={curr3[:60]}")
 
                 # CDP native TOTP fill
                 _totp_rect_js = """
@@ -4591,15 +4739,43 @@ def _run_uc_login_sync(
                         driver.execute_cdp_cmd("Input.dispatchKeyEvent", {"type": "keyUp", "windowsVirtualKeyCode": 13, "key": "Enter"})
                         logger.info("uc-login: TOTP Next Enter pressed natively")
                     
-                    for _ in range(16):
+                    # Wait for redirect chain to settle after TOTP submit.
+                    # Google's post-TOTP redirect goes through several hops:
+                    #   /challenge/totp → accounts.google.com/... → mail.google.com
+                    # The proxy can hiccup during this chain causing a brief Chrome
+                    # "ERR_NETWORK_CHANGED" / "network error" page. We detect this
+                    # and retry the navigation so the login doesn't false-fail.
+                    for _pw in range(24):   # up to 12s
                         time.sleep(0.5)
                         try:
-                            if "/challenge/" not in driver.current_url:
-                                logger.info(f"uc-login: left challenge → {driver.current_url[:70]}")
+                            _pw_url = driver.current_url
+                            if "/challenge/" not in _pw_url:
+                                logger.info(f"uc-login: left challenge → {_pw_url[:70]}")
                                 break
                         except Exception:
                             break
-                    time.sleep(1.5)
+                    time.sleep(2.0)   # let redirect chain fully settle
+
+                    # Detect + recover from transient proxy network error page
+                    # (ERR_NETWORK_CHANGED / ERR_PROXY_CONNECTION_FAILED)
+                    try:
+                        _err_url = driver.current_url
+                        _page_src = ""
+                        try:
+                            _page_src = driver.execute_script("return document.body?.innerText || ''")[:200]
+                        except Exception:
+                            pass
+                        _is_err_page = (
+                            _err_url.startswith("data:") or
+                            "chrome-error://" in _err_url or
+                            any(k in _page_src.lower() for k in ("err_network", "err_proxy", "net::err", "this page isn't working"))
+                        )
+                        if _is_err_page:
+                            logger.warning(f"uc-login: network error page detected ({_err_url[:60]}) — retrying navigation")
+                            safe_get("https://mail.google.com/mail/u/0/#inbox", wait=3.0)
+                            time.sleep(2.0)
+                    except Exception as _erp:
+                        logger.warning(f"uc-login: error-page check failed: {_erp}")
                 else:
                     logger.warning("uc-login: CDP TOTP fill failed — could not find input")
             except Exception as _te:
@@ -4617,13 +4793,17 @@ def _run_uc_login_sync(
         except Exception:
             pass
 
-        # ── Post-login prompt handler (XIOBR lines 916-951) ─────────────────
-        # Google shows recovery/passkey/add-phone prompts after 2FA login.
-        # These block reaching Gmail. Dismiss them with Cancel/Not now/Skip.
+        # ── Post-login prompt handler ─────────────────────────────────────────
+        # Google shows several interstitial prompts after 2FA login:
+        #   • Recovery / protect account / passkey
+        #   • Home address (gds.google.com/web/homeaddress)
+        #   • Profile photo chooser (myaccount.google.com/profile/photo)
+        #   • Add phone number
+        # All must be dismissed to reach Gmail. Loop up to 8 rounds.
         from selenium.webdriver.common.keys import Keys as _PostKeys
-        for _pl_i in range(3):
+        for _pl_i in range(8):
             try:
-                # reCAPTCHA can appear in post-login prompts too (XIOBR lines 920-924)
+                # reCAPTCHA can appear in post-login prompts too
                 try:
                     if "challenge/recaptcha" in driver.current_url or "recaptcha" in driver.page_source.lower()[:5000]:
                         _rc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recaptcha_solver.py")
@@ -4635,31 +4815,67 @@ def _run_uc_login_sync(
                             if _rc_mod2.solve_recaptcha(driver, log_fn=lambda m: logger.info(m), sleep_fn=uc_sleep):
                                 logger.info("uc-login: reCAPTCHA in post-login loop solved")
                                 uc_sleep(2.0, 3.0)
-                                continue  # re-check page after captcha solve
+                                continue
                 except Exception as _rcpl:
                     logger.warning(f"uc-login: post-login reCAPTCHA check error: {_rcpl}")
 
                 uc_sleep(1.0, 2.0)
+                _cur_pl_url = ""
+                try:
+                    _cur_pl_url = driver.current_url
+                except Exception:
+                    pass
+
+                # URL-based interstitial detection — these pages always need Skip
+                # regardless of page text (Google may render them with lazy JS).
+                _is_interstitial_url = any(u in _cur_pl_url for u in (
+                    "gds.google.com",              # home address
+                    "myaccount.google.com/intro",  # account intro wizard
+                    "myaccount.google.com/profile/photo",  # photo chooser
+                    "accounts.google.com/b/0/EditProfile",  # profile editor
+                    "photos.google.com",           # photo picker redirect
+                ))
+
                 _ps = driver.page_source.lower()
                 _prompt_keywords = [
                     'recovery', 'make sure you can always sign in',
                     'protect your account', 'passkey',
                     'add a phone number', 'not now',
                     'home address', 'set a home address',
+                    # Profile photo prompts:
+                    'add a profile photo', 'choose a photo', 'set your photo',
+                    'profile photo', 'profile picture', 'add photo',
+                    'choose photo', 'upload a photo', 'upload photo',
+                    'select photo', 'take photo',
+                    # Other post-login interstitials:
+                    'keep your account secure', 'add recovery',
+                    'confirm your recovery', 'update your info',
+                    'verify your recovery', 'add backup',
                 ]
-                if any(x in _ps for x in _prompt_keywords):
-                    logger.info(f"uc-login: post-login prompt detected (iter {_pl_i+1}) — clicking Skip/Cancel")
+                if _is_interstitial_url or any(x in _ps for x in _prompt_keywords):
+                    logger.info(f"uc-login: post-login prompt detected (iter {_pl_i+1}, url={_cur_pl_url[:60]}) — clicking Skip/Cancel")
                     try:
                         _skip_rect_js = """
                         (function(){
-                          var all=document.querySelectorAll('button');
+                          // Priority order: Skip > Not now > Cancel > No thanks > close X
+                          var skip_texts = ['skip','not now','cancel','no thanks','close','later','maybe later','dismiss'];
+                          var all=document.querySelectorAll('button,a[role="button"],div[role="button"]');
                           for(var i=0;i<all.length;i++){
-                            var t=(all[i].innerText||all[i].textContent||'').toLowerCase().trim();
-                            if(t.includes('cancel')||t.includes('not now')||t.includes('skip')||t.includes('no thanks')){
-                              var r = all[i].getBoundingClientRect();
-                              return {x:r.x, y:r.y, w:r.width, h:r.height};
+                            var t=(all[i].innerText||all[i].textContent||all[i].getAttribute('aria-label')||'').toLowerCase().trim();
+                            for(var j=0;j<skip_texts.length;j++){
+                              if(t===skip_texts[j]||t.includes(skip_texts[j])){
+                                var r = all[i].getBoundingClientRect();
+                                if(r.width>0&&r.height>0) return {x:r.x, y:r.y, w:r.width, h:r.height};
+                              }
                             }
-                          } return null;
+                          }
+                          // Fallback: SVG close icon button (photo chooser uses this)
+                          var closes=document.querySelectorAll('button[aria-label="Close"],button[aria-label="close"],button[data-dismiss]');
+                          for(var i=0;i<closes.length;i++){
+                            var r=closes[i].getBoundingClientRect();
+                            if(r.width>0&&r.height>0) return {x:r.x,y:r.y,w:r.width,h:r.height};
+                          }
+                          return null;
                         })()
                         """
                         rect = cdp_eval(_skip_rect_js)
@@ -4672,30 +4888,103 @@ def _run_uc_login_sync(
                             driver.execute_cdp_cmd("Input.dispatchMouseEvent", {"type": "mousePressed", "button": "left", "clickCount": 1, "x": int(target_x), "y": int(target_y)})
                             time.sleep(random.uniform(0.04, 0.12))
                             driver.execute_cdp_cmd("Input.dispatchMouseEvent", {"type": "mouseReleased", "button": "left", "clickCount": 1, "x": int(target_x), "y": int(target_y)})
-                            logger.info("uc-login: post-login prompt dismissed (Skip/Cancel) natively")
+                            logger.info(f"uc-login: post-login prompt dismissed (Skip/Cancel) natively (iter {_pl_i+1})")
                             uc_sleep(2.0, 3.0)
                         else:
-                            break
+                            # No button found — try Escape key (closes modal dialogs)
+                            try:
+                                driver.execute_cdp_cmd("Input.dispatchKeyEvent", {"type": "keyDown", "windowsVirtualKeyCode": 27, "key": "Escape"})
+                                time.sleep(0.05)
+                                driver.execute_cdp_cmd("Input.dispatchKeyEvent", {"type": "keyUp", "windowsVirtualKeyCode": 27, "key": "Escape"})
+                                logger.info(f"uc-login: post-login prompt — Escape sent (iter {_pl_i+1})")
+                                uc_sleep(1.5, 2.5)
+                            except Exception:
+                                break
                     except Exception as _ske:
                         logger.warning(f"uc-login: post-login Skip/Cancel failed: {_ske}")
                         break
                 else:
+                    # No prompt detected — we're past the interstitials
+                    logger.info(f"uc-login: post-login prompts cleared (iter {_pl_i+1}, url={_cur_pl_url[:60]})")
                     break
             except Exception as _ple:
                 logger.warning(f"uc-login: post-login prompt check failed: {_ple}")
                 break
 
+        # If UC Chrome landed on an interstitial (gds.google.com/homeaddress, etc.)
+        # instead of Gmail, navigate it there now so cookies are fully established.
+        try:
+            _post_dismiss_url = driver.current_url
+            if ("mail.google.com" not in _post_dismiss_url and
+                    "accounts.google.com" not in _post_dismiss_url):
+                logger.info(f"uc-login: navigating to Gmail after prompts (was on {_post_dismiss_url[:60]})")
+                safe_get("https://mail.google.com/mail/u/0/#inbox", wait=3.0)
+                time.sleep(1.5)
+        except Exception as _gm_nav:
+            logger.warning(f"uc-login: Gmail nav after prompts failed: {_gm_nav}")
+
+        # Wait for URL to settle after post-login prompts — the redirect chain
+        # from TOTP submit → mail.google.com can still be in flight here.
+        for _settle_i in range(10):
+            try:
+                _settle_url = driver.current_url
+                if "accounts.google.com" not in _settle_url or \
+                   ("signin" not in _settle_url and "challenge" not in _settle_url):
+                    break
+            except Exception:
+                break
+            time.sleep(0.8)
         final_url_pre_verify = driver.current_url
+        logger.info(f"uc-login: pre-verify URL: {final_url_pre_verify[:100]}")
         if "accounts.google.com" in final_url_pre_verify and ("signin" in final_url_pre_verify or "challenge" in final_url_pre_verify):
             return {"ok": False, "error": f"Login failed — stuck on sign-in/challenge page: {final_url_pre_verify[:120]}"}
 
-        # Verify — navigate to myaccount; may redirect to google.com/account/about on some accounts
-        safe_get("https://myaccount.google.com/", wait=2.0)
-        time.sleep(1)
-
-        # reCAPTCHA at final verify page (XIOBR lines 957-961)
+        # Verify — navigate to myaccount.google.com as a sanity check.
+        # IMPORTANT: by this point the login already succeeded — cookies are in Chrome's
+        # jar from the TOTP redirect. This navigate is confirmation only; a proxy hiccup
+        # here must NOT fail the login.
+        _verify_url = ""
         try:
-            if "challenge/recaptcha" in driver.current_url or "recaptcha" in driver.page_source.lower()[:5000]:
+            safe_get("https://myaccount.google.com/", wait=3.0)
+            time.sleep(1.5)
+            _verify_url = driver.current_url
+
+            # Detect proxy network error page (ERR_SOCKS_CONNECTION_FAILED etc.)
+            _verify_err = False
+            try:
+                _v_src = driver.execute_script("return document.body?.innerText || ''")[:300]
+                _verify_err = (
+                    _verify_url.startswith("data:") or
+                    "chrome-error://" in _verify_url or
+                    any(k in _v_src.lower() for k in ("err_network", "err_socks", "err_proxy", "net::err",
+                                                        "this page isn't working", "this site can't be reached"))
+                )
+            except Exception:
+                pass
+
+            if _verify_err:
+                # Proxy hiccuped on myaccount.google.com — login is still valid.
+                # Fall back to checking google.com (much lighter, proxy-friendly).
+                logger.warning(f"uc-login: proxy error on myaccount navigate ({_verify_url[:60]}) — trying google.com fallback")
+                try:
+                    safe_get("https://www.google.com/", wait=3.0)
+                    time.sleep(1.5)
+                    _verify_url = driver.current_url
+                    logger.info(f"uc-login: google.com fallback verify URL: {_verify_url[:80]}")
+                except Exception as _gfb_e:
+                    logger.warning(f"uc-login: google.com fallback also failed ({_gfb_e}) — proceeding with cookie capture")
+
+        except Exception as _nav_e:
+            logger.warning(f"uc-login: myaccount navigate failed ({_nav_e}) — proceeding with cookie capture")
+            try:
+                _verify_url = driver.current_url
+            except Exception:
+                _verify_url = ""
+
+        # reCAPTCHA at final verify page
+        try:
+            if "challenge/recaptcha" in _verify_url or \
+               (_verify_url and "recaptcha" in driver.page_source.lower()[:5000]):
                 _rc_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recaptcha_solver.py")
                 if os.path.exists(_rc_path):
                     import importlib.util as _rc_ilu3
@@ -4706,12 +4995,19 @@ def _run_uc_login_sync(
                         logger.info("uc-login: reCAPTCHA at verify page solved — re-navigating")
                         safe_get("https://myaccount.google.com/", wait=2.0)
                         time.sleep(1)
+                        _verify_url = driver.current_url
         except Exception as _rcv:
             logger.warning(f"uc-login: verify-page reCAPTCHA check error: {_rcv}")
-        final_url = driver.current_url
 
-        # Failure: stuck on accounts.google.com sign-in page or redirected to unauthenticated /account/about/
-        if "accounts.google.com/v3/signin" in final_url or "accounts.google.com/ServiceLogin" in final_url or "/account/about/" in final_url:
+        final_url = _verify_url or "https://accounts.google.com/"
+        logger.info(f"uc-login: final verify URL: {final_url[:100]}")
+
+        # Failure: stuck on accounts.google.com sign-in page (not just any google URL).
+        # Only fail if we're ACTUALLY on a signin/challenge page — a network-error page
+        # at myaccount is not a failure (cookies already captured from TOTP redirect).
+        if "accounts.google.com/v3/signin" in final_url or \
+           "accounts.google.com/ServiceLogin" in final_url or \
+           ("/account/about/" in final_url and "myaccount.google.com" not in final_url):
             return {"ok": False, "error": f"Login failed — sign-in page or unauthenticated: {final_url[:120]}"}
 
 
@@ -4894,7 +5190,7 @@ async def cdp_ws_proxy(websocket, session_id: str) -> None:
     Allows patchright running on the Mac Mini to attach to UC Chrome on the
     Colab worker without requiring the Chrome CDP port to be publicly bound.
     patchright calls:
-        pw.chromium.connect_over_cdp("http://100.111.130.118:9300/cdp-proxy/{session_id}")
+        pw.chromium.connect_over_cdp("http://{tailscale_ip}:9300/cdp-proxy/{session_id}")
     NOT YET: this WS endpoint proxies raw CDP frames bidirectionally.
     """
     from fastapi import WebSocket as _WS
@@ -5019,8 +5315,22 @@ def _launch_uc_chrome_for_login(profile_dir: str, proxy_url: str | None) -> tupl
     if os.path.isfile(_our_cd):
         os.makedirs(_uc_cd_dir, exist_ok=True)
         import shutil as _sh2
-        _sh2.copy2(_our_cd, _uc_cd_path)
-        os.chmod(_uc_cd_path, 0o755)
+        # Copy to a temp file first, then atomically rename.
+        # Direct copy2 to the destination while another Chrome is running causes
+        # ETXTBSY (Text file busy) — Linux won't let you overwrite an executing binary.
+        # An atomic rename replaces the directory entry without touching the open inode,
+        # so the running Chrome keeps its old fd while the new Chrome gets the fresh copy.
+        _uc_cd_tmp = _uc_cd_path + f".tmp.{os.getpid()}"
+        try:
+            _sh2.copy2(_our_cd, _uc_cd_tmp)
+            os.chmod(_uc_cd_tmp, 0o755)
+            os.replace(_uc_cd_tmp, _uc_cd_path)   # atomic on Linux (POSIX rename)
+        except OSError as _cd_err:
+            # If rename fails (e.g. cross-device), clean up and proceed without copy.
+            # undetected_chromedriver will patch its own copy on first run.
+            try: os.unlink(_uc_cd_tmp)
+            except OSError: pass
+            logger.warning(f"_launch_uc_chrome_for_login: chromedriver copy failed ({_cd_err}) — using existing")
 
     # Clean stale profile locks
     os.makedirs(profile_dir, exist_ok=True)
@@ -5277,7 +5587,7 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
             # Register session with auto-generated id before expose
             if _uc_session_id not in _sessions:
                 _sessions[_uc_session_id] = {
-                    "context": None, "proxy_url": _proxy_url,
+                    "context": None, "proxy_url": proxy_url,
                     "cdp_ws_url": f"ws://{_tailscale_ip}:{_uc_port}",
                 }
             try:
@@ -5594,8 +5904,15 @@ async def run_uc_login_start(req: UCLoginRequest) -> dict:
         if os.path.isfile(_our_cd):
             os.makedirs(_uc_cd_dir, exist_ok=True)
             import shutil as _sh
-            _sh.copy2(_our_cd, _uc_cd_path)
-            os.chmod(_uc_cd_path, 0o755)
+            _uc_cd_tmp = _uc_cd_path + f".tmp.{os.getpid()}"
+            try:
+                _sh.copy2(_our_cd, _uc_cd_tmp)
+                os.chmod(_uc_cd_tmp, 0o755)
+                os.replace(_uc_cd_tmp, _uc_cd_path)
+            except OSError as _cd_err2:
+                try: os.unlink(_uc_cd_tmp)
+                except OSError: pass
+                logger.warning(f"_launch_uc_chrome: chromedriver copy failed ({_cd_err2}) — using existing")
         _drv_path = _uc_cd_path if os.path.isfile(_uc_cd_path) else None
 
         driver = uc.Chrome(
@@ -6043,13 +6360,12 @@ async def session_cascade_check(req: CascadeCheckRequest):
                     no_viewport=False,
                 )
                 page = context.pages[0] if context.pages else await context.new_page()
-                await page.goto("https://myaccount.google.com/", wait_until="domcontentloaded", timeout=20000)
+                await page.goto("https://myaccount.google.com/", wait_until="networkidle", timeout=20000)
                 await asyncio.sleep(1.5)
 
-                _title = (await page.title()).lower()
-                _url = page.url
-                is_valid = "myaccount.google.com" in _url and "sign in" not in _title
-                logger.info(f"cascade-check: L2 url={_url} title={_title!r} valid={is_valid}")
+                prefix = req.email.split("@")[0].lower()
+                body_text = await page.evaluate("document.body.innerText.toLowerCase()")
+                is_valid = prefix in body_text and "sign in" not in (await page.title()).lower()
 
                 await context.close()
 
@@ -6110,25 +6426,8 @@ async def session_cascade_check(req: CascadeCheckRequest):
         if _found_tar:
             logger.info(f"cascade-check: L3 Drive profile found: {_found_tar}")
             try:
-                import uuid as _uuid_cc, shutil as _shutil_cc
-                _stage_id = _uuid_cc.uuid4().hex[:8]
-                _stage_dir = f"/tmp/xiorun_profiles/_stage_{_stage_id}"
-                os.makedirs(_stage_dir, exist_ok=True)
-                
                 with _tf_cc.open(_found_tar, "r:gz") as tf:
-                    tf.extractall(path=_stage_dir)
-                
-                _extracted_items = [os.path.join(_stage_dir, p) for p in os.listdir(_stage_dir)]
-                _extracted_root = _extracted_items[0] if _extracted_items else None
-                
-                if _extracted_root and os.path.isdir(_extracted_root):
-                    if os.path.exists(_profile_dir):
-                        _shutil_cc.rmtree(_profile_dir, ignore_errors=True)
-                    _shutil_cc.move(_extracted_root, _profile_dir)
-                    _shutil_cc.rmtree(_stage_dir, ignore_errors=True)
-                else:
-                    logger.warning(f"cascade-check: L3 extract produced no root dir in {_stage_dir}")
-                    
+                    tf.extractall(path="/tmp/xiorun_profiles")
                 logger.info(f"cascade-check: L3 profile extracted to {_profile_dir}")
                 return {"valid": False, "profile_dir": _profile_dir, "level": "DRIVE_PULL",
                         "needs_verify": True, "source_tar": _found_tar}
@@ -7214,7 +7513,7 @@ async def ai_install_agy() -> dict:
                                             logger.info(f"agy_auth/browser: [totp] waiting {_totp_remaining:.1f}s for fresh window")
                                             _time.sleep(_totp_remaining + 0.5)
                                         _totp_code = _pyotp.TOTP(_agy_totp_secret).now()
-                                        logger.info(f"agy_auth/browser: [totp] code={_totp_code}")
+                                        logger.info(f"agy_auth/browser: [totp] code=****{_totp_code[-2:]}")
                                         # Find the input field
                                         _totp_input = _first_visible(_pg, [
                                             "input[type='tel']", "input[type='number']",

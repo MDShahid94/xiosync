@@ -56,24 +56,27 @@ class ConsensusEngine:
     ) -> None:
         """Insert vote, recalculate Bayesian scores, and auto-promote/demote."""
         stmt = insert(XioflowConsensusVote).values(
-            org_id=org_id,
+            organization_id=org_id,
             node_id=node_id,
             voter_id=voter_id,
             raw_vote=raw_vote,
-            tier_confidence=tier_confidence
+            tier_confidence=tier_confidence,
+            context_hash=context_hash,
         )
         stmt = stmt.on_conflict_do_update(
-            index_elements=['node_id', 'voter_id'],
+            index_elements=['node_id', 'voter_id', 'context_hash'],
             set_={'raw_vote': raw_vote, 'tier_confidence': tier_confidence}
         )
         self.session.execute(stmt)
 
-        node = self.session.query(XioflowMemoryNode).filter_by(id=node_id, org_id=org_id).first()
+        node = self.session.query(XioflowMemoryNode).filter_by(
+            id=node_id, organization_id=org_id
+        ).first()
         if not node:
             return
 
         existing_score = getattr(node, 'ema_score', 0.5)
-        vote_weight = getattr(node, 'vote_weight', 0.0)
+        vote_weight = getattr(node, 'total_vote_weight', 0.0)
 
         bayesian, new_ema, new_weight = self.calculate_bayesian_ema(
             existing_score, raw_vote, tier_confidence, vote_weight, self.settings
@@ -81,7 +84,7 @@ class ConsensusEngine:
 
         node.bayesian_score = bayesian
         node.ema_score = new_ema
-        node.vote_weight = new_weight
+        node.total_vote_weight = new_weight
 
         if node.tier == 'platform_global':
             self.session.commit()
@@ -102,3 +105,4 @@ class ConsensusEngine:
             node.status = 'ARCHIVED'
 
         self.session.commit()
+

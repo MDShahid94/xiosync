@@ -18,7 +18,6 @@ from sqlalchemy.orm import Session
 from xiosync.domain.context import OrgContext
 from xiosync.platform.ids import new_id
 from xiosync.subsystems.xiogrid.domain.pppoe import (
-    PPPoECeilings,
     PPPoESlotState,
     profile_name_for_slot,
 )
@@ -27,6 +26,7 @@ from xiosync.subsystems.xiogrid.models.exit_node import (
     PPPoEExitNode,
     PPPoEHost,
 )
+from xiosync.subsystems.xiogrid.models.account_binding import AccountIpBinding
 from xiosync.subsystems.xiogrid.services.ssh_exec import vm_script
 
 __all__ = ["PPPoENodeService", "PPPoESlotRecord", "FingerprintRecord"]
@@ -49,6 +49,7 @@ class PPPoESlotRecord:
     fingerprint_profile_name: str
     total_sessions_served: int
     reconnect_count: int
+    fingerprint: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,14 +266,74 @@ class PPPoENodeService:
         session_id: str,
         worker_ts_ip: str,
         preferred_host_id: uuid.UUID | None = None,
+        google_account: str | None = None,
     ) -> PPPoESlotRecord:
-        """Acquire LRU idle slot from any active host and assign it to the worker.
+        """Acquire a residential exit slot and assign it to the requesting worker.
 
-        If preferred_host_id is given, try that host first.
-        Falls back to any active host if preferred is full.
-        Auto-provisions on demand if warm pool is exhausted — then assigns
-        immediately so the returned record is always in ASSIGNED state.
+        Per-account IP pinning (google_account):
+          If google_account is provided, always try to reuse the same PPPoE slot
+          the account was previously bound to — same IP means Google doesn't see
+          an IP change between login sessions.
+          - If the bound slot is healthy (idle/assigned): reassign it.
+          - If it's down/destroyed: rotate it to get a new IP, update binding.
+          - If no binding exists: pick LRU idle slot, create binding.
+
+        Falls back to LRU slot pick when no account hint is given.
+        Auto-provisions on demand if the warm pool is exhausted.
         """
+        org_id = ctx.organization_id
+
+        # ── 1. Per-account sticky slot lookup ────────────────────────────────
+        if google_account:
+            binding = self._db.scalar(
+                select(AccountIpBinding).where(
+                    AccountIpBinding.organization_id == org_id,
+                    AccountIpBinding.google_account  == google_account,
+                )
+            )
+            if binding is not None:
+                # Verify the bound slot is still alive
+                node = self._db.scalar(
+                    select(PPPoEExitNode).where(
+                        PPPoEExitNode.host_id  == binding.host_id,
+                        PPPoEExitNode.ppp_slot == binding.ppp_slot,
+                    )
+                )
+                if node is not None and node.state not in (
+                    PPPoESlotState.DESTROYED, PPPoESlotState.DOWN
+                ):
+                    # Reuse: update binding stats + assign
+                    now = datetime.now(UTC)
+                    binding.last_used_at  = now
+                    binding.total_sessions += 1
+                    binding.last_public_ip = node.public_ip
+                    self._db.flush()
+                    return self.assign_to_worker(
+                        binding.host_id, binding.ppp_slot, worker_ts_ip, session_id
+                    )
+
+                # Bound slot is down — try rotating to get a fresh IP on the same slot
+                if node is not None:
+                    try:
+                        host = self._get_host(binding.host_id)
+                        result = vm_script(host, "rotate-slot.sh", node.ppp_slot, timeout=45)
+                        parts = result.stdout.split() if result.ok else []
+                        if parts and parts[0] == "up" and len(parts) > 1:
+                            node.public_ip    = parts[1]
+                            node.state        = PPPoESlotState.IDLE
+                            node.reconnect_count += 1
+                            node.last_seen    = datetime.now(UTC)
+                            binding.last_public_ip = parts[1]
+                            binding.last_used_at   = datetime.now(UTC)
+                            binding.total_sessions += 1
+                            self._db.flush()
+                            return self.assign_to_worker(
+                                binding.host_id, binding.ppp_slot, worker_ts_ip, session_id
+                            )
+                    except Exception:
+                        pass  # rotate failed — fall through to pick a fresh slot
+
+        # ── 2. Standard LRU idle slot pick ───────────────────────────────────
         node, host = self._pick_idle_node(preferred_host_id)
 
         if node is None:
@@ -286,9 +347,32 @@ class PPPoENodeService:
             # Provision — blocks until pppd connects and slot is IDLE
             self.provision_slot(ctx, host.id, slot)
             # Immediately assign to the requesting worker
-            return self.assign_to_worker(host.id, slot, worker_ts_ip, session_id)
+            record = self.assign_to_worker(host.id, slot, worker_ts_ip, session_id)
+        else:
+            record = self.assign_to_worker(host.id, node.ppp_slot, worker_ts_ip, session_id)
 
-        return self.assign_to_worker(host.id, node.ppp_slot, worker_ts_ip, session_id)
+        # ── 3. Create or update account binding for new accounts ─────────────
+        if google_account:
+            existing = self._db.scalar(
+                select(AccountIpBinding).where(
+                    AccountIpBinding.organization_id == org_id,
+                    AccountIpBinding.google_account  == google_account,
+                )
+            )
+            if existing is None:
+                binding = AccountIpBinding(
+                    organization_id = org_id,
+                    google_account  = google_account,
+                    host_id         = record.host_id,
+                    ppp_slot        = record.ppp_slot,
+                    last_used_at    = datetime.now(UTC),
+                    total_sessions  = 1,
+                    last_public_ip  = record.public_ip,
+                )
+                self._db.add(binding)
+                self._db.flush()
+
+        return record
 
     # ─── Health ──────────────────────────────────────────────────────
 
@@ -430,7 +514,7 @@ class PPPoENodeService:
             select(PPPoEExitNode).where(
                 PPPoEExitNode.host_id == host_id,
                 PPPoEExitNode.ppp_slot == slot,
-            )
+            ).with_for_update()
         )
         if not node:
             raise ValueError(f"Slot {slot} on host {host_id} not in DB")
@@ -456,6 +540,7 @@ class PPPoENodeService:
                 PPPoEExitNode.last_seen.asc().nullsfirst(),
             )
             .limit(1)
+            .with_for_update(skip_locked=True, of=PPPoEExitNode)
         )
         row = self._db.execute(stmt).first()
         if not row:
@@ -484,6 +569,28 @@ class PPPoENodeService:
     def _to_record(
         self, node: PPPoEExitNode, host: PPPoEHost, profile: FingerprintProfile | None
     ) -> PPPoESlotRecord:
+        fingerprint = None
+        if profile:
+            chrome_version = "131.0.6778.108"
+            fingerprint = {
+                "os":             profile.os,
+                "cores":          profile.cores,
+                "ram":            profile.ram_gb,
+                "webgl_renderer": profile.webgl_renderer,
+                "macos_version":  profile.ch_version,
+                "width":          profile.screen_width,
+                "height":         profile.screen_height,
+                "dpr":            profile.dpr,
+                "platform":       profile.platform,
+                "ch_platform":    profile.ch_platform,
+                "ch_arch":        profile.ch_arch,
+                "cam_name":       profile.cam_name,
+                "is_mobile":      profile.is_mobile,
+                "ua_template":    profile.ua_template.replace("{cv}", chrome_version),
+                "canvas_seed":    profile.canvas_seed,
+                "audio_seed":     profile.audio_seed,
+            }
+
         return PPPoESlotRecord(
             id=node.id,
             host_id=node.host_id,
@@ -500,8 +607,8 @@ class PPPoENodeService:
             fingerprint_profile_name=profile.name if profile else "unknown",
             total_sessions_served=node.total_sessions_served,
             reconnect_count=node.reconnect_count,
+            fingerprint=fingerprint,
         )
-
     def _fp_record(self, fp: FingerprintProfile) -> FingerprintRecord:
         return FingerprintRecord(
             id=fp.id, name=fp.name, os=fp.os,

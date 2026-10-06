@@ -16,7 +16,6 @@ Workers (Colab, VM, etc.) upload/download blobs directly to the configured provi
 then call POST /storage/objects to register the object in XIOSYNC's index.
 """
 from alembic import op
-import sqlalchemy as sa
 
 revision = "0034"
 down_revision = "0033"

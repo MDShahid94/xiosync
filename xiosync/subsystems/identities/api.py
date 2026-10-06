@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime
 from typing import Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 router = APIRouter(prefix="/identities", tags=["Identities"])
@@ -260,7 +260,6 @@ def batch_allocate(
     Returns fewer than `count` if the pool is exhausted. Use tags to filter
     by capability (e.g. tags=['pro'], tags=['verified']).
     """
-    from xiosync.subsystems.identities.service import IdentityService
     from sqlalchemy.orm import Session as OrmSession
     from sqlalchemy import text as sqlt
     ctx = _ctx(request)

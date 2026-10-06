@@ -110,13 +110,29 @@ def tick_cron_triggers(session: Session) -> int:
             # Another worker already fired this trigger in this window
             continue
 
+        # Snapshot template at dispatch for versioning
+        tmpl_snap = None
+        if template_id:
+            snap = session.execute(text("""
+                SELECT slug, dag_domain, dag_root_intent, template_type,
+                       COALESCE(config, '{}'::jsonb) as config
+                FROM workflow_templates WHERE id = :tid
+            """), {"tid": template_id}).fetchone()
+            if snap:
+                tmpl_snap = json.dumps({
+                    "slug": snap.slug, "dag_domain": snap.dag_domain,
+                    "dag_root_intent": snap.dag_root_intent,
+                    "template_type": snap.template_type,
+                    "config": snap.config if isinstance(snap.config, dict) else {},
+                })
         session.execute(
             text("""
                 INSERT INTO xioflow_runs
-                  (id, organization_id, template_id, trigger_id, state, context, started_at)
+                  (id, organization_id, template_id, trigger_id, state, context,
+                   template_snapshot, started_at)
                 VALUES
                   (:id, :org_id, :template_id, :trigger_id, 'PENDING',
-                   cast(:ctx as jsonb), now())
+                   cast(:ctx as jsonb), cast(:snap as jsonb), now())
             """),
             {
                 "id": run_id,
@@ -124,6 +140,7 @@ def tick_cron_triggers(session: Session) -> int:
                 "template_id": template_id,
                 "trigger_id": trigger_id,
                 "ctx": json.dumps(ctx_defaults),
+                "snap": tmpl_snap,
             },
         )
         created += 1

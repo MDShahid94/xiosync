@@ -26,19 +26,22 @@ def test_valid_config_loads_with_defaulted_log_level() -> None:
 
 def test_all_environments_and_explicit_log_level() -> None:
     for name in ("dev", "ci", "staging", "production"):
-        config = load_config(
-            {
-                **VALID_ENV,
-                "XIOSYNC_ENVIRONMENT": name,
-                "XIOSYNC_LOG_LEVEL": "debug",
-                # Phase 7 Step 3 (INV-CORS-1) requires an explicit allowlist in
-                # staging and production.  Providing it for all environments
-                # keeps this test focused on log-level/environment parsing.
-                "CORS_ALLOWED_ORIGINS": "https://app.example.com",
-            }
-        )
+        extra: dict[str, str] = {
+            **VALID_ENV,
+            "XIOSYNC_ENVIRONMENT": name,
+            "XIOSYNC_LOG_LEVEL": "debug",
+            # Phase 7 Step 3 (INV-CORS-1) requires an explicit allowlist in
+            # staging and production.  Providing it for all environments
+            # keeps this test focused on log-level/environment parsing.
+            "CORS_ALLOWED_ORIGINS": "https://app.example.com",
+        }
+        # staging and production require REDIS_URL (rate-limit store)
+        if name in ("staging", "production"):
+            extra["REDIS_URL"] = "redis://localhost:6379/0"
+        config = load_config(extra)
         assert config.environment.value == name
         assert config.log_level == "DEBUG"
+
 
 
 def test_plain_postgresql_scheme_is_accepted() -> None:

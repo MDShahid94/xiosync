@@ -7,7 +7,6 @@ Endpoints:
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import uuid
@@ -19,7 +18,6 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session as OrmSession
 
 from xiosync.domain.context import OrgContext
-from xiosync.platform.ids import new_id
 
 logger = logging.getLogger(__name__)
 
@@ -195,21 +193,15 @@ Return ONLY valid JSON matching this exact schema (no markdown, no explanation):
 {_DAG_SCHEMA}
 """
 
-    # Call Gemini
+    # Call Gemini via AIGateway
     try:
-        import google.generativeai as genai  # type: ignore[import]
-        api_key = os.environ.get("GEMINI_API_KEY", "")
-        if not api_key:
-            raise HTTPException(status_code=503, detail="GEMINI_API_KEY not configured")
-
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            generation_config={"response_mime_type": "application/json"},
-        )
-        response = model.generate_content(prompt)
+        from xiosync.subsystems.xioai.gateway import AIGateway
+        gw = AIGateway()
+        result_ai = await gw.generate(prompt, output_format='json')
+        if not result_ai.success:
+            raise HTTPException(status_code=500, detail="AIGateway conversion failed")
         import json
-        dag_json = json.loads(response.text)
+        dag_json = json.loads(result_ai.text)
     except HTTPException:
         raise
     except Exception as exc:

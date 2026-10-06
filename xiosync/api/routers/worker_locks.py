@@ -1,19 +1,23 @@
 """worker_locks.py — Distributed lock API for Colab workers.
 
-Backed by XIOSYNC's Redis instance. Workers call these endpoints to
-coordinate concurrent access to shared Drive FUSE filesystem objects.
+Backed by XIOSYNC's Redis instance and PostgreSQL advisory locks. Workers call
+these endpoints to coordinate concurrent access to shared Drive FUSE filesystem objects.
 
 Endpoints (public — auth via X-Worker-Secret header):
-  POST /workers/lock/acquire   — atomic Redis SETNX + TTL
-  POST /workers/lock/release   — DEL only if current holder matches
-  GET  /workers/lock/status/{key} — inspect lock state
+  Redis-backed:
+    POST /workers/lock/acquire   — atomic Redis SETNX + TTL
+    POST /workers/lock/release   — DEL only if current holder matches
+    GET  /workers/lock/status/{key} — inspect lock state
+  PostgreSQL Advisory Locks:
+    POST /workers/lock/pg/acquire — PostgreSQL advisory lock acquire
+    POST /workers/lock/pg/release — PostgreSQL advisory lock release
+    GET  /workers/lock/pg/status/{key} — check if locked
 
 Redis key pattern:  xio:objlock:{sha256_of_resource_key}
 
-Why Redis?
-  - SETNX is truly atomic across all workers (no race condition).
-  - TTL auto-expires dead worker locks (no manual cleanup needed).
-  - XIOSYNC server is reachable by all workers via Tailscale.
+Why Redis / PostgreSQL Advisory Locks?
+  - Redis SETNX is atomic across all workers with auto-expiring TTL.
+  - PostgreSQL advisory locks provide session-level auto-release if connection drops.
   - Filesystem flock() does NOT propagate across different VMs.
 """
 from __future__ import annotations
@@ -23,13 +27,46 @@ import json
 import logging
 import os
 import time
+from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Path
 from pydantic import BaseModel, ConfigDict, Field
 
+from xiosync.subsystems.xiorun.pg_advisory_lock import (
+    get_lock_holder,
+    get_lock_info,
+    is_locked,
+)
+from xiosync.subsystems.xiorun.pg_advisory_lock import (
+    release_lock as pg_unlock,
+)
+from xiosync.subsystems.xiorun.pg_advisory_lock import (
+    try_acquire_lock as pg_try_lock,
+)
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["worker-locks"])
+
+
+def _get_db_engine() -> Any:
+    """Retrieve application database engine singleton."""
+    try:
+        from xiosync.persistence.engine import get_engine  # noqa: PLC0415
+        eng = get_engine()
+        if eng is not None:
+            return eng
+    except ImportError:
+        pass
+    try:
+        from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
+        eng = get_engine()
+        if eng is not None:
+            return eng
+    except ImportError:
+        pass
+    return None
+
 
 # ── Redis setup ───────────────────────────────────────────────────────────────
 
@@ -254,3 +291,135 @@ def lock_status(
 
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Lock service error: {exc}") from exc
+
+
+# ── PostgreSQL Advisory Lock Endpoints ────────────────────────────────────────
+
+@router.post(
+    "/workers/lock/pg/acquire",
+    response_model=AcquireResponse,
+    summary="[Worker] Acquire a distributed lock (PostgreSQL advisory lock)",
+)
+def pg_acquire_lock(
+    payload: AcquireRequest,
+    x_worker_secret: str | None = Header(default=None),
+) -> AcquireResponse:
+    """Attempt to acquire a distributed lock via PostgreSQL advisory lock.
+
+    Uses PostgreSQL pg_try_advisory_lock(key) with a 64-bit hashed key.
+    Session-level locks automatically release when the DB connection closes.
+
+    Returns {acquired: true} if the lock was taken.
+    Returns {acquired: false, holder: "node-name"} if already held.
+    """
+    if not _worker_secret_ok(x_worker_secret):
+        raise HTTPException(status_code=401, detail="Invalid X-Worker-Secret")
+
+    engine = _get_db_engine()
+    if engine is None:
+        raise HTTPException(status_code=503, detail="Database engine not available")
+
+    try:
+        acquired = pg_try_lock(engine, payload.resource_key, payload.node_name)
+        if acquired:
+            logger.debug(
+                "lock.pg_acquired resource=%r node=%r",
+                payload.resource_key, payload.node_name,
+            )
+            return AcquireResponse(
+                acquired=True,
+                holder=payload.node_name,
+                ttl_seconds=payload.ttl_seconds,
+            )
+        else:
+            holder = get_lock_holder(engine, payload.resource_key)
+            logger.debug(
+                "lock.pg_denied resource=%r requested_by=%r holder=%r",
+                payload.resource_key, payload.node_name, holder,
+            )
+            return AcquireResponse(
+                acquired=False,
+                holder=holder,
+                ttl_seconds=None,
+            )
+    except Exception as exc:
+        logger.exception("lock.pg_acquire_error resource=%r", payload.resource_key)
+        raise HTTPException(status_code=503, detail=f"Lock service error: {exc}") from exc
+
+
+@router.post(
+    "/workers/lock/pg/release",
+    response_model=ReleaseResponse,
+    summary="[Worker] Release a distributed lock (PostgreSQL advisory lock)",
+)
+def pg_release_lock_endpoint(
+    payload: ReleaseRequest,
+    x_worker_secret: str | None = Header(default=None),
+) -> ReleaseResponse:
+    """Release a PostgreSQL advisory lock — only if the requesting node is the current holder."""
+    if not _worker_secret_ok(x_worker_secret):
+        raise HTTPException(status_code=401, detail="Invalid X-Worker-Secret")
+
+    engine = _get_db_engine()
+    if engine is None:
+        raise HTTPException(status_code=503, detail="Database engine not available")
+
+    try:
+        if not is_locked(engine, payload.resource_key):
+            return ReleaseResponse(released=False, reason="lock_not_found")
+
+        holder = get_lock_holder(engine, payload.resource_key)
+        if holder is not None and holder != payload.node_name:
+            return ReleaseResponse(
+                released=False,
+                reason=f"not_holder (held by {holder!r})",
+            )
+
+        released = pg_unlock(engine, payload.resource_key)
+        if released:
+            logger.debug(
+                "lock.pg_released resource=%r node=%r",
+                payload.resource_key, payload.node_name,
+            )
+            return ReleaseResponse(released=True)
+        else:
+            return ReleaseResponse(released=False, reason="unlock_failed")
+
+    except Exception as exc:
+        logger.exception("lock.pg_release_error resource=%r", payload.resource_key)
+        raise HTTPException(status_code=503, detail=f"Lock service error: {exc}") from exc
+
+
+@router.get(
+    "/workers/lock/pg/status/{resource_key:path}",
+    response_model=LockStatusResponse,
+    summary="[Worker] Inspect PostgreSQL advisory lock state for a resource key",
+)
+def pg_lock_status(
+    resource_key: str = Path(description="URL-encoded resource key"),
+    x_worker_secret: str | None = Header(default=None),
+) -> LockStatusResponse:
+    """Check whether a resource key is currently locked via PostgreSQL advisory lock and by whom."""
+    if not _worker_secret_ok(x_worker_secret):
+        raise HTTPException(status_code=401, detail="Invalid X-Worker-Secret")
+
+    engine = _get_db_engine()
+    if engine is None:
+        raise HTTPException(status_code=503, detail="Database engine not available")
+
+    try:
+        locked = is_locked(engine, resource_key)
+        if not locked:
+            return LockStatusResponse(locked=False)
+
+        info = get_lock_info(engine, resource_key) or {}
+        return LockStatusResponse(
+            locked=True,
+            holder=info.get("holder"),
+            acquired_at=info.get("acquired_at"),
+            ttl_seconds=None,
+        )
+    except Exception as exc:
+        logger.exception("lock.pg_status_error resource=%r", resource_key)
+        raise HTTPException(status_code=503, detail=f"Lock service error: {exc}") from exc
+

@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from xiosync.subsystems.xiogrid.domain.pppoe import PPPoESlotState, PPPoECeilings
+from xiosync.subsystems.xiogrid.domain.pppoe import PPPoESlotState
 from xiosync.subsystems.xiogrid.models.exit_node import PPPoEExitNode, PPPoEHost
 from xiosync.subsystems.xiogrid.services.ssh_exec import ssh_run, vm_script
 

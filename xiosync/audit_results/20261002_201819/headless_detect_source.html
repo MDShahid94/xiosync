@@ -1,0 +1,696 @@
+<!DOCTYPE html><html lang="en" data-headless-score="0.470" data-headless-detected="false" data-detection-version="1.0.0"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Headless Browser Detector - Test Suite</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🕵️ Headless Browser Detector</h1>
+            <p>Real-time detection of automation frameworks and headless browsers</p>
+        </div>
+
+        <div id="loading" class="loading" style="display: none;">
+            <div>🔍 Analyzing browser environment...</div>
+        </div>
+
+        <div id="results" style="display: block;">
+            <!-- Score Card -->
+            <div class="score-card">
+                <div class="score-label">Headless Detection Score</div>
+                <div class="score-value" id="score">0.47</div>
+                <div id="status-badge" class="status-badge status-suspicious">⚠️ Suspicious Activity</div>
+                <p style="margin-top: 15px; color: #666; font-size: 0.95rem;">
+                    Score ranges from 0.0 (normal browser) to 1.0 (definitely headless)
+                </p>
+            </div>
+
+            <!-- Detection Cards Grid -->
+            <div class="grid">
+                <!-- WebDriver Detection -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">🤖</span>
+                        WebDriver Detection
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">WebDriver Present<div class="check-item-tooltip"><div class="tooltip-desc">Indicates if navigator.webdriver flag is set to true</div><div class="tooltip-status tooltip-good">✓ Browser is running normally without automation framework</div></div></span>
+                        <span class="check-value pass" id="webdriver-status">NO</span>
+                    </div>
+                </div>
+
+                <!-- CDP Artifacts -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">🔧</span>
+                        CDP Artifacts
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Detected<div class="check-item-tooltip"><div class="tooltip-desc">Chrome DevTools Protocol connection or ChromeDriver presence</div><div class="tooltip-status tooltip-bad">✗ CDP-based automation detected (Puppeteer, Playwright, Selenium 4+)</div></div></span>
+                        <span class="check-value fail" id="cdp-detected">YES</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">CDC Keys Found<div class="check-item-tooltip"><div class="tooltip-desc">Number of ChromeDriver-specific CDC keys in window/document</div><div class="tooltip-status tooltip-good">✓ 0 keys - no ChromeDriver injection</div></div></span>
+                        <span class="check-value info" id="cdp-keys">0</span>
+                    </div>
+                    <div id="cdp-signals" class="signal-list" style="display: block;"><span class="signal-item">webdriver_getter_modified</span></div>
+                </div>
+
+                <!-- User Agent -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">📱</span>
+                        User Agent
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Suspicious Patterns<div class="check-item-tooltip"><div class="tooltip-desc">User-Agent contains automation/headless keywords</div><div class="tooltip-status tooltip-good">✓ Clean User-Agent string without automation indicators</div></div></span>
+                        <span class="check-value pass" id="ua-suspicious">NO</span>
+                    </div>
+                    <div id="ua-matches" class="signal-list" style="display: none;"></div>
+                </div>
+
+                <!-- WebGL Renderer -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">🎨</span>
+                        WebGL Renderer
+                        <span class="new-badge">ENHANCED</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Supported<div class="check-item-tooltip"><div class="tooltip-desc">Browser supports WebGL rendering API</div><div class="tooltip-status tooltip-good">✓ WebGL available - normal browser capability</div></div></span>
+                        <span class="check-value pass" id="webgl-supported">YES</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Software Renderer<div class="check-item-tooltip"><div class="tooltip-desc">Using CPU-based software rendering instead of GPU</div><div class="tooltip-status tooltip-good">✓ Hardware GPU rendering - normal desktop/laptop</div></div></span>
+                        <span class="check-value pass" id="webgl-software">NO</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Renderer<div class="check-item-tooltip"><div class="tooltip-desc">GPU vendor and model reported by WebGL</div><div class="tooltip-status tooltip-info">ℹ Shows claimed GPU hardware. Can be spoofed but rendering test verifies it</div></div></span>
+                        <span class="check-value info" id="webgl-renderer">ANGLE (Apple, Apple M1, OpenGL</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Rendering Test<div class="check-item-tooltip"><div class="tooltip-desc">Complex 3D scene rendering matches claimed GPU capabilities</div><div class="tooltip-status tooltip-good">✓ Rendering output consistent with reported GPU</div></div></span>
+                        <span class="check-value pass" id="webgl-rendering-test">NO</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Noise Ratio<div class="check-item-tooltip"><div class="tooltip-desc">Pixel variation in rendered output (hardware-specific)</div><div class="tooltip-status tooltip-good">✓ &lt;1% noise - normal hardware rendering</div></div></span>
+                        <span class="check-value info" id="webgl-noise">0.50%</span>
+                    </div>
+                </div>
+
+                <!-- Worker UA Check (NEW 2026) -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">🔧</span>
+                        Worker UA Check
+                        <span class="new-badge">NEW 2026</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Available<div class="check-item-tooltip"><div class="tooltip-desc">Web Workers API is supported and functional</div><div class="tooltip-status tooltip-good">✓ Workers available - normal browser</div></div></span>
+                        <span class="check-value pass" id="worker-available">YES</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">UA Mismatch<div class="check-item-tooltip"><div class="tooltip-desc">User-Agent differs between main thread and Worker</div><div class="tooltip-status tooltip-bad">✗ UA mismatch - automation failed to patch Worker context</div></div></span>
+                        <span class="check-value fail" id="worker-mismatch">YES</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Status<div class="check-item-tooltip"><div class="tooltip-desc">Current state of Worker UA validation</div><div class="tooltip-status tooltip-info">ℹ Shows if check is pending, completed, or any mismatch details</div></div></span>
+                        <span class="check-value info" id="worker-status">User-Agent differs in Worker - automation detected</span>
+                    </div>
+                </div>
+
+                <!-- Emoji Rendering (NEW 2026) -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">😀</span>
+                        Emoji OS Check
+                        <span class="new-badge">NEW 2026</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Rendered<div class="check-item-tooltip"><div class="tooltip-desc">Canvas successfully rendered emoji character</div><div class="tooltip-status tooltip-good">✓ Emoji rendering works - normal browser</div></div></span>
+                        <span class="check-value pass" id="emoji-rendered">YES</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Detected OS<div class="check-item-tooltip"><div class="tooltip-desc">Operating system detected from emoji rendering style</div><div class="tooltip-status tooltip-info">ℹ Different OS render emoji differently. Should match User-Agent OS</div></div></span>
+                        <span class="check-value info" id="emoji-os">macOS</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Suspicious<div class="check-item-tooltip"><div class="tooltip-desc">Emoji rendering doesn't match claimed OS from User-Agent</div><div class="tooltip-status tooltip-good">✓ Emoji style matches reported OS</div></div></span>
+                        <span class="check-value pass" id="emoji-suspicious">NO</span>
+                    </div>
+                </div>
+
+                <!-- Window Dimensions -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">📐</span>
+                        Window Dimensions
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Has Outer Dimensions<div class="check-item-tooltip"><div class="tooltip-desc">window.outerWidth/outerHeight are available</div><div class="tooltip-status tooltip-good">✓ Outer dimensions present - normal windowed browser</div></div></span>
+                        <span class="check-value pass" id="outer-dims">YES</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Inner = Outer<div class="check-item-tooltip"><div class="tooltip-desc">Inner and outer window dimensions are identical</div><div class="tooltip-status tooltip-good">✓ Different dimensions - normal browser with chrome/toolbar</div></div></span>
+                        <span class="check-value pass" id="inner-outer">NO</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Dimensions<div class="check-item-tooltip"><div class="tooltip-desc">Inner dimensions / Outer dimensions (width x height)</div><div class="tooltip-status tooltip-info">ℹ Inner is viewport, outer includes browser chrome. Difference indicates normal browser</div></div></span>
+                        <span class="check-value info" id="dimensions">1919x940 / 2560x1600</span>
+                    </div>
+                </div>
+
+                <!-- Browser APIs -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">🔌</span>
+                        Browser APIs
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Plugins<div class="check-item-tooltip"><div class="tooltip-desc">Number of browser plugins available</div><div class="tooltip-status tooltip-info">ℹ Normal browsers have 3-5 plugins. Headless often has 0</div></div></span>
+                        <span class="check-value info" id="plugins-count"></span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Languages<div class="check-item-tooltip"><div class="tooltip-desc">navigator.languages array is populated</div><div class="tooltip-status tooltip-good">✓ Languages array present - normal browser</div></div></span>
+                        <span class="check-value info" id="languages-check">N/A</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Media Devices<div class="check-item-tooltip"><div class="tooltip-desc">navigator.mediaDevices API is available</div><div class="tooltip-status tooltip-good">✓ MediaDevices API present - normal browser</div></div></span>
+                        <span class="check-value pass" id="media-devices">YES</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Notifications<div class="check-item-tooltip"><div class="tooltip-desc">Notification permission state (granted/denied/default)</div><div class="tooltip-status tooltip-info">ℹ Headless often defaults to 'denied', normal browsers to 'default'</div></div></span>
+                        <span class="check-value info" id="notifications">default</span>
+                    </div>
+                </div>
+
+                <!-- Automation Flags -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">🚨</span>
+                        Automation Flags
+                    </div>
+                    <div id="automation-flags">
+                    <div class="check-item">
+                        <span class="check-label">domAutomation<div class="check-item-tooltip"><div class="tooltip-desc">Global domAutomation property - Chrome automation indicator</div><div class="tooltip-status tooltip-good">✓ Not present - normal browser</div></div></span>
+                        <span class="check-value pass" id="flag-domautomation">NO</span>
+                    </div>
+                
+                    <div class="check-item">
+                        <span class="check-label">_selenium<div class="check-item-tooltip"><div class="tooltip-desc">Selenium-specific global variable</div><div class="tooltip-status tooltip-good">✓ Not present - normal browser</div></div></span>
+                        <span class="check-value pass" id="flag-selenium">NO</span>
+                    </div>
+                
+                    <div class="check-item">
+                        <span class="check-label">__webdriver_evaluate<div class="check-item-tooltip"><div class="tooltip-desc">WebDriver evaluate function injection</div><div class="tooltip-status tooltip-good">✓ Not present - normal browser</div></div></span>
+                        <span class="check-value pass" id="flag-webdriver-evaluate">NO</span>
+                    </div>
+                
+                    <div class="check-item">
+                        <span class="check-label">_phantom<div class="check-item-tooltip"><div class="tooltip-desc">PhantomJS-specific global variable</div><div class="tooltip-status tooltip-good">✓ Not present - normal browser</div></div></span>
+                        <span class="check-value pass" id="flag-phantom">NO</span>
+                    </div>
+                
+                    <div class="check-item">
+                        <span class="check-label">__nightmare<div class="check-item-tooltip"><div class="tooltip-desc">Nightmare.js automation framework indicator</div><div class="tooltip-status tooltip-good">✓ Not present - normal browser</div></div></span>
+                        <span class="check-value pass" id="flag-nightmare">NO</span>
+                    </div>
+                
+                    <div class="check-item">
+                        <span class="check-label">callPhantom<div class="check-item-tooltip"><div class="tooltip-desc">PhantomJS function for communication</div><div class="tooltip-status tooltip-good">✓ Not present - normal browser</div></div></span>
+                        <span class="check-value pass" id="flag-callphantom">NO</span>
+                    </div>
+                
+                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee;">
+                    <strong style="color: #764ba2;">🎭 Playwright Detection</strong>
+                    <span class="new-badge" style="background: #764ba2; color: white; padding: 2px 6px; border-radius: 3px; font-size: 10px; margin-left: 5px;">2026</span>
+                </div>
+                
+                    <div class="check-item">
+                        <span class="check-label">__playwright__binding__<div class="check-item-tooltip"><div class="tooltip-desc">Playwright's internal binding mechanism exposed in window</div><div class="tooltip-status tooltip-good">✓ Not present - normal browser</div></div></span>
+                        <span class="check-value pass" id="playwright-binding">NO</span>
+                    </div>
+                
+                    <div class="check-item">
+                        <span class="check-label">__pwInitScripts<div class="check-item-tooltip"><div class="tooltip-desc">Playwright initialization scripts registry</div><div class="tooltip-status tooltip-good">✓ Not present - normal browser</div></div></span>
+                        <span class="check-value pass" id="playwright-initscripts">NO</span>
+                    </div>
+                
+            </div>
+                </div>
+
+                <!-- Advanced Checks -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">🔬</span>
+                        Advanced Checks
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">CDP Stack Trace<div class="check-item-tooltip"><div class="tooltip-desc">Error.stack accessed by CDP Runtime.enable</div><div class="tooltip-status tooltip-good">✓ No CDP stack trace leak detected</div></div></span>
+                        <span class="check-value pass" id="adv-stacktrace">NO</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Chrome Runtime<div class="check-item-tooltip"><div class="tooltip-desc">chrome.runtime extension API availability (extensions only)</div><div class="tooltip-status tooltip-bad">✗ chrome.runtime not available (normal for regular web pages)</div></div></span>
+                        <span class="check-value fail" id="adv-runtime">NO</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Permissions API<div class="check-item-tooltip"><div class="tooltip-desc">navigator.permissions API behavior</div><div class="tooltip-status tooltip-good">✓ Permissions API works normally</div></div></span>
+                        <span class="check-value pass" id="adv-permissions">YES</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Console Debug<div class="check-item-tooltip"><div class="tooltip-desc">console.debug CDP artifact detection</div><div class="tooltip-status tooltip-good">✓ No console.debug leaks detected</div></div></span>
+                        <span class="check-value pass" id="adv-console">NO</span>
+                    </div>
+                </div>
+
+                <!-- Media Checks -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">🎥</span>
+                        Media &amp; WebRTC
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">WebRTC Available<div class="check-item-tooltip"><div class="tooltip-desc">RTCPeerConnection API for real-time communication</div><div class="tooltip-status tooltip-good">✓ WebRTC available - normal browser</div></div></span>
+                        <span class="check-value pass" id="media-webrtc">YES</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Media Devices Count<div class="check-item-tooltip"><div class="tooltip-desc">Number of cameras, microphones available</div><div class="tooltip-status tooltip-info">ℹ Real devices usually have 1-3. Headless typically has 0</div></div></span>
+                        <span class="check-value info" id="media-devices-count">N/A</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Battery API<div class="check-item-tooltip"><div class="tooltip-desc">navigator.getBattery() API availability</div><div class="tooltip-status tooltip-good">✓ Battery API available</div></div></span>
+                        <span class="check-value pass" id="media-battery">YES</span>
+                    </div>
+                </div>
+
+                <!-- Fingerprint Checks -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">🖌️</span>
+                        Fingerprinting
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Canvas Available<div class="check-item-tooltip"><div class="tooltip-desc">HTML5 Canvas API for 2D/3D graphics</div><div class="tooltip-status tooltip-good">✓ Canvas works normally</div></div></span>
+                        <span class="check-value pass" id="fp-canvas">YES</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Audio Context<div class="check-item-tooltip"><div class="tooltip-desc">Web Audio API for sound processing</div><div class="tooltip-status tooltip-good">✓ Audio Context available</div></div></span>
+                        <span class="check-value pass" id="fp-audio">YES</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Fonts Detected<div class="check-item-tooltip"><div class="tooltip-desc">Number of system fonts detected via canvas measurement</div><div class="tooltip-status tooltip-info">ℹ Normal systems have 8+ fonts. Headless typically &lt;3 fonts</div></div></span>
+                        <span class="check-value info" id="fp-fonts">3/8</span>
+                    </div>
+                </div>
+
+                <!-- System Info -->
+                <div class="card">
+                    <div class="card-title">
+                        <span class="card-icon">💻</span>
+                        System Info
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Platform<div class="check-item-tooltip"><div class="tooltip-desc">navigator.platform - operating system identifier</div><div class="tooltip-status tooltip-info">ℹ Shows OS platform. Should match User-Agent OS claim</div></div></span>
+                        <span class="check-value info" id="platform">MacIntel</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">CPU Cores<div class="check-item-tooltip"><div class="tooltip-desc">navigator.hardwareConcurrency - logical CPU cores</div><div class="tooltip-status tooltip-info">ℹ Real machines: 2-32 cores. VMs often have fewer</div></div></span>
+                        <span class="check-value info" id="cpu-cores">10</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Device Memory<div class="check-item-tooltip"><div class="tooltip-desc">navigator.deviceMemory - RAM in GB (approximate)</div><div class="tooltip-status tooltip-info">ℹ Real devices: 4-64 GB. Headless/VMs may report different values</div></div></span>
+                        <span class="check-value info" id="device-memory">16 GB</span>
+                    </div>
+                    <div class="check-item">
+                        <span class="check-label">Touch Points<div class="check-item-tooltip"><div class="tooltip-desc">navigator.maxTouchPoints - max simultaneous touches</div><div class="tooltip-status tooltip-info">ℹ Desktop: 0, Mobile: 5-10, Tablets: 10+</div></div></span>
+                        <span class="check-value info" id="touch-points">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Metadata -->
+            <div class="metadata">
+                <div class="metadata-title">📋 Session Metadata</div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Timestamp:</span>
+                    <span class="metadata-value" id="timestamp">10/2/2026, 2:50:31 PM</span>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">User Agent:</span>
+                    <span class="metadata-value" id="user-agent">Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36</span>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Timezone:</span>
+                    <span class="metadata-value" id="timezone">America/New_York (UTC-4)</span>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Screen Resolution:</span>
+                    <span class="metadata-value" id="screen-res">2560x1600 @ 1x</span>
+                </div>
+            </div>
+
+            <button class="refresh-btn" onclick="runDetection()">🔄 Run Detection Again</button>
+            
+            <!-- Automation Testing Info -->
+            <div class="metadata" style="margin-top: 20px; background: #f0f4ff; border: 2px solid #667eea;">
+                <div class="metadata-title" style="color: #667eea;">🤖 Automation Testing Access</div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Global Object:</span>
+                    <code class="metadata-value" style="background: #fff; padding: 2px 6px; border-radius: 4px;">window.__headlessDetection</code>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Score Access:</span>
+                    <code class="metadata-value" style="background: #fff; padding: 2px 6px; border-radius: 4px;">window.__headlessDetectionScore</code>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">DOM Attribute:</span>
+                    <code class="metadata-value" style="background: #fff; padding: 2px 6px; border-radius: 4px;">document.documentElement.getAttribute('data-headless-score')</code>
+                </div>
+                <div class="metadata-item">
+                    <span class="metadata-label">Individual Checks:</span>
+                    <code class="metadata-value" style="background: #fff; padding: 2px 6px; border-radius: 4px;">window.HeadlessDetector.checks.*</code>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="scripts/headless-detector.js"></script>
+    <script>
+        async function runDetection() {
+            // Show loading
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('results').style.display = 'none';
+
+            try {
+                // Run async detection and attach to window for automation access
+                const results = await detectHeadless(true);
+                displayResults(results);
+                
+                // Log for automation testing
+                console.log('Detection completed. Access via:');
+                console.log('  window.__headlessDetection');
+                console.log('  window.__headlessDetectionScore =', window.__headlessDetectionScore);
+                console.log('  HTML attribute:', document.documentElement.getAttribute('data-headless-score'));
+            } catch (error) {
+                console.error('Detection failed:', error);
+            }
+            
+            // Hide loading, show results
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('results').style.display = 'block';
+            
+            // Initialize tooltips
+            setTimeout(initializeTooltips, 100);
+        }
+
+        function displayResults(results) {
+            // Score
+            const score = results.isHeadless;
+            document.getElementById('score').textContent = score.toFixed(2);
+            
+            const statusBadge = document.getElementById('status-badge');
+            if (score < 0.3) {
+                statusBadge.className = 'status-badge status-normal';
+                statusBadge.textContent = '✅ Normal Browser';
+            } else if (score < 0.6) {
+                statusBadge.className = 'status-badge status-suspicious';
+                statusBadge.textContent = '⚠️ Suspicious Activity';
+            } else {
+                statusBadge.className = 'status-badge status-headless';
+                statusBadge.textContent = '🚫 Headless Detected';
+            }
+
+            // WebDriver
+            setStatus('webdriver-status', results.webdriver);
+
+            // CDP Artifacts
+            setStatus('cdp-detected', results.cdpArtifacts.detected);
+            document.getElementById('cdp-keys').textContent = results.cdpArtifacts.cdcKeysFound || 0;
+            
+            if (results.cdpArtifacts.signals && results.cdpArtifacts.signals.length > 0) {
+                const cdpSignals = document.getElementById('cdp-signals');
+                cdpSignals.innerHTML = results.cdpArtifacts.signals.map(s => 
+                    `<span class="signal-item">${s}</span>`
+                ).join('');
+                cdpSignals.style.display = 'block';
+            }
+
+            // User Agent
+            setStatus('ua-suspicious', results.userAgentFlags.suspicious);
+            
+            if (results.userAgentFlags.matches && results.userAgentFlags.matches.length > 0) {
+                const uaMatches = document.getElementById('ua-matches');
+                uaMatches.innerHTML = results.userAgentFlags.matches.map(m => 
+                    `<span class="signal-item">${m}</span>`
+                ).join('');
+                uaMatches.style.display = 'block';
+            }
+
+            // WebGL
+            setStatus('webgl-supported', results.webglFlags.supported, true);
+            setStatus('webgl-software', results.webglFlags.isSoftwareRenderer);
+            document.getElementById('webgl-renderer').textContent = 
+                results.webglFlags.renderer ? results.webglFlags.renderer.substring(0, 30) : 'N/A';
+            
+            // WebGL Rendering Test (NEW 2026)
+            if (results.webglFlags.renderingTest) {
+                const rt = results.webglFlags.renderingTest;
+                setStatus('webgl-rendering-test', rt.suspicious);
+                document.getElementById('webgl-noise').textContent = 
+                    rt.noiseRatio ? `${(parseFloat(rt.noiseRatio) * 100).toFixed(2)}%` : 'N/A';
+            }
+
+            // Worker UA Check (NEW 2026)
+            if (results.workerChecks) {
+                const wc = results.workerChecks;
+                setStatus('worker-available', wc.available, true);
+                setStatus('worker-mismatch', wc.userAgentMismatch);
+                document.getElementById('worker-status').textContent = wc.reason || wc.status || 'N/A';
+            }
+
+            // Emoji Rendering (NEW 2026)
+            if (results.fingerprintChecks && results.fingerprintChecks.canvas && results.fingerprintChecks.canvas.emojiCheck) {
+                const emoji = results.fingerprintChecks.canvas.emojiCheck;
+                setStatus('emoji-rendered', emoji.rendered, true);
+                document.getElementById('emoji-os').textContent = emoji.detectedOS || 'Unknown';
+                setStatus('emoji-suspicious', emoji.suspicious);
+            }
+
+            // Window Dimensions
+            const hi = results.headlessIndicators;
+            setStatus('outer-dims', hi.hasOuterDimensions, true);
+            setStatus('inner-outer', hi.innerEqualsOuter);
+            document.getElementById('dimensions').textContent = 
+                `${hi.innerWidth}x${hi.innerHeight} / ${hi.outerWidth}x${hi.outerHeight}`;
+
+            // Browser APIs
+            document.getElementById('plugins-count').textContent = results.automationFlags.plugins;
+            setStatus('languages-check', results.automationFlags.languages, true);
+            setStatus('media-devices', hi.hasMediaDevices, true);
+            
+            const notifPerm = hi.notificationPermission;
+            const notifEl = document.getElementById('notifications');
+            notifEl.textContent = notifPerm;
+            notifEl.className = 'check-value ' + 
+                (notifPerm === 'denied' ? 'warning' : 
+                 notifPerm === 'granted' ? 'pass' : 'info');
+
+            // Automation Flags
+            const autoFlags = document.getElementById('automation-flags');
+            const flagsToShow = [
+                { key: 'domAutomation', id: 'flag-domautomation' },
+                { key: '_selenium', id: 'flag-selenium' },
+                { key: '__webdriver_evaluate', id: 'flag-webdriver-evaluate' },
+                { key: '_phantom', id: 'flag-phantom' },
+                { key: '__nightmare', id: 'flag-nightmare' },
+                { key: 'callPhantom', id: 'flag-callphantom' }
+            ];
+            
+            autoFlags.innerHTML = flagsToShow.map(flag => {
+                const value = results.automationFlags[flag.key];
+                return `
+                    <div class="check-item">
+                        <span class="check-label">${flag.key}</span>
+                        <span class="check-value ${value ? 'fail' : 'pass'}" id="${flag.id}">${value ? 'YES' : 'NO'}</span>
+                    </div>
+                `;
+            }).join('');
+
+            // Playwright Detection (2026: Castle.io method)
+            const playwrightFlags = [
+                { key: '__playwright__binding__', label: '__playwright__binding__', id: 'playwright-binding' },
+                { key: '__pwInitScripts', label: '__pwInitScripts', id: 'playwright-initscripts' },
+            ];
+            
+            let playwrightHtml = playwrightFlags.map(flag => {
+                const value = results.automationFlags[flag.key];
+                return `
+                    <div class="check-item">
+                        <span class="check-label">${flag.label}</span>
+                        <span class="check-value ${value ? 'fail' : 'pass'}" id="${flag.id}">${value ? 'YES' : 'NO'}</span>
+                    </div>
+                `;
+            }).join('');
+            
+            // Playwright exposed functions
+            const pwFuncs = results.automationFlags.playwrightExposedFunctions;
+            if (pwFuncs) {
+                playwrightHtml += `
+                    <div class="check-item">
+                        <span class="check-label">Exposed Functions</span>
+                        <span class="check-value ${pwFuncs.detected ? 'fail' : 'pass'}" id="playwright-exposed">${pwFuncs.detected ? `YES (${pwFuncs.count})` : 'NO'}</span>
+                    </div>
+                `;
+                if (pwFuncs.functions && pwFuncs.functions.length > 0) {
+                    playwrightHtml += `<div style="font-size: 11px; color: #666; margin-top: 5px;">Functions: ${pwFuncs.functions.join(', ')}</div>`;
+                }
+            }
+            
+            autoFlags.innerHTML += `
+                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee;">
+                    <strong style="color: #764ba2;">🎭 Playwright Detection</strong>
+                    <span class="new-badge" style="background: #764ba2; color: white; padding: 2px 6px; border-radius: 3px; font-size: 10px; margin-left: 5px;">2026</span>
+                </div>
+                ${playwrightHtml}
+            `;
+
+            // Advanced Checks
+            const adv = results.advancedChecks;
+            setStatus('adv-stacktrace', adv.stackTrace?.cdpDetected);
+            setStatus('adv-runtime', !adv.chromeRuntime?.missing, true);
+            setStatus('adv-permissions', !adv.permissions?.deniedByDefault, true);
+            setStatus('adv-console', adv.consoleDebug?.detected);
+
+            // Media Checks
+            const media = results.mediaChecks;
+            setStatus('media-webrtc', !media.webrtc?.suspicious, true);
+            document.getElementById('media-devices-count').textContent = 
+                media.mediaDevices?.deviceCount !== undefined ? media.mediaDevices.deviceCount : 'N/A';
+            setStatus('media-battery', media.battery?.available, true);
+
+            // Fingerprint Checks
+            const fp = results.fingerprintChecks;
+            setStatus('fp-canvas', fp.canvas?.available, true);
+            setStatus('fp-audio', fp.audioContext?.available, true);
+            document.getElementById('fp-fonts').textContent = 
+                fp.fonts ? `${fp.fonts.detectedCount}/${fp.fonts.totalTested}` : 'N/A';
+
+            // System Info
+            document.getElementById('platform').textContent = hi.platform || 'N/A';
+            document.getElementById('cpu-cores').textContent = hi.hardwareConcurrency || 'N/A';
+            document.getElementById('device-memory').textContent = 
+                hi.deviceMemory ? `${hi.deviceMemory} GB` : 'N/A';
+            document.getElementById('touch-points').textContent = hi.maxTouchPoints;
+
+            // Metadata
+            document.getElementById('timestamp').textContent = new Date(results.timestamp).toLocaleString();
+            document.getElementById('user-agent').textContent = results.userAgent;
+            document.getElementById('timezone').textContent = 
+                `${hi.timezone} (UTC${hi.timezoneOffset > 0 ? '-' : '+'}${Math.abs(hi.timezoneOffset/60)})`;
+            document.getElementById('screen-res').textContent = 
+                `${hi.screenWidth}x${hi.screenHeight} @ ${hi.devicePixelRatio}x`;
+        }
+
+        function setStatus(elementId, value, invertLogic = false) {
+            const el = document.getElementById(elementId);
+            if (value === undefined || value === null) {
+                el.textContent = 'N/A';
+                el.className = 'check-value info';
+                return;
+            }
+
+            if (typeof value === 'boolean') {
+                el.textContent = value ? 'YES' : 'NO';
+                
+                // Invert logic for things where true is good
+                const isGood = invertLogic ? value : !value;
+                el.className = 'check-value ' + (isGood ? 'pass' : 'fail');
+            } else {
+                el.textContent = value;
+                el.className = 'check-value info';
+            }
+        }
+
+        // Initialize tooltips
+        function initializeTooltips() {
+            const results = window.__headlessDetection;
+            if (!results) return;
+
+            // Check item explanations - tooltips for individual check items
+            if (results.checkItemExplanations) {
+                const checkExplanations = results.checkItemExplanations;
+                
+                // Add tooltips to all check labels
+                document.querySelectorAll('.check-label').forEach(label => {
+                    // Try to match with explanation keys
+                    Object.keys(checkExplanations).forEach(key => {
+                        const parentItem = label.closest('.check-item');
+                        const valueElement = parentItem?.querySelector(`#${key}`);
+                        
+                        if (valueElement) {
+                            const exp = checkExplanations[key];
+                            const tooltipDiv = document.createElement('div');
+                            tooltipDiv.className = 'check-item-tooltip';
+                            
+                            // Determine if this check passed or failed based on value element
+                            const valueText = valueElement.textContent.trim().toUpperCase();
+                            const hasPassClass = valueElement.classList.contains('pass');
+                            const hasFailClass = valueElement.classList.contains('fail');
+                            const hasWarningClass = valueElement.classList.contains('warning');
+                            
+                            // Determine success: pass class, or YES/NO depends on context
+                            const isSuccess = hasPassClass || (!hasFailClass && !hasWarningClass && valueText !== '-');
+                            const isFail = hasFailClass || hasWarningClass;
+                            
+                            let content = `<div class="tooltip-desc">${exp.description}</div>`;
+                            
+                            // Show only relevant status based on actual result
+                            if (isFail && exp.bad) {
+                                content += `<div class="tooltip-status tooltip-bad">✗ ${exp.bad}</div>`;
+                            } else if (isSuccess && exp.good) {
+                                content += `<div class="tooltip-status tooltip-good">✓ ${exp.good}</div>`;
+                            } else if (exp.info) {
+                                content += `<div class="tooltip-status tooltip-info">ℹ ${exp.info}</div>`;
+                            }
+                            
+                            tooltipDiv.innerHTML = content;
+                            label.appendChild(tooltipDiv);
+                        }
+                    });
+                });
+            }
+        }
+
+        // Listen for worker check updates
+        window.addEventListener('headlessDetectionUpdated', (event) => {
+            const workerChecks = event.detail.workerChecks;
+            if (workerChecks) {
+                setStatus('worker-available', workerChecks.available, true);
+                setStatus('worker-mismatch', workerChecks.userAgentMismatch);
+                document.getElementById('worker-status').textContent = workerChecks.reason || 'Completed';
+                
+                // Update score display if mismatch detected
+                if (workerChecks.userAgentMismatch) {
+                    const scoreEl = document.getElementById('score');
+                    const newScore = window.__headlessDetectionScore;
+                    scoreEl.textContent = newScore.toFixed(2);
+                    
+                    const statusBadge = document.getElementById('status-badge');
+                    if (newScore >= 0.6) {
+                        statusBadge.className = 'status-badge status-headless';
+                        statusBadge.textContent = '🚫 Headless Detected';
+                    } else if (newScore >= 0.3) {
+                        statusBadge.className = 'status-badge status-suspicious';
+                        statusBadge.textContent = '⚠️ Suspicious Activity';
+                    }
+                }
+            }
+        });
+
+        // Run detection on page load
+        window.addEventListener('load', runDetection);
+    </script>
+
+
+</body></html>

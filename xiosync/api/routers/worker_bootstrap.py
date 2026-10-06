@@ -1206,3 +1206,88 @@ async def tcp_relay_ws(
     except Exception:
         pass
     logger.info("tcp_relay.closed", extra={"host": host, "port": port})
+
+
+# ── Bootstrap Token Management (Phase 3 audit — Fix 16) ──────────────────────
+
+@router.post("/workers/bootstrap-tokens/revoke", summary="Revoke a bootstrap token")
+def revoke_bootstrap_token(request: Request, body: dict) -> dict:
+    """Revoke a bootstrap token by its raw value or hash."""
+    from sqlalchemy.orm import Session as _Sess
+    from xiosync.platform.engine_ref import get_engine
+    from xiosync.api.middleware.worker_auth import verify_worker_auth
+
+    verify_worker_auth(request)
+
+    token_raw = body.get("token", "")
+    token_hash = body.get("token_hash", "")
+    if token_raw:
+        token_hash = _hash_token(token_raw)
+    if not token_hash:
+        raise HTTPException(status_code=422, detail="Provide 'token' or 'token_hash'")
+
+    with _Sess(get_engine()) as sess:
+        from datetime import UTC, datetime as _dt
+        result = sess.execute(
+            text("""
+                UPDATE bootstrap_tokens
+                SET revoked_at = :now
+                WHERE token_hash = :hash AND revoked_at IS NULL
+                RETURNING id
+            """),
+            {"hash": token_hash, "now": _dt.now(UTC)},
+        ).fetchone()
+
+        if not result:
+            vault_key = _token_vault_key(token_hash)
+            sess.execute(
+                text("DELETE FROM vaulted_secrets WHERE key = :key"),
+                {"key": vault_key},
+            )
+            sess.commit()
+            return {"revoked": False, "detail": "token_not_found_or_already_revoked"}
+
+        sess.commit()
+        logger.info("bootstrap_token.revoked", extra={"token_hash": token_hash[:16] + "..."})
+        return {"revoked": True, "token_id": str(result.id)}
+
+
+@router.get("/workers/bootstrap-tokens", summary="List bootstrap tokens")
+def list_bootstrap_tokens(request: Request, org_id: str = "") -> dict:
+    """List all bootstrap tokens (active/revoked) for an organization."""
+    from sqlalchemy.orm import Session as _Sess
+    from xiosync.platform.engine_ref import get_engine
+    from xiosync.api.middleware.worker_auth import verify_worker_auth
+
+    verify_worker_auth(request)
+    if not org_id:
+        org_id = str(_ORG_ZERO)
+
+    with _Sess(get_engine()) as sess:
+        rows = sess.execute(
+            text("""
+                SELECT id, token_hash, label, created_at, expires_at,
+                       revoked_at, last_used_at, use_count, max_uses
+                FROM bootstrap_tokens
+                WHERE organization_id = :org
+                ORDER BY created_at DESC LIMIT 100
+            """),
+            {"org": org_id},
+        ).fetchall()
+
+        return {
+            "tokens": [
+                {
+                    "id": str(r.id),
+                    "token_hash_prefix": r.token_hash[:16] + "...",
+                    "label": r.label,
+                    "created_at": str(r.created_at) if r.created_at else None,
+                    "revoked_at": str(r.revoked_at) if r.revoked_at else None,
+                    "use_count": r.use_count,
+                    "max_uses": r.max_uses,
+                    "status": "revoked" if r.revoked_at else "active",
+                }
+                for r in rows
+            ],
+            "count": len(rows),
+        }

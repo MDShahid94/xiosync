@@ -19,6 +19,7 @@ from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
+    Computed,
     Float,
     ForeignKey,
     Index,
@@ -52,9 +53,16 @@ class XioflowMemoryNode(Base):
             name="ck_xfmn_status_allowed",
         ),
         CheckConstraint(
-            "action_type IN ('click', 'type', 'extract_data', 'scroll_down', "
+            "action_type IN ('click', 'type', 'fill', 'extract_data', 'scroll_down', "
             "'navigate', 'wait', 'done', 'trigger_sub_workflow', "
-            "'compute_node', 'conditional')",
+            "'compute_node', 'conditional', "
+            # Engine-level operational action types (non-browser):
+            "'script', 'delay', 'http_request', "
+            # Extended action types for universal workflows:
+            "'assertion', 'human_input', 'ssh_command', "
+            "'llm_prompt', 'webhook_fire', "
+            # Browser interaction variants (captured by auto-trace):
+            "'press', 'hover', 'select_option', 'check', 'uncheck')",
             name="ck_xfmn_action_type_allowed",
         ),
         CheckConstraint(
@@ -67,7 +75,7 @@ class XioflowMemoryNode(Base):
         ),
         CheckConstraint(
             "recording_method IN ('auto_learn', 'teacher_extension', "
-            "'declarative_dag', 'mcp_chat')",
+            "'declarative_dag', 'mcp_chat', 'auto_trace')",
             name="ck_xfmn_recording_method_allowed",
         ),
         Index("idx_xfmn_lookup", "lookup_key", "tier", "status"),
@@ -186,7 +194,9 @@ class XioflowMemoryNode(Base):
     )
 
     # ── Lookup Optimization ─────────────────────────────────────────────
-    # NOTE: The Alembic migration creates lookup_key as a
     # GENERATED ALWAYS AS (domain || '::' || intent || '::' || context_hash) STORED
-    # column. SQLAlchemy reads it but never writes to it.
-    lookup_key: Mapped[str | None] = mapped_column(Text)
+    # SQLAlchemy must never emit this in INSERT/UPDATE — use Computed().
+    lookup_key: Mapped[str | None] = mapped_column(
+        Text,
+        Computed("domain || '::' || intent || '::' || context_hash", persisted=True),
+    )

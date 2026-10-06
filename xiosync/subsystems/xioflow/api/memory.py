@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Request

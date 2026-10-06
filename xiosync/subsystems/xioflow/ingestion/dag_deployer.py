@@ -20,19 +20,29 @@ class DAGDeployer:
         created_node_ids = []
 
         for node in nodes:
-            node_id = await self.memory_graph.save_new_action(
+            # Extract domain from URL if provided, or use graph-level domain
+            node_domain = node.get('domain', '')
+            if not node_domain and node.get('url'):
+                from urllib.parse import urlparse
+                node_domain = urlparse(node['url']).netloc
+            if not node_domain:
+                node_domain = graph_data.get('domain', graph_data.get('dag_domain', ''))
+
+            node_id = await self.memory_graph.asave_new_action(
                 org_id=org_id,
-                domain=node.get('domain', ''),
-                url=node.get('url', ''),
+                domain=node_domain,
                 intent=node.get('intent'),
                 face_value=node.get('face_value', {}),
                 place_value=node.get('place_value', {}),
                 action_type=node.get('action_type'),
                 action_params=node.get('action_params', {}),
-                previous_node_id=node.get('previous_node_id'),
-                recorded_by='declarative_dag',
+                previous_intent=node.get('previous_node_id'),
+                recorded_by=None,            # UUID FK — not set for declarative import
                 project_id=project_id,
-                recording_method='declarative_dag'
+                recording_method='declarative_dag',
+                context_hash=context_hash,
+                output_var=node.get('output_var'),
+                execution_mode=node.get('execution_mode', 'sequential'),
             )
             created_node_ids.append(str(node_id))
 

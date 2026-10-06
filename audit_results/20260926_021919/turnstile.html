@@ -1,0 +1,958 @@
+<!DOCTYPE html><html lang="en"><head><script>
+(function () {
+  'use strict';
+
+  const _NavProto    = Navigator.prototype;
+  const _ScreenProto = Screen.prototype;
+
+  // â”€â”€ 1. navigator.webdriver â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    delete _NavProto.webdriver;
+    Object.defineProperty(_NavProto, 'webdriver', {
+      get: function webdriver() { return false; },
+      configurable: false,
+      enumerable: true,
+    });
+  } catch (_) {}
+
+  // â”€â”€ 2. navigator platform / hardwareConcurrency / deviceMemory / languages â”€
+  try {
+    const _frozenLangs = Object.freeze(['en-US', 'en']);
+    Object.defineProperty(_NavProto, 'platform',            { get: function platform() { return "Linux x86_64"; },           configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'hardwareConcurrency', { get: function hardwareConcurrency() { return 8; },               configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'deviceMemory',        { get: function deviceMemory() { return 8; },                                configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'languages',           { get: function languages() { return _frozenLangs; },                           configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'language',            { get: function language() { return 'en-US'; },                                 configurable: false, enumerable: true });
+  } catch (_) {}
+
+  // â”€â”€ 3. navigator.plugins + mimeTypes (Chrome 131 format) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  (function () {
+    const _pdfMime = Object.create(MimeType.prototype, {
+      type:        { value: 'application/pdf', enumerable: true },
+      suffixes:    { value: 'pdf',             enumerable: true },
+      description: { value: 'Portable Document Format', enumerable: true },
+    });
+    const _pluginNames = [
+      'PDF Viewer', 'Chrome PDF Viewer', 'Chromium PDF Viewer',
+      'Microsoft Edge PDF Viewer', 'WebKit built-in PDF',
+    ];
+    const _plugins = _pluginNames.map(function (name) {
+      const p = Object.create(Plugin.prototype, {
+        name:        { value: name,        enumerable: true },
+        filename:    { value: 'internal-pdf-viewer', enumerable: true },
+        description: { value: 'Portable Document Format', enumerable: true },
+        length:      { value: 1 },
+      });
+      Object.defineProperty(p, 0, { value: _pdfMime, enumerable: true });
+      return p;
+    });
+    const _pa = Object.create(null);
+    Object.setPrototypeOf(_pa, PluginArray.prototype);
+    _plugins.forEach(function (p, i) {
+      Object.defineProperty(_pa, i,      { value: p, enumerable: true });
+      Object.defineProperty(_pa, p.name, { value: p });
+    });
+    Object.defineProperty(_pa, 'length',    { value: _plugins.length });
+    Object.defineProperty(_pa, 'item',      { value: function item(i) { return _plugins[i] || null; } });
+    Object.defineProperty(_pa, 'namedItem', { value: function namedItem(n) { return _plugins.find(function(p) { return p.name === n; }) || null; } });
+    Object.defineProperty(_pa, 'refresh',   { value: function refresh() {} });
+    Object.defineProperty(_pa, Symbol.iterator, { value: function* () { yield* _plugins; } });
+    const _mta = Object.create(null);
+    Object.setPrototypeOf(_mta, MimeTypeArray.prototype);
+    Object.defineProperty(_mta, 0,                   { value: _pdfMime, enumerable: true });
+    Object.defineProperty(_mta, 'application/pdf',   { value: _pdfMime });
+    Object.defineProperty(_mta, 'length',            { value: 1 });
+    Object.defineProperty(_mta, 'item',              { value: function item(i) { return i === 0 ? _pdfMime : null; } });
+    Object.defineProperty(_mta, 'namedItem',         { value: function namedItem(n) { return n === 'application/pdf' ? _pdfMime : null; } });
+    Object.defineProperty(_mta, Symbol.iterator,     { value: function* () { yield _pdfMime; } });
+    Object.defineProperty(_NavProto, 'plugins',   { get: function plugins() { return _pa; },   configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'mimeTypes', { get: function mimeTypes() { return _mta; }, configurable: false, enumerable: true });
+  })();
+
+  // â”€â”€ 4. window.chrome â€” only add missing, never overwrite runtime â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Patchright sets chrome.runtime correctly. Overwriting it causes
+  // hasBadChromeRuntime:true in CreepJS detection.
+  try {
+    if (!window.chrome) window.chrome = {};
+    const _c = window.chrome;
+    if (!_c.app) {
+      _c.app = {
+        isInstalled: false,
+        InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+        RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+        getDetails:     function getDetails() { return null; },
+        getIsInstalled: function getIsInstalled() { return false; },
+        installState:   function installState() { return 'not_installed'; },
+        runningState:   function runningState() { return 'cannot_run'; },
+      };
+    }
+    if (!_c.csi) _c.csi = function csi() { return { onloadT: Date.now(), pageT: Date.now(), startE: Date.now(), tran: 15 }; };
+    if (!_c.loadTimes) _c.loadTimes = function loadTimes() { return {
+      commitLoadTime: Date.now() / 1000, connectionInfo: 'h2', finishDocumentLoadTime: 0,
+      finishLoadTime: 0, firstPaintAfterLoadTime: 0, firstPaintTime: 0,
+      navigationType: 'Other', npnNegotiatedProtocol: 'h2', requestTime: Date.now() / 1000,
+      startLoadTime: Date.now() / 1000, wasAlternateProtocolAvailable: false,
+      wasFetchedViaSpdy: true, wasNpnNegotiated: true,
+    }; };
+  } catch (_) {}
+
+  // â”€â”€ 5. Remove cdc_* CDP leak keys â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Only delete existing keys â€” patchright prevents future cdc_ injections.
+  // Do NOT override Object.defineProperty â€” CreepJS detects any override.
+  try {
+    const _cdcRe = /^cdc_/;
+    for (const key of Object.getOwnPropertyNames(window)) {
+      if (_cdcRe.test(key)) try { delete window[key]; } catch (_) {}
+    }
+  } catch (_) {}
+
+  // â”€â”€ 6. WebGL vendor / renderer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  (function () {
+    const _vendor   = "Google Inc. (Intel)";
+    const _renderer = "ANGLE (Intel, Intel(R) UHD Graphics 630 (CML GT2), OpenGL 4.1)";
+    function _patchGetParam(proto) {
+      if (!proto || !proto.getParameter) return;
+      const _orig = proto.getParameter;
+      proto.getParameter = function getParameter(param) {
+        if (param === 37445) return _vendor;
+        if (param === 37446) return _renderer;
+        return _orig.call(this, param);
+      };
+    }
+    try { _patchGetParam(WebGLRenderingContext.prototype); } catch (_) {}
+    try { _patchGetParam(WebGL2RenderingContext.prototype); } catch (_) {}
+    if (typeof OffscreenCanvas !== 'undefined') {
+      try {
+        const _oc = OffscreenCanvas.prototype.getContext;
+        OffscreenCanvas.prototype.getContext = function getContext(type) {
+          const ctx = _oc.apply(this, arguments);
+          if (ctx && (type === 'webgl' || type === 'webgl2') && ctx.getParameter) {
+            const _orig = ctx.getParameter.bind(ctx);
+            ctx.getParameter = function (p) {
+              if (p === 37445) return _vendor;
+              if (p === 37446) return _renderer;
+              return _orig(p);
+            };
+          }
+          return ctx;
+        };
+      } catch (_) {}
+    }
+  })();
+
+  // â”€â”€ 6b. WebGPU adapter override (GPU info normalization) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    if (navigator.gpu && navigator.gpu.requestAdapter) {
+      const _fakeInfo = {
+        vendor: 'intel',
+        architecture: 'gen-9.5',
+        device: '',
+        description: 'Intel(R) UHD Graphics 630',
+      };
+      if (typeof GPUAdapterInfo !== 'undefined') {
+        try { Object.setPrototypeOf(_fakeInfo, GPUAdapterInfo.prototype); } catch(_) {}
+      }
+      Object.freeze(_fakeInfo);
+      const _origRA = navigator.gpu.requestAdapter.bind(navigator.gpu);
+      navigator.gpu.requestAdapter = async function requestAdapter(opts) {
+        const adapter = await _origRA(opts);
+        if (!adapter) return adapter;
+        // Override requestAdapterInfo
+        if (adapter.requestAdapterInfo) {
+          adapter.requestAdapterInfo = async function requestAdapterInfo() {
+            return _fakeInfo;
+          };
+        }
+        // Override adapter.info property
+        try {
+          Object.defineProperty(adapter, 'info', {
+            get: function info() { return _fakeInfo; },
+            configurable: true, enumerable: true,
+          });
+        } catch (_) {}
+        return adapter;
+      };
+    }
+  } catch (_) {}
+
+  // â”€â”€ 6c. CSS prefers-color-scheme override (fixes prefersLightColor) â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    const _origMatch = window.matchMedia;
+    window.matchMedia = function matchMedia(query) {
+      const result = _origMatch.call(this, query);
+      if (query === '(prefers-color-scheme: light)') {
+        return Object.create(result, {
+          matches: { get: function() { return false; }, configurable: true },
+        });
+      }
+      if (query === '(prefers-color-scheme: dark)') {
+        return Object.create(result, {
+          matches: { get: function() { return true; }, configurable: true },
+        });
+      }
+      return result;
+    };
+  } catch (_) {}
+  try {
+    const _cam = "FaceTime HD Camera";
+    const _origEnum = navigator.mediaDevices?.enumerateDevices?.bind(navigator.mediaDevices);
+    if (_origEnum) {
+      navigator.mediaDevices.enumerateDevices = async function enumerateDevices() {
+        const real = await _origEnum();
+        if (real.length > 0) return real;
+        return [{ deviceId: 'default', groupId: 'default', kind: 'videoinput', label: _cam,
+          toJSON() { return { deviceId: 'default', groupId: 'default', kind: 'videoinput', label: _cam }; } }];
+      };
+    }
+  } catch (_) {}
+
+  // â”€â”€ 8. WebRTC â€” comprehensive IP leak prevention â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    if (typeof RTCPeerConnection !== 'undefined') {
+      const _OrigRTC = RTCPeerConnection;
+      const _filterCandidate = function (e) {
+        if (e.candidate && e.candidate.candidate) {
+          const c = e.candidate.candidate;
+          if (c.includes('typ host') || c.includes('typ srflx')) return true;
+        }
+        return false;
+      };
+      window.RTCPeerConnection = function RTCPeerConnection(cfg, constraints) {
+        cfg = cfg || {};
+        cfg.iceServers = [];
+        const pc = new _OrigRTC(cfg, constraints);
+        const _origAddEvent = pc.addEventListener.bind(pc);
+        pc.addEventListener = function (type, fn) {
+          if (type === 'icecandidate') {
+            return _origAddEvent(type, function (e) {
+              if (!_filterCandidate(e)) fn.call(this, e);
+            });
+          }
+          return _origAddEvent.apply(this, arguments);
+        };
+        return pc;
+      };
+      window.RTCPeerConnection.prototype = _OrigRTC.prototype;
+      Object.defineProperty(_OrigRTC.prototype, 'constructor', { value: window.RTCPeerConnection });
+      const _oicDesc = Object.getOwnPropertyDescriptor(_OrigRTC.prototype, 'onicecandidate');
+      if (_oicDesc && _oicDesc.set) {
+        const _origSet = _oicDesc.set;
+        Object.defineProperty(_OrigRTC.prototype, 'onicecandidate', {
+          get: _oicDesc.get,
+          set: function (fn) {
+            _origSet.call(this, function (e) {
+              if (!_filterCandidate(e)) { if (fn) fn.call(this, e); }
+            });
+          },
+          configurable: true, enumerable: true,
+        });
+      }
+      const _origDC = _OrigRTC.prototype.createDataChannel;
+      _OrigRTC.prototype.createDataChannel = function createDataChannel() {
+        try { return _origDC.apply(this, arguments); } catch (_) { return null; }
+      };
+    }
+    if (typeof webkitRTCPeerConnection !== 'undefined' && window.RTCPeerConnection) {
+      window.webkitRTCPeerConnection = window.RTCPeerConnection;
+    }
+  } catch (_) {}
+
+  // â”€â”€ 9. Screen dimensions + window geometry â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    const _sw = 1920, _sh = 1080;
+    Object.defineProperty(_ScreenProto, 'width',       { get: function width() { return _sw; },       configurable: true, enumerable: true });
+    Object.defineProperty(_ScreenProto, 'height',      { get: function height() { return _sh; },      configurable: true, enumerable: true });
+    Object.defineProperty(_ScreenProto, 'availWidth',  { get: function availWidth() { return _sw; },  configurable: true, enumerable: true });
+    Object.defineProperty(_ScreenProto, 'availHeight', { get: function availHeight() { return _sh - 40; }, configurable: true, enumerable: true });
+    Object.defineProperty(_ScreenProto, 'availLeft',   { get: function availLeft() { return 0; },     configurable: true });
+    Object.defineProperty(_ScreenProto, 'availTop',    { get: function availTop() { return 0; },      configurable: true });
+    Object.defineProperty(_ScreenProto, 'colorDepth',  { get: function colorDepth() { return 24; },   configurable: true, enumerable: true });
+    Object.defineProperty(_ScreenProto, 'pixelDepth',  { get: function pixelDepth() { return 24; },   configurable: true, enumerable: true });
+    Object.defineProperty(window, 'devicePixelRatio', { get: function devicePixelRatio() { return 1.0; }, configurable: false });
+    Object.defineProperty(window, 'outerWidth',  { get: function outerWidth() { return _sw; },        configurable: false });
+    Object.defineProperty(window, 'outerHeight', { get: function outerHeight() { return _sh - 80; },  configurable: false });
+    Object.defineProperty(window, 'innerWidth',  { get: function innerWidth() { return _sw; },        configurable: false });
+    Object.defineProperty(window, 'innerHeight', { get: function innerHeight() { return _sh - 120; }, configurable: false });
+    Object.defineProperty(window, 'screenX',     { get: function screenX() { return 0; },             configurable: false });
+    Object.defineProperty(window, 'screenY',     { get: function screenY() { return 0; },             configurable: false });
+  } catch (_) {}
+
+  // â”€â”€ 10. Canvas fingerprint â€” idempotent noise â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  (function () {
+    const _seed = 1715004;
+    function _lcg(s) { return ((1664525 * s + 1013904223) >>> 0); }
+    function _applyNoise(imageData) {
+      const d = imageData.data;
+      let s = _seed;
+      for (let i = 0; i < Math.min(d.length, 64); i += 4) {
+        // Skip fully transparent pixels â€” Sannysoft TRANSPARENT_PIXEL test requires alpha=0
+        if (d[i + 3] === 0) { s = _lcg(_lcg(s)); continue; }
+        s = _lcg(s);
+        d[i]     = Math.max(0, Math.min(255, d[i]     + ((s >>> 31) ? 1 : -1)));
+        s = _lcg(s);
+        d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + ((s >>> 31) ? 1 : -1)));
+      }
+      return imageData;
+    }
+    const _origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function toDataURL() {
+      const ctx = this.getContext('2d');
+      if (!ctx) return _origToDataURL.apply(this, arguments);
+      const c = document.createElement('canvas');
+      c.width = this.width; c.height = this.height;
+      const c2 = c.getContext('2d');
+      c2.drawImage(this, 0, 0);
+      _applyNoise(c2.getImageData(0, 0, c.width, c.height));
+      c2.putImageData(c2.getImageData(0, 0, c.width, c.height), 0, 0);
+      return _origToDataURL.apply(c, arguments);
+    };
+    const _origToBlob = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function toBlob(callback) {
+      const ctx = this.getContext('2d');
+      if (!ctx) return _origToBlob.apply(this, arguments);
+      const c = document.createElement('canvas');
+      c.width = this.width; c.height = this.height;
+      const c2 = c.getContext('2d');
+      c2.drawImage(this, 0, 0);
+      const id = c2.getImageData(0, 0, c.width, c.height);
+      _applyNoise(id);
+      c2.putImageData(id, 0, 0);
+      const args = Array.prototype.slice.call(arguments);
+      args[0] = callback;
+      return _origToBlob.apply(c, args);
+    };
+    const _origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+    CanvasRenderingContext2D.prototype.getImageData = function getImageData() {
+      return _applyNoise(_origGetImageData.apply(this, arguments));
+    };
+  })();
+
+  // â”€â”€ 11. AudioContext + OfflineAudioContext â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  (function () {
+    const _aseed = 5070447;
+    function _alc(s) { return ((22695477 * s + 1) >>> 0); }
+    let _as = _aseed;
+    function _anoise() { _as = _alc(_as); return (_as / 4294967296 - 0.5) * 1e-5; }
+    const _AC = window.AudioContext || window.webkitAudioContext;
+    if (_AC) {
+      const _origCA = _AC.prototype.createAnalyser;
+      _AC.prototype.createAnalyser = function createAnalyser() {
+        const node = _origCA.apply(this, arguments);
+        const _origFloat = node.getFloatFrequencyData.bind(node);
+        const _origByte  = node.getByteFrequencyData.bind(node);
+        node.getFloatFrequencyData = function getFloatFrequencyData(arr) {
+          _origFloat(arr);
+          for (let i = 0; i < arr.length; i++) arr[i] += _anoise();
+        };
+        node.getByteFrequencyData = function getByteFrequencyData(arr) {
+          _origByte(arr);
+          for (let i = 0; i < arr.length; i++) arr[i] = Math.max(0, Math.min(255, arr[i] + (_anoise() > 0 ? 1 : 0)));
+        };
+        return node;
+      };
+    }
+    if (typeof OfflineAudioContext !== 'undefined') {
+      const _origSR = OfflineAudioContext.prototype.startRendering;
+      OfflineAudioContext.prototype.startRendering = function startRendering() {
+        return _origSR.call(this).then(function (buffer) {
+          const data = buffer.getChannelData(0);
+          let s = _aseed;
+          for (let i = 0; i < data.length; i++) {
+            s = _alc(s);
+            data[i] += (s / 4294967296 - 0.5) * 1e-7;
+          }
+          return buffer;
+        });
+      };
+    }
+  })();
+
+  // â”€â”€ 12. Timezone consistency â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    const _tz = "America/Chicago";
+    const _origDTF = Intl.DateTimeFormat;
+    const _newDTF = function DateTimeFormat(locale, options) {
+      if (!options || !options.timeZone) {
+        options = Object.assign({}, options || {}, { timeZone: _tz });
+      }
+      return new _origDTF(locale, options);
+    };
+    _newDTF.prototype = _origDTF.prototype;
+    Object.defineProperty(_newDTF, 'supportedLocalesOf', {
+      value: _origDTF.supportedLocalesOf.bind(_origDTF), configurable: true,
+    });
+    Intl.DateTimeFormat = _newDTF;
+  } catch (_) {}
+
+  // â”€â”€ 13. Permissions API â€” pass-through (do not override) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Real headed Chrome: notifications = 'default'  (user not asked yet)
+  // Headless Chrome:    notifications = 'denied'   (bot signal!)
+  // Do NOT convert 'default' â†’ 'denied' â€” that makes us look headless.
+  // Patchright already sets the correct permissions state for headed mode.
+
+  // â”€â”€ 14. navigator.connection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    // First, add missing mobile-only properties to NetworkInformation.prototype
+    // Chrome desktop Linux lacks downlinkMax/type/ontypechange on the prototype
+    if (typeof NetworkInformation !== 'undefined') {
+      const _niProto = NetworkInformation.prototype;
+      if (!('downlinkMax' in _niProto)) {
+        Object.defineProperty(_niProto, 'downlinkMax', {
+          get: function downlinkMax() { return Infinity; },
+          configurable: true, enumerable: true,
+        });
+      }
+      if (!('type' in _niProto)) {
+        Object.defineProperty(_niProto, 'type', {
+          get: function type() { return 'wifi'; },
+          configurable: true, enumerable: true,
+        });
+      }
+      if (!('ontypechange' in _niProto)) {
+        Object.defineProperty(_niProto, 'ontypechange', {
+          get: function ontypechange() { return null; },
+          set: function ontypechange(v) {},
+          configurable: true, enumerable: true,
+        });
+      }
+    }
+    const _fakeConn = {
+      effectiveType: '4g',
+      downlink:      10,
+      rtt:           50,
+      saveData:      false,
+      onchange:      null,
+      addEventListener:    function addEventListener() {},
+      removeEventListener: function removeEventListener() {},
+      dispatchEvent:       function dispatchEvent() { return false; },
+    };
+    // Set prototype to NetworkInformation for proper instanceof + property chain
+    if (typeof NetworkInformation !== 'undefined') {
+      Object.setPrototypeOf(_fakeConn, NetworkInformation.prototype);
+    }
+    Object.defineProperty(_NavProto, 'connection', {
+      get: function connection() { return _fakeConn; },
+      configurable: true, enumerable: true,
+    });
+  } catch (_) {}
+
+  // â”€â”€ 15. Battery API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    const _fakeBattery = {
+      charging: true,
+      chargingTime: 0,
+      dischargingTime: Infinity,
+      level: 0.87,
+      addEventListener:    function addEventListener() {},
+      removeEventListener: function removeEventListener() {},
+      dispatchEvent:       function dispatchEvent() { return true; },
+      onchargingchange: null, onchargingtimechange: null,
+      ondischargingtimechange: null, onlevelchange: null,
+    };
+    Object.defineProperty(_NavProto, 'getBattery', {
+      value: function getBattery() { return Promise.resolve(_fakeBattery); },
+      configurable: false, writable: false,
+    });
+  } catch (_) {}
+
+  // â”€â”€ 16. navigator.userAgentData (Client Hints â€” synced with CDP) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    const _chBrands = [{"brand": "Chromium", "version": "131"}, {"brand": "Google Chrome", "version": "131"}, {"brand": "Not_A Brand", "version": "24"}];
+    const _uadObj = {
+      brands: _chBrands,
+      mobile: false,
+      platform: "Linux",
+      getHighEntropyValues: function getHighEntropyValues() {
+        return Promise.resolve({
+          brands: _chBrands,
+          mobile: false,
+          platform: "Linux",
+          platformVersion: "131",
+          architecture: "x86",
+          model: '', bitness: '64',
+          fullVersionList: _chBrands, wow64: false,
+        });
+      },
+      toJSON: function toJSON() {
+        return { brands: _chBrands, mobile: false, platform: "Linux" };
+      },
+    };
+    Object.defineProperty(_NavProto, 'userAgentData', {
+      get: function userAgentData() { return _uadObj; },
+      configurable: false, enumerable: true,
+    });
+  } catch (_) {}
+
+  // â”€â”€ 17. Timing â€” monotonic performance.now() â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Keep configurable:true so CreepJS descriptor checks don't flag it.
+  // Do NOT override Date.now â€” jitter wrapping is easily detected.
+  try {
+    let _lastPerfNow = 0;
+    const _origPerfNow = performance.now.bind(performance);
+    const _newPerfNow = function now() {
+      const real = _origPerfNow();
+      _lastPerfNow = Math.max(_lastPerfNow + 0.001, real);
+      return _lastPerfNow;
+    };
+    Object.defineProperty(Performance.prototype, 'now', {
+      value: _newPerfNow, writable: true, configurable: true, enumerable: true,
+    });
+  } catch (_) {}
+
+  // â”€â”€ 18. Date.prototype.getTimezoneOffset â€” DST-aware â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    const _janOff = 360;
+    const _julOff = 300;
+    Date.prototype.getTimezoneOffset = function getTimezoneOffset() {
+      const ms = +this;
+      if (isNaN(ms)) return NaN;
+      const m = new Date(ms).getUTCMonth();
+      return (m >= 3 && m <= 9) ? _julOff : _janOff;
+    };
+  } catch (_) {}
+
+  // â”€â”€ 19. Intl.DateTimeFormat.resolvedOptions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    const _origRO = Intl.DateTimeFormat.prototype.resolvedOptions;
+    Intl.DateTimeFormat.prototype.resolvedOptions = function resolvedOptions() {
+      const r = _origRO.call(this);
+      r.timeZone = "America/Chicago";
+      return r;
+    };
+  } catch (_) {}
+
+  // â”€â”€ 20. Geolocation API â€” async dispatch â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    if (navigator.geolocation && 41.26 !== 0) {
+      const _mkPos = function () {
+        return {
+          coords: {
+            latitude: 41.26, longitude: -95.86, accuracy: 1000,
+            altitude: null, altitudeAccuracy: null, heading: null, speed: null,
+          },
+          timestamp: Date.now(),
+        };
+      };
+      navigator.geolocation.getCurrentPosition = function getCurrentPosition(success) {
+        setTimeout(function () { if (success) success(_mkPos()); }, 10);
+      };
+      navigator.geolocation.watchPosition = function watchPosition(success) {
+        setTimeout(function () { if (success) success(_mkPos()); }, 10);
+        return 1;
+      };
+      navigator.geolocation.clearWatch = function clearWatch() {};
+    }
+  } catch (_) {}
+
+  // â”€â”€ 21. ClientRects + BoundingClientRect noise â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  (function () {
+    const _crNoise = ((1715004 ^ 0xBEEF) % 3 + 1) * 0.0001;
+    const _origGBCR = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      const r = _origGBCR.call(this);
+      return new DOMRect(r.x + _crNoise, r.y + _crNoise, r.width, r.height);
+    };
+    const _origGCR = Element.prototype.getClientRects;
+    Element.prototype.getClientRects = function getClientRects() {
+      const rects = _origGCR.call(this);
+      const list = [];
+      for (let i = 0; i < rects.length; i++) {
+        list.push(new DOMRect(rects[i].x + _crNoise, rects[i].y + _crNoise, rects[i].width, rects[i].height));
+      }
+      return list;
+    };
+  })();
+
+  // â”€â”€ 22. Font measureText noise â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    const _origMT = CanvasRenderingContext2D.prototype.measureText;
+    const _fNoise = ((1715004 & 0xFFFF) % 5 + 1) * 0.0001;
+    CanvasRenderingContext2D.prototype.measureText = function measureText(text) {
+      const m = _origMT.call(this, text);
+      const origW = m.width;
+      Object.defineProperty(m, 'width', { get: function () { return origW + _fNoise; }, configurable: true });
+      return m;
+    };
+  } catch (_) {}
+
+  // â”€â”€ 23. WebGL getExtension + getSupportedExtensions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  (function () {
+    function _patchExt(proto) {
+      if (!proto || !proto.getExtension) return;
+      const _origExt = proto.getExtension;
+      proto.getExtension = function getExtension(name) {
+        if (name === 'WEBGL_debug_renderer_info') {
+          return { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
+        }
+        return _origExt.call(this, name);
+      };
+      if (proto.getSupportedExtensions) {
+        const _origSE = proto.getSupportedExtensions;
+        proto.getSupportedExtensions = function getSupportedExtensions() {
+          const exts = _origSE.call(this) || [];
+          if (!exts.includes('WEBGL_debug_renderer_info')) exts.push('WEBGL_debug_renderer_info');
+          return exts;
+        };
+      }
+    }
+    try { _patchExt(WebGLRenderingContext.prototype); } catch (_) {}
+    try { _patchExt(WebGL2RenderingContext.prototype); } catch (_) {}
+  })();
+
+  // â”€â”€ 24. navigator misc â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    Object.defineProperty(_NavProto, 'vendor',           { get: function vendor() { return 'Google Inc.'; },   configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'vendorSub',        { get: function vendorSub() { return ''; },          configurable: false });
+    Object.defineProperty(_NavProto, 'productSub',       { get: function productSub() { return '20030107'; }, configurable: false });
+    Object.defineProperty(_NavProto, 'maxTouchPoints',   { get: function maxTouchPoints() { return 0; }, configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'cookieEnabled',    { get: function cookieEnabled() { return true; },    configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'onLine',           { get: function onLine() { return true; },           configurable: false });
+    Object.defineProperty(_NavProto, 'doNotTrack',       { get: function doNotTrack() { return null; },       configurable: false });
+    Object.defineProperty(_NavProto, 'pdfViewerEnabled', { get: function pdfViewerEnabled() { return true; }, configurable: false });
+  } catch (_) {}
+
+  // â”€â”€ 25. History.length â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    Object.defineProperty(History.prototype, 'length', {
+      get: function length() { return 3; },
+      configurable: false, enumerable: true,
+    });
+  } catch (_) {}
+
+  // â”€â”€ 26. Speech synthesis voices â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    if (window.speechSynthesis) {
+      const _fakeVoices = [
+        { voiceURI: 'Google US English',       name: 'Google US English',       lang: 'en-US', localService: false, default: true },
+        { voiceURI: 'Google UK English Female', name: 'Google UK English Female', lang: 'en-GB', localService: false, default: false },
+        { voiceURI: 'Google UK English Male',   name: 'Google UK English Male',   lang: 'en-GB', localService: false, default: false },
+        { voiceURI: 'Google espaÃ±ol',           name: 'Google espaÃ±ol',           lang: 'es-ES', localService: false, default: false },
+      ];
+      window.speechSynthesis.getVoices = function getVoices() { return _fakeVoices; };
+    }
+  } catch (_) {}
+
+  // â”€â”€ 27. Worker / SharedWorker â€” module-safe injection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  (function () {
+    const _workerPayload = `
+      Object.defineProperties(Object.getPrototypeOf(navigator), {
+        hardwareConcurrency: {get:function(){ return 8; }},
+        deviceMemory: {get:function(){ return 8; }},
+        platform: {get:function(){ return "Linux x86_64"; }},
+        webdriver: {get:function(){ return false; }},
+      });
+      ['WebGLRenderingContext','WebGL2RenderingContext'].forEach(function(cn) {
+        if (self[cn]) {
+          var _og = self[cn].prototype.getParameter;
+          self[cn].prototype.getParameter = function(p) {
+            if (p === 37445) return "Google Inc. (Intel)";
+            if (p === 37446) return "ANGLE (Intel, Intel(R) UHD Graphics 630 (CML GT2), OpenGL 4.1)";
+            return _og.apply(this, arguments);
+          };
+        }
+      });
+      if (self.OffscreenCanvas) {
+        var _oc = self.OffscreenCanvas.prototype.getContext;
+        self.OffscreenCanvas.prototype.getContext = function(type) {
+          var ctx = _oc.apply(this, arguments);
+          if (ctx && (type === 'webgl' || type === 'webgl2') && ctx.getParameter) {
+            var _orig = ctx.getParameter.bind(ctx);
+            ctx.getParameter = function(p) {
+              if (p === 37445) return "Google Inc. (Intel)";
+              if (p === 37446) return "ANGLE (Intel, Intel(R) UHD Graphics 630 (CML GT2), OpenGL 4.1)";
+              return _orig(p);
+            };
+          }
+          return ctx;
+        };
+      }
+      if (self.WorkerNavigator) {
+        Object.defineProperty(self.WorkerNavigator.prototype, 'userAgentData', {
+          get: function() { return {
+            brands: [{"brand": "Chromium", "version": "131"}, {"brand": "Google Chrome", "version": "131"}, {"brand": "Not_A Brand", "version": "24"}],
+            mobile: false,
+            platform: "Linux",
+            getHighEntropyValues: function() { return Promise.resolve({
+              architecture: "x86",
+              bitness: '64', model: '',
+              platform: "Linux",
+              platformVersion: "131",
+            }); },
+          }; },
+          configurable: true, enumerable: true,
+        });
+      }
+    `;
+    const _resolveURL = function (url) {
+      try { return new URL(url, self.location.href).href; }
+      catch (_) { return url; }
+    };
+    if (typeof Worker !== 'undefined') {
+      const _OrigWorker = Worker;
+      window.Worker = function Worker(scriptURL, opts) {
+        if (typeof scriptURL === 'string' && !scriptURL.startsWith('blob:')) {
+          const resolved = _resolveURL(scriptURL);
+          if (opts && opts.type === 'module') {
+            const blob = new Blob(
+              [_workerPayload + ';import(' + JSON.stringify(resolved) + ');'],
+              { type: 'text/javascript' }
+            );
+            return new _OrigWorker(URL.createObjectURL(blob), opts);
+          }
+          const blob = new Blob(
+            [_workerPayload + ';importScripts(' + JSON.stringify(resolved) + ');'],
+            { type: 'application/javascript' }
+          );
+          return new _OrigWorker(URL.createObjectURL(blob), opts);
+        }
+        return new _OrigWorker(scriptURL, opts);
+      };
+      window.Worker.prototype = _OrigWorker.prototype;
+      Object.defineProperty(_OrigWorker.prototype, 'constructor', { value: window.Worker });
+    }
+    if (typeof SharedWorker !== 'undefined') {
+      const _OrigSW = SharedWorker;
+      window.SharedWorker = function SharedWorker(scriptURL, opts) {
+        if (typeof scriptURL === 'string' && !scriptURL.startsWith('blob:')) {
+          const resolved = _resolveURL(scriptURL);
+          if (opts && opts.type === 'module') {
+            const blob = new Blob(
+              [_workerPayload + ';import(' + JSON.stringify(resolved) + ');'],
+              { type: 'text/javascript' }
+            );
+            return new _OrigSW(URL.createObjectURL(blob), opts);
+          }
+          const blob = new Blob(
+            [_workerPayload + ';importScripts(' + JSON.stringify(resolved) + ');'],
+            { type: 'application/javascript' }
+          );
+          return new _OrigSW(URL.createObjectURL(blob), opts);
+        }
+        return new _OrigSW(scriptURL, opts);
+      };
+      window.SharedWorker.prototype = _OrigSW.prototype;
+      Object.defineProperty(_OrigSW.prototype, 'constructor', { value: window.SharedWorker });
+    }
+  })();
+
+  // â”€â”€ 28. navigator.share â€” stub (fixes noWebShare) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    if (!navigator.share) {
+      Object.defineProperty(_NavProto, 'share', {
+        value: function share() { return Promise.reject(new DOMException('Share canceled', 'AbortError')); },
+        writable: true, configurable: true, enumerable: true,
+      });
+    }
+    if (!navigator.canShare) {
+      Object.defineProperty(_NavProto, 'canShare', {
+        value: function canShare() { return true; },
+        writable: true, configurable: true, enumerable: true,
+      });
+    }
+  } catch (_) {}
+
+  // â”€â”€ 29. Content Index API stub (fixes noContentIndex) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    if (typeof window.ContentIndex === 'undefined') {
+      window.ContentIndex = function ContentIndex() {
+        throw new TypeError('Illegal constructor');
+      };
+      window.ContentIndex.prototype = {
+        add: function add() { return Promise.resolve(); },
+        delete: function _delete() { return Promise.resolve(); },
+        getAll: function getAll() { return Promise.resolve([]); },
+      };
+      Object.defineProperty(window.ContentIndex.prototype, Symbol.toStringTag, {
+        value: 'ContentIndex', configurable: true,
+      });
+    }
+    // Also add to ServiceWorkerRegistration.prototype if available
+    try {
+      if (typeof ServiceWorkerRegistration !== 'undefined' && !('index' in ServiceWorkerRegistration.prototype)) {
+        Object.defineProperty(ServiceWorkerRegistration.prototype, 'index', {
+          get: function index() { return new (window.ContentIndex || Object)(); },
+          configurable: true, enumerable: true,
+        });
+      }
+    } catch (_) {}
+  } catch (_) {}
+
+  // â”€â”€ 30. Contacts Manager API stub (fixes noContactsManager) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  try {
+    if (!navigator.contacts) {
+      Object.defineProperty(_NavProto, 'contacts', {
+        get: function contacts() {
+          return {
+            select: function select() { return Promise.reject(new DOMException('User canceled', 'InvalidStateError')); },
+            getProperties: function getProperties() { return Promise.resolve(['name', 'email', 'tel']); },
+          };
+        },
+        configurable: true, enumerable: true,
+      });
+    }
+    if (!navigator.ContactsManager) {
+      window.ContactsManager = function ContactsManager() {};
+    }
+  } catch (_) {}
+
+  // â”€â”€ 31. Iframe stealth propagation (fixes hasSwiftShader via iframe bypass) â”€
+  // CreepJS creates sandboxed iframes to get unpatched WebGL contexts.
+  // We intercept iframe creation and patch WebGL/WebGPU inside each one.
+  try {
+    const _vendor   = "Google Inc. (Intel)";
+    const _renderer = "ANGLE (Intel, Intel(R) UHD Graphics 630 (CML GT2), OpenGL 4.1)";
+    const _fakeGpuInfo = Object.freeze({
+      vendor: 'intel', architecture: 'gen-9.5', device: '', description: 'Intel(R) UHD Graphics 630',
+    });
+    function _patchWindow(win) {
+      if (!win || win.__xio_patched) return;
+      try { win.__xio_patched = true; } catch(_) {}
+      // Patch WebGL
+      function _patchProto(p) {
+        if (!p || !p.getParameter) return;
+        const _o = p.getParameter;
+        p.getParameter = function getParameter(param) {
+          if (param === 37445) return _vendor;
+          if (param === 37446) return _renderer;
+          return _o.call(this, param);
+        };
+      }
+      try { _patchProto(win.WebGLRenderingContext && win.WebGLRenderingContext.prototype); } catch(_) {}
+      try { _patchProto(win.WebGL2RenderingContext && win.WebGL2RenderingContext.prototype); } catch(_) {}
+      // Patch WebGPU
+      try {
+        if (win.navigator && win.navigator.gpu && win.navigator.gpu.requestAdapter) {
+          const _ra = win.navigator.gpu.requestAdapter.bind(win.navigator.gpu);
+          win.navigator.gpu.requestAdapter = async function requestAdapter(opts) {
+            const a = await _ra(opts);
+            if (!a) return a;
+            if (a.requestAdapterInfo) a.requestAdapterInfo = async () => _fakeGpuInfo;
+            try { Object.defineProperty(a, 'info', { get: () => _fakeGpuInfo, configurable: true }); } catch(_) {}
+            return a;
+          };
+        }
+      } catch(_) {}
+    }
+    const _origCE = document.createElement.bind(document);
+    document.createElement = function createElement(tag) {
+      const el = _origCE(tag);
+      if (typeof tag === 'string' && tag.toLowerCase() === 'iframe') {
+        const _origAC = el.addEventListener.bind(el);
+        // Patch on load
+        _origAC('load', function() {
+          try { _patchWindow(el.contentWindow); } catch(_) {}
+        });
+        // Also patch getter so we catch srcdoc/about:blank iframes pre-load
+        const _desc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+        if (_desc) {
+          Object.defineProperty(el, 'contentWindow', {
+            get: function contentWindow() {
+              const win = _desc.get.call(this);
+              try { _patchWindow(win); } catch(_) {}
+              return win;
+            },
+            configurable: true,
+          });
+          Object.defineProperty(el, 'contentDocument', {
+            get: function contentDocument() {
+              const win = _desc.get.call(this);
+              try { _patchWindow(win); } catch(_) {}
+              return win ? win.document : null;
+            },
+            configurable: true,
+          });
+        }
+      }
+      return el;
+    };
+    // Also try Document.prototype.createElement for same-doc iframes
+    try {
+      const _dcProto = Document.prototype;
+      const _origDCE = _dcProto.createElement;
+      _dcProto.createElement = function createElement(tag) {
+        const el = _origDCE.apply(this, arguments);
+        if (typeof tag === 'string' && tag.toLowerCase() === 'iframe') {
+          el.addEventListener('load', function() {
+            try { _patchWindow(el.contentWindow); } catch(_) {}
+          });
+        }
+        return el;
+      };
+    } catch(_) {}
+  } catch (_) {}
+
+})();
+</script>
+<title>Turnstile ‐ Dummy Login Demo</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.2.1/css/bootstrap.min.css" integrity="sha512-siwe/oXMhSjGCwLn+scraPOWrJxHlUgMBMZXdPe2Tnk3I0x3ESCoLz7WZ5NTH6SZrywMY+PB1cjyqJ5jAluCOg==" crossorigin="anonymous" referrerpolicy="no-referrer">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.9.1/font/bootstrap-icons.min.css" integrity="sha512-5PV92qsds/16vyYIJo3T/As4m2d8b6oWYfoqV+vtizRB6KhF1F9kYzWzQmsO6T3z3QG2Xdhrx7FQ+5R1LiQdUA==" crossorigin="anonymous" referrerpolicy="no-referrer">
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async="" defer=""></script>
+<style>
+html,
+body {
+  height: 100%;
+}
+
+body {
+  display: flex;
+  align-items: center;
+  padding-top: 40px;
+  padding-bottom: 40px;
+  background-color: #fefefe;
+}
+
+.form-signin {
+  width: 100%;
+  max-width: 330px;
+  padding: 15px;
+  margin: auto;
+}
+
+.form-signin .checkbox {
+  font-weight: 400;
+}
+
+.form-signin .form-floating:focus-within {
+  z-index: 2;
+}
+
+.form-signin input[type="text"] {
+  margin-bottom: -1px;
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.form-signin input[type="password"] {
+  margin-bottom: 10px;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+</style>
+</head>
+<body>
+<main class="form-signin">
+  <form method="POST" action="/handler">
+    <h2 class="h3 mb-3 fw-normal">Turnstile ‐ Dummy Login Demo</h2>
+
+    <div class="form-floating">
+      <input type="text" id="user" class="form-control" style="">
+      <label for="user">User name</label>
+    </div>
+    <div class="form-floating">
+      <input type="password" id="pass" class="form-control" autocomplete="off" readonly="" value="CorrectHorseBatteryStaple" style="">
+      <label for="pass">Password (dummy)</label>
+    </div>
+
+    <div class="checkbox mb-3">
+      <!-- The following line controls and configures the Turnstile widget. -->
+      <div class="cf-turnstile" data-sitekey="1x00000000000000000000AA" data-theme="light"><div><div></div><input type="hidden" name="cf-turnstile-response" id="cf-chl-widget-wrmaz_response" value="XXXX.DUMMY.TOKEN.XXXX" style=""></div></div>
+      <!-- end. -->
+    </div>
+    <button class="w-100 btn btn-lg btn-primary" type="submit">Sign in</button>
+    <p class="mt-5 mb-3 text-muted"><a href="https://github.com/cloudflare/turnstile-demo-workers"><i class="bi bi-github"></i> See code</a></p>
+    <p class="mt-5 mb-3 text-muted">Go to the <a href="/explicit">explicit render demo</a></p>
+  </form>
+</main>
+
+
+</body></html>

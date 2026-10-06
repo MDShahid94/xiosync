@@ -15,7 +15,7 @@ An empty ``resource_quotas`` dict means unlimited (no enforcement).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -70,13 +70,45 @@ class QuotaService:
         if current >= limit:
             raise QuotaExceededError("workers", current, limit)
 
+    def check_queued_tasks(self, organization_id: uuid.UUID) -> None:
+        """Raise if the org has reached max_queued_tasks."""
+        quotas = self._get_quotas(organization_id)
+        limit = quotas.get("max_queued_tasks")
+        if limit is None:
+            return
+        current = self._session.scalar(
+            text(
+                "SELECT COUNT(*) FROM xioflow_tasks "
+                "WHERE organization_id = :org_id AND state = 'queued'"
+            ),
+            {"org_id": str(organization_id)},
+        ) or 0
+        if current >= limit:
+            raise QuotaExceededError("queued_tasks", current, limit)
+
+    def check_concurrent_runs(self, organization_id: uuid.UUID) -> None:
+        """Raise if the org has reached max_concurrent_runs."""
+        quotas = self._get_quotas(organization_id)
+        limit = quotas.get("max_concurrent_runs")
+        if limit is None:
+            return
+        current = self._session.scalar(
+            text(
+                "SELECT COUNT(*) FROM xioflow_runs "
+                "WHERE organization_id = :org_id AND state = 'running'"
+            ),
+            {"org_id": str(organization_id)},
+        ) or 0
+        if current >= limit:
+            raise QuotaExceededError("concurrent_runs", current, limit)
+
     def check_daily_events(self, organization_id: uuid.UUID) -> None:
         """Raise if the org has reached max_daily_events for today (UTC)."""
         quotas = self._get_quotas(organization_id)
         limit = quotas.get("max_daily_events")
         if limit is None:
             return
-        today_start = datetime.now(timezone.utc).replace(
+        today_start = datetime.now(UTC).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
         current = self._session.scalar(

@@ -13,7 +13,7 @@ import uuid
 from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 router = APIRouter(tags=["task-streams"])
@@ -120,7 +120,7 @@ async def tail_task_stream(
     Protocol-conformant SSE with reconnect support via ``since_sequence``.
     """
 
-    async def _generate() -> AsyncGenerator[str, None]:
+    async def _generate() -> AsyncGenerator[str]:
         yield "retry: 3000\n\n"
         yield f"event: stream.connected\ndata: {{\"task_id\": \"{task_id}\"}}\n\n"
 
@@ -132,7 +132,7 @@ async def tail_task_stream(
         try:
             async for msg in bus.subscribe(f"task:{task_id}"):
                 seq = msg.get("sequence", "")
-                chunk = msg.get("chunk", "")
+                msg.get("chunk", "")
                 yield f"id: {seq}\nevent: task.output\ndata: {json.dumps(msg, default=str)}\n\n"
         except asyncio.CancelledError:
             pass

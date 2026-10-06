@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Any
 
 from sqlalchemy import select, func
@@ -79,7 +79,7 @@ class MeteringService:
     @staticmethod
     def _current_hour(now: datetime | None = None) -> tuple[datetime, datetime]:
         """Return (start, end) of the current hourly period."""
-        ts = now or datetime.now(timezone.utc)
+        ts = now or datetime.now(UTC)
         start = ts.replace(minute=0, second=0, microsecond=0)
         end = start + timedelta(hours=1)
         return start, end
@@ -162,7 +162,7 @@ class MeteringService:
         until: datetime | None = None,
     ) -> UsageSummary:
         """Aggregate usage into a high-level summary."""
-        ts_now = datetime.now(timezone.utc)
+        ts_now = datetime.now(UTC)
         start = since or (ts_now - timedelta(hours=24))
         end = until or ts_now
 

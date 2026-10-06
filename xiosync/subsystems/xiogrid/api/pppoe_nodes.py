@@ -7,7 +7,7 @@ Multi-host: every endpoint is scoped to a specific host_id
 from __future__ import annotations
 
 import uuid
-from typing import Any, cast
+from typing import Any
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
@@ -57,12 +57,16 @@ class AssignRequest(_M):
     worker_ts_ip: str
     session_id: str
     preferred_host_id: uuid.UUID | None = None
+    # Pass the Google account email to enable per-account IP pinning.
+    # "etathyaghar@gmail.com" → always returns same PPPoE slot → same residential IP.
+    google_account: str | None = None
 
 
 # ── Host endpoints ───────────────────────────────────────────────────
 
 @router.post("/pppoe/hosts", status_code=201, summary="Register a new Mac Mini + VM pair")
 def register_host(payload: RegisterHostRequest, request: Request) -> dict[str, Any]:
+    import logging as _log
     from xiosync.subsystems.xiogrid.services.pppoe_hosts import PPPoEHostService
     svc = PPPoEHostService(request.state.org_session)
     host = svc.register(
@@ -82,10 +86,21 @@ def register_host(payload: RegisterHostRequest, request: Request) -> dict[str, A
         warm_pool_target=payload.warm_pool_target,
         meta=payload.meta,
     )
-    # Deploy scripts to the new VM automatically
-    _deploy_scripts_to_host(host, payload)
-    return {"id": str(host.id), "name": host.name, "state": host.state,
+    # Deploy scripts — non-fatal: VM may not be SSH-reachable at registration time
+    scripts_warning = None
+    try:
+        _deploy_scripts_to_host(host, payload)
+    except Exception as _e:
+        scripts_warning = str(_e)[:200]
+        _log.getLogger(__name__).warning(
+            f"register_host: script deploy to {host.vm_ssh_host} failed "
+            f"(non-fatal, retry with POST /pppoe/hosts/{host.id}/deploy-scripts): {_e}"
+        )
+    resp = {"id": str(host.id), "name": host.name, "state": host.state,
             "vm_ssh_host": host.vm_ssh_host, "max_slots": host.max_slots}
+    if scripts_warning:
+        resp["scripts_warning"] = scripts_warning
+    return resp
 
 
 @router.get("/pppoe/hosts", summary="List all registered hosts")
@@ -169,6 +184,7 @@ def acquire_any(payload: AssignRequest, request: Request) -> dict[str, Any]:
         session_id=payload.session_id,
         worker_ts_ip=payload.worker_ts_ip,
         preferred_host_id=payload.preferred_host_id,
+        google_account=payload.google_account,
     )
     return _slot_json(node)
 
@@ -237,7 +253,158 @@ def health_check_all(request: Request) -> dict:
     return PPPoENodeService(request.state.org_session).health_check_all_hosts()
 
 
+@router.post("/pppoe/hosts/{host_id}/warm-up",
+             summary="Trigger warm-pool provisioning on a host — called by vm-startup.sh on boot")
+def warm_up_host(host_id: uuid.UUID, request: Request, target: int = 50) -> dict:
+    """
+    Reprovision the warm pool up to `target` idle slots on the given host.
+    Called automatically by vm-startup.sh when the VM boots.
+    Runs in a background thread so the HTTP call returns immediately.
+
+    Returns {"ok": true, "host_id": ..., "target": N, "status": "triggered"}.
+    The actual provisioning runs async — check slot state via GET /pppoe/nodes.
+    """
+    import threading
+    from xiosync.subsystems.xiogrid.services.pppoe_hosts import PPPoEHostService
+
+    db  = request.state.org_session
+    ctx = request.state.org_context
+
+    try:
+        host = PPPoEHostService(db).get(host_id)
+    except Exception:
+        return JSONResponse(status_code=404, content={"error": f"host {host_id} not found"})
+
+    # Count already-warm slots so we only provision the delta
+    from sqlalchemy import select as _sel, func as _func
+    from xiosync.subsystems.xiogrid.models.exit_node import PPPoEExitNode
+    from xiosync.subsystems.xiogrid.domain.pppoe import PPPoESlotState
+    idle_count = db.scalar(
+        _sel(_func.count()).where(
+            PPPoEExitNode.host_id == host_id,
+            PPPoEExitNode.state.in_([PPPoESlotState.IDLE, PPPoESlotState.ASSIGNED]),
+        )
+    ) or 0
+    to_provision = max(0, min(target, host.max_slots) - idle_count)
+
+    if to_provision == 0:
+        return {"ok": True, "host_id": str(host_id), "target": target,
+                "idle": idle_count, "status": "pool_already_warm"}
+
+    # Background thread — provision without blocking the VM boot
+    from xiosync.subsystems.xiogrid.services.pppoe_nodes import PPPoENodeService as _SVC
+    def _bg():
+        import sqlalchemy as _sa
+        engine = db.get_bind()
+        Session = _sa.orm.sessionmaker(engine)
+        with Session() as sess:
+            svc = _SVC(sess)
+            for _ in range(to_provision):
+                try:
+                    slot = svc._next_free_slot(host_id)
+                    svc.provision_slot(ctx, host_id, slot)
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning(f"warm-up provision failed: {e}")
+                    break
+
+    threading.Thread(target=_bg, daemon=True).start()
+    return {"ok": True, "host_id": str(host_id), "target": target,
+            "idle_before": idle_count, "provisioning": to_provision, "status": "triggered"}
+
+
+class SelfRegisterRequest(_M):
+    """Sent by vm-startup.sh on first boot — no pre-set HOST_ID needed."""
+    name:               str            = Field(description="Unique VM hostname, e.g. 'xiogrid-vm-01'")
+    tailscale_vm_ts_ip: str            = Field(description="VM's Tailscale IPv4")
+    vm_ssh_host:        str            = Field(description="SSH host (usually Tailscale IP)")
+    pppoe_username:     str            = Field(description="PPPoE CHAP username")
+    pppoe_password:     str            = Field(description="PPPoE CHAP password")
+    pppoe_parent_iface: str            = Field(default="enp26s0")
+    vm_ssh_user:        str            = Field(default="karmantu")
+    vm_ssh_port:        int            = Field(default=22)
+    vm_scripts_dir:     str            = Field(default="/usr/local/bin/xiogrid")
+    max_slots:          int            = Field(default=981, le=1000)
+    warm_pool_target:   int            = Field(default=50)
+    registration_token: str            = Field(description="Shared secret for VM self-registration")
+    meta:               dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/pppoe/hosts/register",
+             status_code=201,
+             summary="VM self-registration — called by vm-startup.sh on boot (idempotent)")
+def self_register(payload: SelfRegisterRequest, request: Request) -> dict[str, Any]:
+    """
+    Idempotent: if a host with the same name already exists, update its Tailscale IP
+    and return the existing record. Otherwise, create a new PPPoEHost and deploy scripts.
+
+    Called by vm-startup.sh on VM boot — eliminates the need for HOST_ID to be
+    pre-provisioned in the startup script.
+
+    Returns {"host_id": uuid, "name": str, "action": "created" | "updated"}.
+    """
+    import os, logging as _log
+    from xiosync.subsystems.xiogrid.services.pppoe_hosts import PPPoEHostService
+    from xiosync.subsystems.xiogrid.models.exit_node import PPPoEHost
+
+    # Validate registration token
+    expected = os.environ.get("XIOGRID_VM_REGISTRATION_TOKEN", "")
+    if expected and payload.registration_token != expected:
+        return JSONResponse(status_code=403, content={"error": "invalid_registration_token"})
+
+    db  = request.state.org_session
+    ctx = request.state.org_context
+    svc = PPPoEHostService(db)
+
+    # Idempotent: look up by name
+    from sqlalchemy import select as _sel
+    existing = db.scalar(_sel(PPPoEHost).where(PPPoEHost.name == payload.name))
+    if existing:
+        # Update Tailscale IP if it changed (common after VM reboot)
+        if existing.tailscale_vm_ts_ip != payload.tailscale_vm_ts_ip:
+            existing.tailscale_vm_ts_ip = payload.tailscale_vm_ts_ip
+            existing.vm_ssh_host        = payload.vm_ssh_host
+            db.flush()
+        return {"host_id": str(existing.id), "name": existing.name,
+                "action": "updated", "state": existing.state}
+
+    # New registration
+    host = svc.register(
+        ctx,
+        name=payload.name,
+        vm_ssh_host=payload.vm_ssh_host,
+        pppoe_username=payload.pppoe_username,
+        pppoe_password=payload.pppoe_password,
+        description=f"Auto-registered from {payload.tailscale_vm_ts_ip}",
+        vm_ssh_user=payload.vm_ssh_user,
+        vm_ssh_port=payload.vm_ssh_port,
+        vm_scripts_dir=payload.vm_scripts_dir,
+        pppoe_parent_iface=payload.pppoe_parent_iface,
+        tailscale_vm_ts_ip=payload.tailscale_vm_ts_ip,
+        max_slots=payload.max_slots,
+        warm_pool_target=payload.warm_pool_target,
+        meta=payload.meta,
+    )
+    # Deploy scripts — non-fatal on SSH failure (VM may not be reachable at registration time)
+    _scripts_warn = None
+    try:
+        _deploy_scripts_to_host(host, payload)
+    except Exception as _se:
+        _scripts_warn = str(_se)[:200]
+        _log.getLogger(__name__).warning(
+            f"self_register: script deploy failed for {host.vm_ssh_host}: {_se}"
+        )
+
+    result = {"host_id": str(host.id), "name": host.name,
+              "action": "created", "state": host.state}
+    if _scripts_warn:
+        result["scripts_warning"] = _scripts_warn
+    return result
+
+
+
 # ── Fingerprint endpoints ────────────────────────────────────────────
+
 
 @router.get("/pppoe/fingerprints", summary="List all fingerprint profiles")
 def list_fingerprints(request: Request) -> dict[str, Any]:
@@ -299,22 +466,44 @@ def _deploy_scripts_to_host(host_record: Any, payload: Any) -> None:
         os.path.dirname(__file__), "..", "..", "..", "..", "tools", "vm_scripts"
     )
     scripts_src = os.path.normpath(scripts_src)
-    target = f"{host_record.vm_ssh_user}@{host_record.vm_ssh_host}"
+    target   = f"{host_record.vm_ssh_user}@{host_record.vm_ssh_host}"
     ssh_opts = ["-o", "StrictHostKeyChecking=no", "-p", str(host_record.vm_ssh_port)]
 
-    for script in ["create-slot.sh", "destroy-slot.sh", "check-slot.sh",
-                   "assign-route.sh", "release-route.sh", "rotate-slot.sh"]:
+    # Template variables to inject into all scripts
+    xiosync_base = os.environ.get("XIOSYNC_BASE_URL", "http://100.86.149.127:8000")
+    xiosync_tok  = os.environ.get("XIOSYNC_WORKER_ORG_SECRET", "")
+    vm_reg_tok   = os.environ.get("XIOGRID_VM_REGISTRATION_TOKEN", "")
+    mac_oui      = getattr(payload, "mac_oui_prefix", "00:50:56:cc")
+
+    TEMPLATE_VARS = {
+        "__PPPOE_USER__":       payload.pppoe_username,
+        "__PPPOE_PASS__":       payload.pppoe_password,
+        "__PARENT_IFACE__":     payload.pppoe_parent_iface,
+        "__MAC_OUI__":          mac_oui,
+        "__XIOSYNC_URL__":      xiosync_base,
+        "__XIOSYNC_TOKEN__":    xiosync_tok,
+        "__VM_REG_TOKEN__":     vm_reg_tok,
+        "__MAX_SLOTS__":        str(payload.max_slots),
+        "__WARM_POOL_TARGET__": str(payload.warm_pool_target),
+        "__VM_SCRIPTS_DIR__":   payload.vm_scripts_dir,
+    }
+
+    all_scripts = [
+        "create-slot.sh", "destroy-slot.sh", "check-slot.sh",
+        "assign-route.sh", "release-route.sh", "rotate-slot.sh",
+        "start-proxy.sh", "stop-proxy.sh", "vm-startup.sh",
+        "socks5.py",
+    ]
+
+    for script in all_scripts:
         src_path = os.path.join(scripts_src, script)
-        # Inject PPPoE credentials into create-slot.sh
+        if not os.path.exists(src_path):
+            continue
         with open(src_path) as f:
             content = f.read()
-        content = (
-            content
-            .replace("__PPPOE_USER__", payload.pppoe_username)
-            .replace("__PPPOE_PASS__", payload.pppoe_password)
-            .replace("__PARENT_IFACE__", payload.pppoe_parent_iface)
-            .replace("__MAC_OUI__", payload.mac_oui_prefix)
-        )
+        for placeholder, value in TEMPLATE_VARS.items():
+            content = content.replace(placeholder, value)
+
         # Write to temp, scp, chmod
         tmp = f"/tmp/xiogrid_{script}"
         with open(tmp, "w") as f:

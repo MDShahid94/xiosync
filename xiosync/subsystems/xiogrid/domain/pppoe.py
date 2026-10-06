@@ -75,7 +75,7 @@ def profile_name_for_slot(slot: int) -> str:
     for lo, hi, name in SLOT_PROFILE_RANGES:
         if lo <= slot <= hi:
             return name
-    return "Mac M4 Pro"
+    return "Linux Ubuntu x86"  # fallback for out-of-range slots
 
 
 @dataclass(frozen=True)

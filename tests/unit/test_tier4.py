@@ -260,9 +260,11 @@ from xiosync.worker.ticker import tick_cron_triggers
 class TestTickerWorker:
     def test_no_due_triggers_returns_zero(self) -> None:
         session = MagicMock()
-        with patch("xiosync.worker.ticker.TriggerService") as MockTS:
-            MockTS.return_value.get_due_cron_triggers.return_value = []
-            result = tick_cron_triggers(session)
+        # ticker.py uses session.execute(text(...)).fetchall() — no TriggerService
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = []
+        session.execute.return_value = mock_result
+        result = tick_cron_triggers(session)
         assert result == 0
 
 

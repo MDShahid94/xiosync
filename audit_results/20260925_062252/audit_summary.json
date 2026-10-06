@@ -1,0 +1,260 @@
+{
+  "timestamp": "2026-09-25T06:24:55.512786+00:00",
+  "worker_ip": "100.111.130.118",
+  "cdp_ws_url": "ws://100.111.130.118:58131/devtools/browser/493b28e6-50a7-4be3-90ad-698325094edc",
+  "proxy_url": null,
+  "session_id": "708f6e6c-aa7d-44df-aeb4-7e4f494735b6",
+  "vectors": {
+    "ip_reputation": {
+      "error": "'str' object has no attribute 'get'",
+      "pass": false
+    },
+    "sannysoft": {
+      "tests": {
+        "User Agent\n(Old)": {
+          "value": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+          "pass": false
+        },
+        "WebDriver\n(New)": {
+          "value": "missing (passed)",
+          "pass": true
+        },
+        "WebDriver Advanced": {
+          "value": "passed",
+          "pass": true
+        },
+        "Chrome\n(New)": {
+          "value": "missing (failed)",
+          "pass": false
+        },
+        "Permissions\n(New)": {
+          "value": "prompt",
+          "pass": false
+        },
+        "Plugins Length\n(Old)": {
+          "value": "0",
+          "pass": false
+        },
+        "Plugins is of type PluginArray": {
+          "value": "failed",
+          "pass": false
+        },
+        "Languages\n(Old)": {
+          "value": "en-US,en;q=0.9",
+          "pass": true
+        },
+        "WebGL Vendor": {
+          "value": "Canvas has no webgl context",
+          "pass": false
+        },
+        "WebGL Renderer": {
+          "value": "Canvas has no webgl context",
+          "pass": false
+        },
+        "Broken Image Dimensions": {
+          "value": "16x16",
+          "pass": true
+        },
+        "PHANTOM_UA": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_PROPERTIES": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_ETSL": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_LANGUAGE": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_WEBSOCKET": {
+          "value": "ok",
+          "pass": true
+        },
+        "MQ_SCREEN": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_OVERFLOW": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_WINDOW_HEIGHT": {
+          "value": "ok",
+          "pass": true
+        },
+        "HEADCHR_UA": {
+          "value": "FAIL",
+          "pass": false
+        },
+        "HEADCHR_CHROME_OBJ": {
+          "value": "FAIL",
+          "pass": false
+        },
+        "HEADCHR_PERMISSIONS": {
+          "value": "FAIL",
+          "pass": false
+        },
+        "HEADCHR_PLUGINS": {
+          "value": "WARN",
+          "pass": false
+        },
+        "HEADCHR_IFRAME": {
+          "value": "FAIL",
+          "pass": false
+        },
+        "CHR_DEBUG_TOOLS": {
+          "value": "ok",
+          "pass": true
+        },
+        "SELENIUM_DRIVER": {
+          "value": "ok",
+          "pass": true
+        },
+        "CHR_BATTERY": {
+          "value": "ok",
+          "pass": true
+        },
+        "CHR_MEMORY": {
+          "value": "FAIL",
+          "pass": false
+        },
+        "TRANSPARENT_PIXEL": {
+          "value": "ok",
+          "pass": true
+        },
+        "SEQUENTUM": {
+          "value": "ok",
+          "pass": true
+        },
+        "VIDEO_CODECS": {
+          "value": "ok",
+          "pass": true
+        },
+        "navigator.cookieEnabled": {
+          "value": "true",
+          "pass": false
+        },
+        "navigator.doNotTrack": {
+          "value": "null",
+          "pass": false
+        },
+        "navigator.msDoNotTrack": {
+          "value": "undefined",
+          "pass": false
+        },
+        "navigator.sendBeacon": {
+          "value": "",
+          "pass": false
+        },
+        "navigator.userAgent": {
+          "value": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.8010.12 Safari/537.36",
+          "pass": false
+        },
+        "navigator.appName": {
+          "value": "Netscape",
+          "pass": false
+        },
+        "navigator.vendor": {
+          "value": "Google Inc.",
+          "pass": false
+        },
+        "navigator.appCodeName": {
+          "value": "Mozilla",
+          "pass": false
+        },
+        "navigator.getUserMedia": {
+          "value": "",
+          "pass": false
+        },
+        "navigator.sayswho": {
+          "value": "undefined",
+          "pass": false
+        },
+        "navigator.javaEnabled": {
+          "value": "false",
+          "pass": false
+        },
+        "navigator.plugins": {
+          "value": "{}",
+          "pass": false
+        },
+        "screen.width": {
+          "value": "800",
+          "pass": false
+        },
+        "screen.height": {
+          "value": "600",
+          "pass": false
+        },
+        "screen.colorDepth": {
+          "value": "24",
+          "pass": false
+        },
+        "navigator.language": {
+          "value": "en-US",
+          "pass": false
+        },
+        "navigator.loadPurpose": {
+          "value": "undefined",
+          "pass": false
+        },
+        "navigator.platform": {
+          "value": "Linux x86_64",
+          "pass": false
+        },
+        "navigator.mediaDevices": {
+          "value": "",
+          "pass": false
+        },
+        "navigator.getBattery details": {
+          "value": "Charging: true\nLevel: 1",
+          "pass": false
+        },
+        "Canvas1": {
+          "value": "Hash: -419353324",
+          "pass": false
+        },
+        "Canvas2": {
+          "value": "Hash: -419353324",
+          "pass": false
+        },
+        "Canvas3 (iframe sandbox)": {
+          "value": "Hash: -419353324",
+          "pass": false
+        },
+        "Canvas4 (iframe sandbox)": {
+          "value": "Hash: -419353324",
+          "pass": false
+        },
+        "Canvas5 (iframe)": {
+          "value": "Hash: -419353324",
+          "pass": false
+        }
+      },
+      "passed": 18,
+      "total": 56,
+      "pass": false
+    },
+    "headless_detect": {
+      "error": "Locator.inner_text: Timeout 5000ms exceeded.\nCall log:\n  - waiting for locator(\"#res\")\n",
+      "pass": false
+    },
+    "creepjs": {
+      "headless": "67% headless: f49f2dad",
+      "stealth": "0% stealth: 295d4148",
+      "trust": "Not Found",
+      "fingerprint": "FP ID: de06b4aea97109fcfcc75d191285df89f120d681da2c710a15b890015b0ccc90\nFuzzy: 538ff22c5d2b85658d994e22bffcbd38ff9665fcfface2f89c29000000000000\n662.30 ms",
+      "pass": true
+    },
+    "turnstile": {
+      "token_generated": true,
+      "token_length": 21,
+      "pass": true
+    }
+  }
+}

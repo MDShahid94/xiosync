@@ -19,7 +19,6 @@ import uuid
 from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 router = APIRouter(tags=["triggers"])

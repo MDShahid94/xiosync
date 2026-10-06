@@ -20,12 +20,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, UTC, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -33,6 +34,13 @@ from sqlalchemy.orm import Session
 from xiosync.api.middleware.db import get_db
 from xiosync.api.middleware.rbac import get_org_context, require_capability
 from xiosync.domain.context import OrgContext
+from xiosync.services.workflows import (
+    WorkflowService,
+    InactiveLeaseError,
+    NonCompletableError,
+    TaskNotFoundError,
+    UnleaseableError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +166,7 @@ def execute_script(
         )
         output = result
         status = "success"
-    except TimeoutError as exc:
+    except TimeoutError:
         error  = f"Script timed out after {req.timeout_secs}s"
         status = "timeout"
         logger.warning("execution.script.timeout", extra={"org": str(ctx.organization_id)})
@@ -180,7 +188,7 @@ def execute_script(
         "output":      output,
         "error":       error,
         "duration_ms": duration_ms,
-        "executed_at": datetime.now(timezone.utc),
+        "executed_at": datetime.now(UTC),
     }
 
 
@@ -239,7 +247,7 @@ def execute_http(
         "output":      output,
         "error":       error,
         "duration_ms": duration_ms,
-        "executed_at": datetime.now(timezone.utc),
+        "executed_at": datetime.now(UTC),
     }
 
 
@@ -281,7 +289,7 @@ async def execute_node(
         status = "success" if success else "error"
         if not success:
             error = "Node returned failure status"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         error  = f"Node execution timed out after {req.timeout_secs}s"
         status = "timeout"
     except Exception as exc:
@@ -302,7 +310,7 @@ async def execute_node(
         "output":      output,
         "error":       error,
         "duration_ms": duration_ms,
-        "executed_at": datetime.now(timezone.utc),
+        "executed_at": datetime.now(UTC),
     }
 
 
@@ -315,7 +323,6 @@ def list_execution_runs(
     ctx:    OrgContext = Depends(get_org_context),
 ) -> list[dict]:
     """List recent on-demand execution records for this org."""
-    type_filter = f"AND event_type = 'execution.{kind}.success' OR event_type = 'execution.{kind}.error'" if kind else ""
     rows = db.execute(
         text(f"""
             SELECT id,
@@ -384,6 +391,161 @@ def get_execution_run(
         "error":       result.get("error"),
         "duration_ms": p.get("duration_ms", 0),
         "executed_at": row["created_at"],
+    }
+
+
+
+# ── Task lifecycle endpoints (INV-EXEC-1, INV-EXEC-2) ─────────────────────────
+
+class LeaseTaskRequest(BaseModel):
+    leased_by: uuid.UUID
+    duration_seconds: int = Field(default=300, ge=1, le=3600)
+
+
+class HeartbeatTaskRequest(BaseModel):
+    lease_id: uuid.UUID
+    duration_seconds: int = Field(default=300, ge=1, le=3600)
+
+
+class CompleteTaskRequest(BaseModel):
+    lease_id: uuid.UUID
+    result: Any = None
+
+
+def _problem(code: str, detail: str, status: int) -> dict:
+    return {"code": code, "detail": detail, "status": status}
+
+
+@router.post("/tasks/{task_id}/lease")
+def lease_task(
+    task_id: uuid.UUID,
+    body: LeaseTaskRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    """INV-EXEC-1: atomically lease a queued task and mint a scoped task credential."""
+    from xiosync.platform.task_credentials import mint_task_credential  # noqa: PLC0415
+    from fastapi.responses import JSONResponse  # noqa: PLC0415
+
+    ctx = request.state.org_context
+    svc = WorkflowService(db)
+    now = datetime.now(UTC)
+    duration = timedelta(seconds=body.duration_seconds)
+
+    try:
+        record = svc.lease_task(ctx, task_id, leased_by=body.leased_by, duration=duration, now=now)
+    except TaskNotFoundError:
+        return JSONResponse(
+            status_code=404,
+            content=_problem("task_not_found", f"Task {task_id} not found", 404),
+            media_type="application/problem+json",
+        )
+    except UnleaseableError as exc:
+        return JSONResponse(
+            status_code=409,
+            content=_problem("task_not_leaseable", str(exc), 409),
+        )
+
+    # Mint a scoped, single-use task credential (INV-TASK-SEC-1/2)
+    credential_key = os.environ.get("WORKER_CREDENTIAL_KEY", "")
+    token, claims = mint_task_credential(
+        secret=credential_key,
+        task_id=record.id,
+        worker_id=body.leased_by,
+        lease_id=record.lease_id,
+        organization_id=ctx.organization_id,
+        scoped_capabilities=[record.capability_id],
+        now=now,
+        expires_at=record.lease_expires_at,
+    )
+
+    return {
+        "task_id": str(record.id),
+        "lease_id": str(record.lease_id),
+        "leased_by": str(record.leased_by),
+        "state": record.state,
+        "attempts": record.attempts,
+        "lease_expires_at": record.lease_expires_at.isoformat() if record.lease_expires_at else None,
+        "task_credential": token,
+        "task_credential_expires_at": claims.expires_at.isoformat(),
+        "scoped_capabilities": [str(c) for c in claims.scoped_capabilities],
+    }
+
+
+@router.post("/tasks/{task_id}/heartbeat")
+def heartbeat_task(
+    task_id: uuid.UUID,
+    body: HeartbeatTaskRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Extend the lease expiry for an active task."""
+    from fastapi.responses import JSONResponse  # noqa: PLC0415
+
+    ctx = request.state.org_context
+    svc = WorkflowService(db)
+    now = datetime.now(UTC)
+    duration = timedelta(seconds=body.duration_seconds)
+
+    try:
+        record = svc.heartbeat_task(ctx, task_id, lease_id=body.lease_id, duration=duration, now=now)
+    except InactiveLeaseError as exc:
+        return JSONResponse(
+            status_code=409,
+            content=_problem("lease_inactive", str(exc), 409),
+        )
+    except TaskNotFoundError:
+        return JSONResponse(
+            status_code=404,
+            content=_problem("task_not_found", f"Task {task_id} not found", 404),
+            media_type="application/problem+json",
+        )
+
+    return {
+        "task_id": str(record.id),
+        "lease_id": str(record.lease_id),
+        "state": record.state,
+        "lease_expires_at": record.lease_expires_at.isoformat() if record.lease_expires_at else None,
+    }
+
+
+@router.post("/tasks/{task_id}/complete")
+def complete_task(
+    task_id: uuid.UUID,
+    body: CompleteTaskRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict:
+    """INV-EXEC-2: mark a leased task as completed."""
+    from fastapi.responses import JSONResponse  # noqa: PLC0415
+
+    ctx = request.state.org_context
+    svc = WorkflowService(db)
+
+    try:
+        outcome = svc.complete_task(ctx, task_id, lease_id=body.lease_id, result=body.result)
+    except TaskNotFoundError:
+        return JSONResponse(
+            status_code=404,
+            content=_problem("task_not_found", f"Task {task_id} not found", 404),
+            media_type="application/problem+json",
+        )
+    except NonCompletableError as exc:
+        return JSONResponse(
+            status_code=409,
+            content=_problem("task_not_completable", str(exc), 409),
+        )
+    except InactiveLeaseError as exc:
+        return JSONResponse(
+            status_code=409,
+            content=_problem("lease_inactive", str(exc), 409),
+        )
+
+    return {
+        "task_id": str(outcome.task_id),
+        "state": outcome.state,
+        "result": outcome.result,
+        "duplicate": outcome.duplicate,
     }
 
 

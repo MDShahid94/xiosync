@@ -148,7 +148,6 @@ def record_sync_result(provider_id: uuid.UUID, request: Request,
     import json as _json
     from sqlalchemy import text as sqlt
     from sqlalchemy.orm import Session as OrmSession
-    from xiosync.subsystems.integrations.service import IntegrationNotFoundError
     db  = cast(OrmSession, request.state.org_session)
     ctx = _ctx(request)
     result = db.execute(

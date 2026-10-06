@@ -15,9 +15,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
-import struct
 import uuid
-from dataclasses import dataclass
 
 # ── AES-256-GCM via stdlib (Python 3.8+ cryptography or fallback) ─────────────
 try:

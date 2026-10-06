@@ -7,18 +7,26 @@ import logging
 import uuid
 from typing import Any, cast
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session as OrmSession
 
+from xiosync.api.middleware.worker_auth import verify_worker_auth
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/xioflow/events", tags=["XIOFLOW Events"])
 
-# Separate router for worker-internal endpoints — mounted WITHOUT RBAC in app.py
-internal_router = APIRouter(prefix="/xioflow/events", tags=["XIOFLOW Internal"])
+# Separate router for worker-internal endpoints — mounted WITHOUT RBAC in app.py.
+# Auth is enforced at router level via verify_worker_auth dependency, which
+# accepts both X-XIOSYNC-Internal and X-Worker-Secret headers.
+internal_router = APIRouter(
+    prefix="/xioflow/events",
+    tags=["XIOFLOW Internal"],
+    dependencies=[Depends(verify_worker_auth)],
+)
 
 
 def _session(request: Request) -> OrmSession:
@@ -354,11 +362,7 @@ def claim_pending_dag_run_internal(request: Request) -> dict:
     from fastapi.responses import Response as _Resp
     from xiosync.platform.ids import new_id
     
-    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
-    given = request.headers.get("X-XIOSYNC-Internal", "")
-    if not expected or not given or given != expected:
-        raise HTTPException(status_code=403, detail="invalid_internal_secret")
-    
+    # Auth is handled by router-level verify_worker_auth dependency
     # Use a raw DB session — bypass org scoping since this is internal
     from sqlalchemy.orm import Session as _Sess
     from xiosync.platform.engine_ref import get_engine
@@ -419,11 +423,7 @@ def complete_run_internal(run_id: uuid.UUID, payload: CompleteRunRequest, reques
     """Internal version of complete — used by Colab worker polling loop."""
     import os as _os
     import json
-    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
-    given = request.headers.get("X-XIOSYNC-Internal", "")
-    if not expected or not given or given != expected:
-        raise HTTPException(status_code=403, detail="invalid_internal_secret")
-    
+    # Auth is handled by router-level verify_worker_auth dependency
     from sqlalchemy.orm import Session as _Sess
     from xiosync.platform.engine_ref import get_engine
     from sqlalchemy import text
@@ -456,37 +456,31 @@ def complete_run_internal(run_id: uuid.UUID, payload: CompleteRunRequest, reques
     return {"run_id": str(run_id), "state": run_state}
 
 @internal_router.get("/memory-graph-internal", summary="[Worker-internal] Get DAG graph for execution")
-def get_memory_graph_internal(request: Request, domain: str, intent: str) -> dict:
+def get_memory_graph_internal(request: Request, domain: str, intent: str,
+                               project_id: str = "") -> dict:
     import os as _os
-    expected = _os.environ.get('XIOSYNC_INTERNAL_SECRET', '')
-    given = request.headers.get('X-XIOSYNC-Internal', '')
-    if not expected or given != expected:
-        raise HTTPException(status_code=403, detail='invalid_internal_secret')
     
     from sqlalchemy.orm import Session as _Sess
     from xiosync.platform.engine_ref import get_engine
     from sqlalchemy import text
     
     with _Sess(get_engine()) as sess:
+        # ── Optional project_id filter for multi-project deployments ─────
+        _proj_filter = ""
+        _params_base: dict = {"domain": domain}
+        if project_id:
+            _proj_filter = " AND project_id = :project_id"
+            _params_base["project_id"] = project_id
+
         # ── Step 1: collect script nodes (phase pipeline) — run BEFORE main DAG ──
-        # Script nodes are not connected via next_intents, so BFS misses them.
-        # We prepend them sorted by phase order so cascade/UC-login run first.
-        _PHASE_ORDER = {
-            "resolve_exit_proxy": 0,
-            "phase0_cascade_check": 1,
-            "phase0_browser_check": 2,
-            "phase1_uc_stealth_login": 3,
-            "phase2_navigate_to_gmail": 4,
-            "phase3_verify": 5,
-            "phase3_5_persist_session": 6,
-        }
-        script_rows = sess.execute(text("""
+        script_rows = sess.execute(text(f"""
             SELECT DISTINCT ON (intent)
                 intent, action_type, action_params, place_value, face_value, locator_priority
             FROM xioflow_memory_nodes
             WHERE domain = :domain AND status = 'ACTIVE' AND action_type = 'script'
+                  {_proj_filter}
             ORDER BY intent, tier DESC
-        """), {'domain': domain}).fetchall()
+        """), _params_base).fetchall()
 
         script_nodes = sorted(
             [
@@ -500,7 +494,10 @@ def get_memory_graph_internal(request: Request, domain: str, intent: str) -> dic
                 }
                 for r in script_rows
             ],
-            key=lambda n: _PHASE_ORDER.get(n['intent'], 99),
+            key=lambda n: (
+                n['action_params'].get('phase_order', 99),
+                n['intent'],   # stable tiebreaker
+            ),
         )
         script_intents = {n['intent'] for n in script_nodes}
 
@@ -508,20 +505,30 @@ def get_memory_graph_internal(request: Request, domain: str, intent: str) -> dic
         visited = set(script_intents)   # skip script intents already included
         queue = [intent]
         dag_nodes = []
+        dangling_intents = []  # Track missing nodes for caller visibility
         while queue:
             current_intent = queue.pop(0)
             if current_intent in visited:
                 continue
             visited.add(current_intent)
-            row = sess.execute(text("""
+            row = sess.execute(text(f"""
                 SELECT intent, action_type, action_params, place_value, face_value,
                        locator_priority, status
                 FROM xioflow_memory_nodes
                 WHERE domain = :domain AND intent = :intent AND status = 'ACTIVE'
                   AND action_type NOT IN ('done', 'extract_data', 'script')
+                  {_proj_filter}
                 ORDER BY tier DESC LIMIT 1
-            """), {'domain': domain, 'intent': current_intent}).fetchone()
+            """), {**_params_base, 'intent': current_intent}).fetchone()
             if not row:
+                if current_intent != intent or dag_nodes:
+                    # Missing intermediate node — referenced by a parent's next_intents
+                    logger.warning(
+                        "memory_graph.dangling_intent",
+                        extra={"domain": domain, "intent": current_intent,
+                               "root": intent},
+                    )
+                    dangling_intents.append(current_intent)
                 continue
             dag_nodes.append({
                 'intent': row.intent,
@@ -536,8 +543,11 @@ def get_memory_graph_internal(request: Request, domain: str, intent: str) -> dic
 
         # Script nodes first (phase pipeline), then BFS DAG nodes
         nodes = script_nodes + dag_nodes
-        return {'domain': domain, 'root_intent': intent, 'nodes': nodes,
+        result = {'domain': domain, 'root_intent': intent, 'nodes': nodes,
                 'script_count': len(script_nodes), 'dag_count': len(dag_nodes)}
+        if dangling_intents:
+            result['dangling_intents'] = dangling_intents
+        return result
 
 @internal_router.post("/trace-nodes-internal", status_code=200,
                       summary="[Worker-internal] Bulk-deploy auto-traced steps as memory nodes")
@@ -554,10 +564,6 @@ def deploy_trace_nodes_internal(request: Request, payload: dict) -> dict:
     from xiosync.platform.engine_ref import get_engine
     from xiosync.platform.ids import new_id
 
-    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
-    given = request.headers.get("X-XIOSYNC-Internal", "")
-    if not expected or given != expected:
-        raise HTTPException(status_code=403, detail="invalid_internal_secret")
 
     org_id   = payload.get("org_id", "")
     domain   = payload.get("domain", "")
@@ -618,10 +624,6 @@ def hitl_pause_internal(run_id: uuid.UUID, payload: HitlPauseRequest, request: R
     from sqlalchemy.orm import Session as _Sess
     from xiosync.platform.engine_ref import get_engine
 
-    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
-    given = request.headers.get("X-XIOSYNC-Internal", "")
-    if not expected or given != expected:
-        raise HTTPException(status_code=403, detail="invalid_internal_secret")
 
     with _Sess(get_engine()) as sess:
         sess.execute(text("""
@@ -640,20 +642,23 @@ def hitl_pause_internal(run_id: uuid.UUID, payload: HitlPauseRequest, request: R
 
 @internal_router.get("/runs-internal/{run_id}/hitl-status", status_code=200,
                      summary="[Worker-internal] Check if HITL is resolved")
-def hitl_status_internal(run_id: uuid.UUID, request: Request) -> dict:
+def hitl_status_internal(run_id: uuid.UUID, request: Request,
+                         org_id: str = "") -> dict:
     import os as _os
     from sqlalchemy.orm import Session as _Sess
     from xiosync.platform.engine_ref import get_engine
 
-    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
-    given = request.headers.get("X-XIOSYNC-Internal", "")
-    if not expected or given != expected:
-        raise HTTPException(status_code=403, detail="invalid_internal_secret")
 
     with _Sess(get_engine()) as sess:
-        row = sess.execute(text("""
-            SELECT state FROM xioflow_runs WHERE id = :rid
-        """), {"rid": str(run_id)}).fetchone()
+        # Defense-in-depth: if org_id provided, scope query to that org
+        if org_id:
+            row = sess.execute(text("""
+                SELECT state FROM xioflow_runs WHERE id = :rid AND organization_id = :org
+            """), {"rid": str(run_id), "org": org_id}).fetchone()
+        else:
+            row = sess.execute(text("""
+                SELECT state FROM xioflow_runs WHERE id = :rid
+            """), {"rid": str(run_id)}).fetchone()
         
         resumed = row and row.state == 'RUNNING'
         return {"hitl_resumed": resumed}
@@ -666,10 +671,6 @@ def hitl_resume_internal(run_id: uuid.UUID, request: Request) -> dict:
     from sqlalchemy.orm import Session as _Sess
     from xiosync.platform.engine_ref import get_engine
 
-    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
-    given = request.headers.get("X-XIOSYNC-Internal", "")
-    if not expected or given != expected:
-        raise HTTPException(status_code=403, detail="invalid_internal_secret")
 
     with _Sess(get_engine()) as sess:
         sess.execute(text("""
@@ -699,26 +700,25 @@ def persist_session_internal(run_id: uuid.UUID, payload: dict, request: Request)
     from xiosync.platform.engine_ref import get_engine
     from xiosync.subsystems.xiorun.session_state import SessionStateIO
 
-    expected = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
-    given    = request.headers.get("X-XIOSYNC-Internal", "")
-    if not expected or given != expected:
-        raise HTTPException(status_code=403, detail="invalid_internal_secret")
 
     storage_state = payload.get("storage_state", {})
     email         = payload.get("email", "")
     identity_id   = payload.get("identity_id", "")
-    org_id        = payload.get("org_id", "00000000-0000-7000-8000-000000000000")
+    org_id        = payload.get("org_id")
+    if not org_id:
+        raise HTTPException(status_code=400, detail="org_id is required")
 
     engine = get_engine()
 
     with _Sess(engine) as sess:
         # ── 1. Resolve / create identity ─────────────────────────────────
+        platform = payload.get("platform", "google")
         if not identity_id and email:
             row = sess.execute(text("""
                 SELECT id, profile_serial FROM identities
-                WHERE identifier = :email AND platform = 'google'
+                WHERE identifier = :email AND platform = :platform
                 LIMIT 1
-            """), {"email": email}).fetchone()
+            """), {"email": email, "platform": platform}).fetchone()
 
             if row:
                 identity_id    = str(row[0])
@@ -737,9 +737,10 @@ def persist_session_internal(run_id: uuid.UUID, payload: dict, request: Request)
                         (id, organization_id, identifier, platform, display_name,
                          state, metadata, profile_serial, materialization_mode, created_at, updated_at)
                     VALUES
-                        (:id, :org, :email, 'google', :name,
+                        (:id, :org, :email, :platform, :name,
                          'active', '{}', :serial, 'storage_state', now(), now())
                 """), {"id": str(new_id), "org": org_id, "email": email,
+                       "platform": platform,
                        "name": email.split("@")[0], "serial": profile_serial})
                 sess.commit()
                 identity_id = str(new_id)
@@ -747,8 +748,9 @@ def persist_session_internal(run_id: uuid.UUID, payload: dict, request: Request)
                             extra={"identity_id": identity_id, "email": email, "serial": profile_serial})
         elif identity_id:
             row = sess.execute(text(
-                "SELECT profile_serial FROM identities WHERE id = :iid"
-            ), {"iid": identity_id}).fetchone()
+                "SELECT profile_serial FROM identities "
+                "WHERE id = :iid AND organization_id = :org"
+            ), {"iid": identity_id, "org": org_id}).fetchone()
             profile_serial = (row[0] if row else 0) or 0
         else:
             raise HTTPException(status_code=400, detail="email or identity_id required")
@@ -759,7 +761,7 @@ def persist_session_internal(run_id: uuid.UUID, payload: dict, request: Request)
             identity_id = identity_id,
             org_id      = org_id,
             state       = storage_state,
-            page_url    = "https://myaccount.google.com/",
+            page_url    = payload.get("page_url", ""),
         )
 
         # ── 3. Update identity.last_used_at ───────────────────────────────
@@ -795,10 +797,6 @@ def resolve_identity_internal(
 ) -> dict:
     """Worker calls this before browser launch to get profile_serial for identity-scoped paths."""
     import os as _os
-    _exp = _os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
-    _given = request.headers.get("X-XIOSYNC-Internal", "")
-    if not _exp or _given != _exp:
-        raise HTTPException(status_code=403, detail="invalid_internal_secret")
     from sqlalchemy.orm import Session as _Sess
     from xiosync.platform.engine_ref import get_engine
     from sqlalchemy import text as _t

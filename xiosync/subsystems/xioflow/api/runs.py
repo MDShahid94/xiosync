@@ -70,6 +70,7 @@ class DispatchRunRequest(BaseModel):
     dag_root_intent: str | None = None
     context: dict[str, Any] = {}
     priority: int = 0
+    trace: bool = False    # Enable auto-trace: capture actions → deploy as DAG memory nodes
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -107,23 +108,48 @@ def dispatch_run(request: Request, body: DispatchRunRequest) -> dict[str, Any]:
             template_id = str(tmpl.id)
 
     run_id = str(new_id())
+    # Merge trace flag into context so the worker can detect it
+    run_context = {**body.context}
+    if body.trace:
+        run_context["trace_mode"] = True
+
+    # Snapshot the template at dispatch time for versioning immutability
+    tmpl_snapshot = None
+    if template_id:
+        snap_row = session.execute(text("""
+            SELECT slug, dag_domain, dag_root_intent, template_type,
+                   COALESCE(config, '{}'::jsonb) as config
+            FROM workflow_templates WHERE id = :tid
+        """), {"tid": template_id}).fetchone()
+        if snap_row:
+            tmpl_snapshot = json.dumps({
+                "slug": snap_row.slug,
+                "dag_domain": snap_row.dag_domain,
+                "dag_root_intent": snap_row.dag_root_intent,
+                "template_type": snap_row.template_type,
+                "config": snap_row.config if isinstance(snap_row.config, dict) else {},
+            })
+
     session.execute(
         text("""
             INSERT INTO xioflow_runs
-              (id, organization_id, template_id, state, context, started_at)
+              (id, organization_id, template_id, state, context,
+               template_snapshot, started_at)
             VALUES
-              (:id, :org, :tmpl, 'PENDING', cast(:ctx as jsonb), now())
+              (:id, :org, :tmpl, 'PENDING', cast(:ctx as jsonb),
+               cast(:snap as jsonb), now())
         """),
         {
             "id": run_id,
             "org": org_id,
             "tmpl": template_id,
-            "ctx": json.dumps(body.context),
+            "ctx": json.dumps(run_context),
+            "snap": tmpl_snapshot,
         },
     )
     session.commit()
-    logger.info("runs_api.dispatched", extra={"run_id": run_id, "org_id": org_id})
-    return {"id": run_id, "state": "PENDING"}
+    logger.info("runs_api.dispatched", extra={"run_id": run_id, "org_id": org_id, "trace": body.trace})
+    return {"id": run_id, "state": "PENDING", "trace": body.trace}
 
 
 @router.get("/runs", summary="List workflow runs")

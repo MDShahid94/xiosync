@@ -47,6 +47,9 @@ class XIORunRuntimePool:
     def __init__(self) -> None:
         self._launchers: dict[str, "BrowserLauncher"] = {}
         self._pages:     dict[str, Any] = {}   # session_id → patchright Page
+        # Active run tracking — covers BOTH script and DAG paradigms.
+        # session_id → {"run_id": str, "template_type": "script"|"xioflow_dag"}
+        self._active_runs: dict[str, dict[str, str]] = {}
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -103,6 +106,51 @@ class XIORunRuntimePool:
 
     def get_launcher(self, session_id: str) -> "BrowserLauncher | None":
         return self._launchers.get(session_id)
+
+    def register_active_run(
+        self, session_id: str, run_id: str, template_type: str,
+    ) -> None:
+        """Mark a session as having an active run (script or DAG).
+
+        Called by run_dispatcher before execution starts. XIOVIEW checks
+        this to block manual interactions during both paradigms.
+        """
+        self._active_runs[session_id] = {
+            "run_id": run_id,
+            "template_type": template_type,
+        }
+        logger.debug("xiorun.pool.run_started", extra={
+            "session_id": session_id, "run_id": run_id,
+            "template_type": template_type,
+        })
+
+    def unregister_active_run(self, session_id: str) -> None:
+        """Mark a session as no longer having an active run."""
+        removed = self._active_runs.pop(session_id, None)
+        if removed:
+            logger.debug("xiorun.pool.run_ended", extra={
+                "session_id": session_id, "run_id": removed.get("run_id"),
+            })
+
+    def is_run_active(self, session_id: str) -> bool:
+        """Check if any run (script or DAG) is currently executing on this session.
+
+        Also checks the launcher's _run_task for DAG runs as a secondary signal.
+        """
+        # Primary check: explicit active-run registration (covers both paradigms)
+        if session_id in self._active_runs:
+            return True
+        # Secondary check: launcher's _run_task (DAG-specific, for robustness)
+        launcher = self._launchers.get(session_id)
+        if launcher:
+            run_task = getattr(launcher, '_run_task', None)
+            if run_task and not run_task.done():
+                return True
+        return False
+
+    def get_active_run_info(self, session_id: str) -> dict[str, str] | None:
+        """Return active run info (run_id, template_type) or None."""
+        return self._active_runs.get(session_id)
 
     async def release(
         self,

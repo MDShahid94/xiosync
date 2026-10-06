@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  XIOSYNC Proxy Daemon — Mac-side SOCKS5 + reverse tunnel pusher
+  
+  Starts on login, keeps Mac's SOCKS5 alive and pushes reverse SSH tunnels
+  to all enrolled Colab workers so they can use Mac's residential IP.
+  Also relays PPPoE slots from the VM via Mac.
+  
+  Install:
+    cp com.xiogrid.proxy-daemon.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.xiogrid.proxy-daemon.plist
+
+  Unload:
+    launchctl unload ~/Library/LaunchAgents/com.xiogrid.proxy-daemon.plist
+-->
+<dict>
+  <key>Label</key>
+  <string>com.xiogrid.proxy-daemon</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/karmareturns/projects/XIOSYNC/scripts/xio_proxy_daemon.py</string>
+    <string>--workers-from-xiosync</string>
+    <string>--vm</string>
+    <string>100.106.81.15</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>XIOSYNC_URL</key>
+    <string>http://localhost:8000</string>
+    <key>XIOSYNC_ADMIN_EMAIL</key>
+    <string>admin@xiogrid.dev</string>
+    <key>XIOSYNC_ADMIN_PASS</key>
+    <string>Xiogrid2026!Admin</string>
+    <key>XIOSYNC_ORG_ID</key>
+    <string>00000000-0000-7000-8000-000000000000</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- Restart immediately if it crashes -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Start at login -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Wait 15s after boot before starting (let XIOSYNC and Tailscale come up) -->
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+
+  <key>StandardOutPath</key>
+  <string>/tmp/xio_proxy_daemon.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/xio_proxy_daemon.log</string>
+</dict>
+</plist>

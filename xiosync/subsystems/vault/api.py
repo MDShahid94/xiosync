@@ -98,7 +98,6 @@ def _meta_resp(rec) -> SecretMetaResponse:
              summary="Store or rotate a secret (upsert)")
 def put_secret(payload: PutSecretRequest, request: Request) -> SecretMetaResponse:
     """Store or rotate a secret. Platform-global secrets require vault.platform capability."""
-    from xiosync.subsystems.vault.service import VaultNotFoundError
     svc = _svc(request)
     ctx = _ctx(request)
     try:

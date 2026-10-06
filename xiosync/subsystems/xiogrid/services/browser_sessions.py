@@ -109,11 +109,16 @@ class BrowserSessionService:
         pppoe_slot = None
         try:
             from xiosync.subsystems.xiogrid.services.pppoe_nodes import PPPoENodeService
-            pppoe_svc = PPPoENodeService(self._session)
+            pppoe_svc    = PPPoENodeService(self._session)
             worker_ts_ip = (config or {}).get("worker_ts_ip", "")
+            # Per-account IP pinning: same Google account → same PPPoE slot → same IP
+            google_account = (config or {}).get("google_account") or None
             if worker_ts_ip:
                 pppoe_slot = pppoe_svc.acquire_any(
-                    context, session_id="pending", worker_ts_ip=worker_ts_ip
+                    context,
+                    session_id    = "pending",
+                    worker_ts_ip  = worker_ts_ip,
+                    google_account= google_account,
                 )
         except Exception as _pppoe_err:
             import logging

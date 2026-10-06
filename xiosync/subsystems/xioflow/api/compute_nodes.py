@@ -16,8 +16,7 @@ DELETE /xioflow/compute-nodes/{name}        — deregister (org-owned only)
 from __future__ import annotations
 
 import logging
-import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException

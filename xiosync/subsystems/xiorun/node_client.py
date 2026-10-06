@@ -22,14 +22,17 @@ PROFILE_TIMEOUT: float = 120.0   # R2 profile pull/push can take longer
 class XIORunNodeClient:
     """Async HTTP client for one Colab worker's xiorun-agent."""
 
-    def __init__(self, tailscale_ip: str, port: int = AGENT_PORT) -> None:
+    def __init__(self, tailscale_ip: str, port: int = AGENT_PORT, secret: str = "") -> None:
         self._base = f"http://{tailscale_ip}:{port}"
         self._tailscale_ip = tailscale_ip
+        from xiosync.core.config import settings
+        self._secret = secret or settings.WORKER_SECRET.get_secret_value() if hasattr(settings.WORKER_SECRET, 'get_secret_value') else str(settings.WORKER_SECRET)
+        self._headers = {"X-Worker-Secret": self._secret}
 
     async def health(self) -> bool:
         """GET /health — returns True if agent is reachable and healthy."""
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(headers=self._headers, timeout=5.0) as client:
                 resp = await client.get(f"{self._base}/health")
                 return resp.status_code == 200 and resp.json().get("ok", False)
         except Exception:
@@ -68,7 +71,7 @@ class XIORunNodeClient:
             "fingerprint": fingerprint,
             "headless":    headless,
         }
-        async with httpx.AsyncClient(timeout=AGENT_TIMEOUT) as client:
+        async with httpx.AsyncClient(headers=self._headers, timeout=AGENT_TIMEOUT) as client:
             resp = await client.post(f"{self._base}/launch", json=payload)
             resp.raise_for_status()
             data = resp.json()
@@ -88,7 +91,7 @@ class XIORunNodeClient:
     async def terminate_browser(self, session_id: str) -> None:
         """POST /terminate — kill the Chromium process for this session."""
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(headers=self._headers, timeout=10.0) as client:
                 resp = await client.post(
                     f"{self._base}/terminate",
                     json={"session_id": session_id},
@@ -114,7 +117,7 @@ class XIORunNodeClient:
         Returns local profile dir path on the Colab node, or None if not in Drive.
         """
         try:
-            async with httpx.AsyncClient(timeout=PROFILE_TIMEOUT) as client:
+            async with httpx.AsyncClient(headers=self._headers, timeout=PROFILE_TIMEOUT) as client:
                 resp = await client.post(
                     f"{self._base}/pull-profile",
                     json={"identity_id": identity_id, "drive_object_key": drive_object_key},
@@ -147,7 +150,7 @@ class XIORunNodeClient:
         Fire-and-forget safe (caller does not need to await result).
         """
         try:
-            async with httpx.AsyncClient(timeout=PROFILE_TIMEOUT) as client:
+            async with httpx.AsyncClient(headers=self._headers, timeout=PROFILE_TIMEOUT) as client:
                 resp = await client.post(
                     f"{self._base}/push-profile",
                     json={

@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from xiosync.domain.context import OrgContext
-from xiosync.domain.secrets import validate_provider, validate_secret_state
+from xiosync.domain.secrets import validate_provider
 from xiosync.persistence.models.secrets import SecretRef
 from xiosync.platform.ids import new_id
 
@@ -149,7 +149,7 @@ class SecretRefService:
         now: datetime | None = None,
     ) -> SecretRefRecord:
         """Mark a secret as rotated and update its ref_config."""
-        from datetime import datetime as dt, timezone
+        from datetime import datetime as dt
 
         row = self._session.scalar(
             select(SecretRef).where(
@@ -163,7 +163,7 @@ class SecretRefService:
             )
         row.ref_config = new_ref_config
         row.state = "active"  # Re-activate after rotation
-        row.rotated_at = now or dt.now(timezone.utc)
+        row.rotated_at = now or dt.now(UTC)
         self._session.flush()
         return _record(row)
 

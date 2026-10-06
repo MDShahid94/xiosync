@@ -1,0 +1,26 @@
+{
+  "timestamp": "2026-10-02T09:14:43.256864+00:00",
+  "cdp_ws_url": "ws://100.111.130.118:52611/devtools/browser/e38109e4-9508-442f-9563-0c5c62c4adb8",
+  "vectors": {
+    "ip_reputation": {
+      "error": "'str' object has no attribute 'get'",
+      "pass": false
+    },
+    "sannysoft": {
+      "error": "Page.goto: net::ERR_SOCKS_CONNECTION_FAILED at https://bot.sannysoft.com/\nCall log:\n  - navigating to \"https://bot.sannysoft.com/\", waiting until \"domcontentloaded\"\n",
+      "pass": false
+    },
+    "headless_detect": {
+      "error": "Page.goto: Navigation to \"https://arh.antoinevastel.com/bots/areyouheadless\" is interrupted by another navigation to \"chrome-error://chromewebdata/\"\nCall log:\n  - navigating to \"https://arh.antoinevastel.com/bots/areyouheadless\", waiting until \"domcontentloaded\"\n",
+      "pass": false
+    },
+    "creepjs": {
+      "error": "Page.goto: Navigation to \"https://abrahamjuliot.github.io/creepjs/\" is interrupted by another navigation to \"https://arh.antoinevastel.com/bots/areyouheadless\"\nCall log:\n  - navigating to \"https://abrahamjuliot.github.io/creepjs/\", waiting until \"domcontentloaded\"\n",
+      "pass": false
+    },
+    "cloudflare_turnstile": {
+      "error": "Page.goto: Navigation to \"https://demo.turnstile.workers.dev/\" is interrupted by another navigation to \"https://abrahamjuliot.github.io/creepjs/\"\nCall log:\n  - navigating to \"https://demo.turnstile.workers.dev/\", waiting until \"domcontentloaded\"\n",
+      "pass": false
+    }
+  }
+}

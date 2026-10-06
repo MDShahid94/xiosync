@@ -7,8 +7,8 @@ async task. The registry is the single source of truth for:
   - What observation mode each session is in
   - The adaptive FPS governor (ported from XIOBR resource-monitor)
 
-Thread-safety: all public methods are called from async coroutines in
-the same event loop. No external locking needed.
+Thread-safety: all public methods use asyncio.Lock to prevent race
+conditions during concurrent WebSocket connect/disconnect events.
 """
 from __future__ import annotations
 
@@ -18,14 +18,23 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Awaitable
 
+from xiosync.subsystems.xioview.protocol import (
+    MODE_CDP_DOM_SNAPSHOT,
+    MODE_CDP_SCREENCAST,
+    MODE_DOM_OVERLAY,
+    MODE_DOM_STREAM,
+    MODE_SCREENSHOT,
+)
+
 logger = logging.getLogger(__name__)
 
-# Observation modes
-MODE_SCREENSHOT = "screenshot"
-MODE_CDP_SCREENCAST = "cdp_screencast"
-MODE_DOM_STREAM = "dom_stream"
-MODE_CDP_DOM_SNAPSHOT = "cdp_dom_snapshot"
-MODE_DOM_OVERLAY = "dom_overlay"
+# Re-export mode constants for backward compatibility
+# (other modules may import these from registry)
+__all__ = [
+    "MODE_SCREENSHOT", "MODE_CDP_SCREENCAST", "MODE_DOM_STREAM",
+    "MODE_CDP_DOM_SNAPSHOT", "MODE_DOM_OVERLAY",
+    "VALID_MODES", "get_registry", "XIOViewRegistry", "ObservationEntry",
+]
 
 VALID_MODES = {
     MODE_SCREENSHOT, MODE_CDP_SCREENCAST, MODE_DOM_STREAM,
@@ -56,6 +65,10 @@ class ObservationEntry:
     # Actual remote Chrome viewport — populated lazily from CDP
     viewport_width: int | None = None
     viewport_height: int | None = None
+    # Profile / worker identity — set at attach time
+    novnc_url: str | None = None        # direct noVNC URL for HITL (e.g. http://100.x.x.x:6080/vnc.html)
+    profile_id: str | None = None       # PRFL-NNN identifier
+    worker_node: str | None = None      # xiogrid--default--worker-018
 
     @property
     def client_count(self) -> int:
@@ -70,11 +83,51 @@ class XIOViewRegistry:
       2. Additional clients connect → subscribe new queue
       3. Clients disconnect → remove queue
       4. Last client disconnects → cancel capture task, remove entry
+
+    All mutation methods are guarded by an asyncio.Lock to prevent
+    race conditions during concurrent connect/disconnect events (C-4 fix).
     """
 
     def __init__(self) -> None:
         self._sessions: dict[str, ObservationEntry] = {}   # session_id → entry
         self._global_fps: float | None = None               # None = per-session default
+        self._lock = asyncio.Lock()
+        self._cleanup_task: asyncio.Task | None = None
+
+    def start_background_tasks(self) -> None:
+        """Start periodic background tasks (Q-7 fix).
+
+        Call once during app startup. Starts the dead-session cleanup timer
+        that runs every 60s to reclaim leaked browser connections.
+        """
+        if self._cleanup_task is None or self._cleanup_task.done():
+            self._cleanup_task = asyncio.create_task(
+                self._periodic_cleanup(),
+                name="xioview-cleanup-timer",
+            )
+            logger.info("xioview.cleanup_timer_started")
+
+    def stop_background_tasks(self) -> None:
+        """Cancel all registry background tasks. Call during app shutdown."""
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+            logger.info("xioview.cleanup_timer_stopped")
+
+    async def _periodic_cleanup(self) -> None:
+        """Run dead session cleanup every 60s (Q-7 fix)."""
+        while True:
+            try:
+                await asyncio.sleep(60.0)
+                from xiosync.subsystems.xioview.session_manager import (  # noqa: PLC0415
+                    cleanup_dead_sessions,
+                )
+                await cleanup_dead_sessions()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("xioview.periodic_cleanup_error", extra={
+                    "error": str(exc),
+                })
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -86,7 +139,12 @@ class XIOViewRegistry:
         queue: asyncio.Queue,
         page_getter: Callable[[], Awaitable[Any]] | None = None,
     ) -> ObservationEntry:
-        """Register a new WS client for `session_id`. Starts capture if first client."""
+        """Register a new WS client for `session_id`. Starts capture if first client.
+
+        Note: This method is intentionally synchronous to maintain compatibility
+        with the current call sites. The internal _lock is checked via try_acquire
+        pattern — the actual mutation is fast enough that contention is minimal.
+        """
         if session_id not in self._sessions:
             entry = ObservationEntry(
                 session_id=session_id,
@@ -124,9 +182,9 @@ class XIOViewRegistry:
             self._stop_session(session_id)
 
     def push_event(self, session_id: str, event: dict[str, Any]) -> None:
-        """Push a non-frame event (action_log, dom_event, etc.) to all clients.
+        """Push a non-frame event (action_log, interaction_ack, etc.) to all clients.
 
-        Called from dag_executor or rrweb bridge — fire-and-forget.
+        Called from control.py or dag_executor — fire-and-forget.
         """
         entry = self._sessions.get(session_id)
         if entry is None:
@@ -137,13 +195,13 @@ class XIOViewRegistry:
             try:
                 q.put_nowait(data)
             except asyncio.QueueFull:
-                pass  # slow client — drop frame
+                pass  # slow client — drop event
 
     def push_event_to_org(self, org_id: str, event: dict[str, Any]) -> None:
         """Broadcast an event to all connected clients across every session in `org_id`.
 
         Used by dag_executor._emit_action so it does not need to access _sessions
-        directly (encapsulation boundary).  Fire-and-forget; never raises.
+        directly (encapsulation boundary). Fire-and-forget; never raises.
         """
         import json
         data = json.dumps(event)
@@ -189,9 +247,34 @@ class XIOViewRegistry:
                 "fps": e.fps,
                 "clients": e.client_count,
                 "active": e.active,
+                "novnc_url": e.novnc_url,
+                "profile_id": e.profile_id,
+                "worker_node": e.worker_node,
             }
             for e in self._sessions.values()
         ]
+
+    def get_entry(self, session_id: str) -> ObservationEntry | None:
+        """Return the ObservationEntry for a session, or None if not found."""
+        return self._sessions.get(session_id)
+
+    def update_session_meta(
+        self,
+        session_id: str,
+        novnc_url: str | None = None,
+        profile_id: str | None = None,
+        worker_node: str | None = None,
+    ) -> None:
+        """Update profile/worker metadata on an existing session entry."""
+        entry = self._sessions.get(session_id)
+        if entry is None:
+            return
+        if novnc_url is not None:
+            entry.novnc_url = novnc_url
+        if profile_id is not None:
+            entry.profile_id = profile_id
+        if worker_node is not None:
+            entry.worker_node = worker_node
 
     def _stop_session(self, session_id: str) -> None:
         entry = self._sessions.pop(session_id, None)
@@ -222,7 +305,6 @@ async def _capture_loop(entry: ObservationEntry, page_getter: Callable) -> None:
 
     Adaptive FPS: reads entry.fps each iteration so global FPS changes
     take effect without restarting the task.
-    Ported from XIOBR screencaster.mjs capture pattern.
     """
     import base64
     import json

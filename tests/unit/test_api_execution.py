@@ -132,11 +132,19 @@ _DEAD_LETTER = DeadLetterRecord(
 
 def _make_app(mock_service: MagicMock) -> FastAPI:
     """Build a minimal FastAPI app with the routers under test and injected deps."""
+    from xiosync.api.middleware.db import get_db  # noqa: PLC0415
+
     app = FastAPI()
+    mock_session = MagicMock()
+
+    # Override the DB session dependency so handlers receive mock_session directly
+    # instead of trying to reach app.state.engine (which doesn't exist here).
+    def _mock_get_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = _mock_get_db
     app.include_router(execution_router, prefix="/api/v1")
     app.include_router(dlq_router, prefix="/api/v1")
-
-    mock_session = MagicMock()
 
     # Inject org_context and org_session via a lightweight ASGI middleware so
     # every handler can read them from request.state without requiring the full
@@ -149,12 +157,12 @@ def _make_app(mock_service: MagicMock) -> FastAPI:
         return await call_next(request)
 
     # Patch WorkflowService so the routers call our mock instead.
+    # NOTE: dlq.py does NOT import WorkflowService — only execution.py does.
     with patch("xiosync.api.routers.execution.WorkflowService", return_value=mock_service):
-        with patch("xiosync.api.routers.dlq.WorkflowService", return_value=mock_service):
-            # TestClient starts the app; patches must be active during the
-            # client's lifecycle, so we return the app and let the test manage
-            # the patch context using monkeypatch.setattr instead.
-            pass
+        # TestClient starts the app; patches must be active during the
+        # client's lifecycle, so we return the app and let the test manage
+        # the patch context using monkeypatch.setattr instead.
+        pass
 
     return app
 
@@ -169,6 +177,7 @@ def execution_client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, Magic
     monkeypatch.setattr(
         "xiosync.api.routers.execution.WorkflowService", lambda _session: mock_service
     )
+    # dlq.py now imports WorkflowService for task dead-letter endpoints
     monkeypatch.setattr(
         "xiosync.api.routers.dlq.WorkflowService", lambda _session: mock_service
     )

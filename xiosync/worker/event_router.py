@@ -59,12 +59,29 @@ def evaluate_event_triggers(session: Session, *, limit: int = 100) -> int:
     for row in matches:
         run_id = new_id()
         ctx = {**(row.context_defaults or {}), "event_type": row.event_type, "event_id": str(row.event_id)}
+        # Snapshot template at dispatch for versioning
+        tmpl_snap = None
+        if row.template_id:
+            snap = session.execute(text("""
+                SELECT slug, dag_domain, dag_root_intent, template_type,
+                       COALESCE(config, '{}'::jsonb) as config
+                FROM workflow_templates WHERE id = :tid
+            """), {"tid": str(row.template_id)}).fetchone()
+            if snap:
+                tmpl_snap = json.dumps({
+                    "slug": snap.slug, "dag_domain": snap.dag_domain,
+                    "dag_root_intent": snap.dag_root_intent,
+                    "template_type": snap.template_type,
+                    "config": snap.config if isinstance(snap.config, dict) else {},
+                })
         session.execute(
             text("""
                 INSERT INTO xioflow_runs
-                  (id, organization_id, template_id, trigger_id, state, context, started_at)
+                  (id, organization_id, template_id, trigger_id, state, context,
+                   template_snapshot, started_at)
                 VALUES
-                  (:id, :org_id, :template_id, :trigger_id, 'PENDING', cast(:ctx as jsonb), now())
+                  (:id, :org_id, :template_id, :trigger_id, 'PENDING',
+                   cast(:ctx as jsonb), cast(:snap as jsonb), now())
             """),
             {
                 "id": str(run_id),
@@ -72,6 +89,7 @@ def evaluate_event_triggers(session: Session, *, limit: int = 100) -> int:
                 "template_id": str(row.template_id) if row.template_id else None,
                 "trigger_id": str(row.trigger_id),
                 "ctx": json.dumps(ctx),
+                "snap": tmpl_snap,
             },
         )
         created += 1

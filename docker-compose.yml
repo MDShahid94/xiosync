@@ -57,9 +57,9 @@ services:
       DATABASE_URL: "postgresql+psycopg://xiosync:xiosync@postgres:5432/xiosync"
       REDIS_URL: "redis://redis:6379/0"
       QDRANT_URL: "http://qdrant:6333"
-      XIOSYNC_AUTH_SECRET: "dev-secret-change-in-production"
-      XIOSYNC_ENVIRONMENT: "development"
-      XIOSYNC_CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173"
+      XIOSYNC_AUTH_SECRET: "Fi5qdzfLZrggU9Bv/HgUq88iEnbiEmVvOu/+FWmdg3fqllvHJux9dSQ3j6oW6Brh"
+      XIOSYNC_ENVIRONMENT: "dev"
+      CORS_ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:5173"
       EVENT_BUS_BACKEND: "redis"
     depends_on:
       migrate:

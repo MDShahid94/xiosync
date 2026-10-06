@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime
 from typing import Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 router = APIRouter(prefix="/storage", tags=["Storage"])

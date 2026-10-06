@@ -5,8 +5,7 @@ Trigger types, validation, and cron expression utilities. No I/O — RULE-ARCH-1
 
 from __future__ import annotations
 
-import re
-from datetime import datetime, timezone
+from datetime import datetime
 
 __all__ = [
     "InvalidCronExpressionError",

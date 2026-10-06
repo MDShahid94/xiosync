@@ -29,14 +29,12 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import select
 from sqlalchemy.orm import Session as OrmSession
 
 from xiosync.domain.context import MembershipRole, OrgContext, PlatformRole
-from xiosync.persistence.models.registry import CapabilityGroup
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +143,28 @@ class CapabilityDeniedError(HTTPException):
         super().__init__(status_code=403, detail=detail)
 
 
+
+def get_org_context(request: Request) -> OrgContext:
+    """FastAPI dependency that returns the authenticated OrgContext.
+
+    The OrgContext is set by the authentication middleware on
+    ``request.state.org_context``.  Returns 401 if the request has
+    not been authenticated.
+
+    Usage::
+
+        @router.get("/example")
+        def example(ctx: OrgContext = Depends(get_org_context)):
+            ...
+    """
+    context: OrgContext | None = getattr(request.state, "org_context", None)
+    if context is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return context
+
+
 def require_capability(group_name: str) -> Any:
+
     """FastAPI dependency that enforces a capability group check.
 
     Usage::

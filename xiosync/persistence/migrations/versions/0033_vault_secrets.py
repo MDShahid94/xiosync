@@ -10,7 +10,6 @@ Sharing model (consistent with platform-global pattern):
   organization_id = <uuid> → org-scoped, private to that org
 """
 from alembic import op
-import sqlalchemy as sa
 
 revision = "0033"
 down_revision = "0032"

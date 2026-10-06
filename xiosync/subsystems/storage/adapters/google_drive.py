@@ -166,7 +166,6 @@ class GoogleDriveAdapter(StorageAdapter):
         try:
             sa_info = json.loads(self.credential)
             # Service account — exchange for access token via JWT
-            import time, base64, hashlib, hmac  # noqa: PLC0415, E401
             try:
                 import google.auth.transport.requests as _gtr  # noqa: PLC0415
                 import google.oauth2.service_account as _gsa   # noqa: PLC0415
@@ -198,7 +197,6 @@ class GoogleDriveAdapter(StorageAdapter):
         )
         existing_files = list_resp.json().get("files", []) if list_resp.ok else []
 
-        import io  # noqa: PLC0415
         if existing_files:
             # PATCH existing file content
             file_id = existing_files[0]["id"]
@@ -213,7 +211,6 @@ class GoogleDriveAdapter(StorageAdapter):
             )
         else:
             # POST new file with multipart metadata + content
-            import mimetypes  # noqa: PLC0415
             meta = json.dumps({"name": file_name, "parents": [folder_id]}).encode()
             boundary = b"xiosync_boundary_" + os.urandom(8).hex().encode()
             body = (

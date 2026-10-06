@@ -11,14 +11,11 @@ import json
 import logging
 import urllib.request
 import urllib.error
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from xiosync.domain.context import OrgContext
 from xiosync.persistence.models.authorization import Event
-from xiosync.persistence.models.identity import Organization
 from xiosync.platform.ids import new_id
 
 logger = logging.getLogger("xiosync.worker.dispatcher")
@@ -92,7 +89,7 @@ def dispatch_pending_webhooks(session: Session, *, limit: int = 50) -> int:
             {
                 "event_id": source_event_id,
                 "subscription_id": subscription_id,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
             },
             default=str,
         ).encode()

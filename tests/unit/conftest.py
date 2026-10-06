@@ -20,7 +20,7 @@ import pytest
 
 from xiosync.domain.event_registry import event_registry
 from xiosync.services.bootstrap import _CORE_EVENT_TYPES
-from xiosync.services.xiobr_bootstrap import _EVENT_TYPES as _XIOGRID_EVENT_TYPES
+from xiosync.subsystems.xiogrid.bootstrap import _EVENT_TYPES as _XIOGRID_EVENT_TYPES
 
 
 @pytest.fixture(autouse=True, scope="session")

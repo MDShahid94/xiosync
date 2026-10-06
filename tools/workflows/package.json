@@ -1,0 +1,9 @@
+{
+  "name": "xiosync-workflows",
+  "version": "1.0.0",
+  "description": "XIOSYNC static workflow scripts",
+  "type": "module",
+  "dependencies": {
+    "patchright": "^1.50.2"
+  }
+}

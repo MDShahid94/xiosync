@@ -55,6 +55,16 @@ _KNOWN_PREFIXED_KEYS = frozenset({
     "XIOSYNC_INTERNAL_SECRET",
     # Public-facing base URL — embedded in worker bootstrap URLs
     "XIOSYNC_PUBLIC_URL",
+    # ── CIPI / Session cascade / HITL / Network binding ──────────────
+    "XIOSYNC_CIPI_INJECTION_ENABLED",       # Feature flag: cookie injection mode (default: false)
+    "XIOSYNC_COOKIE_HEALTH_SWEEP_HOURS",    # Cookie health sweep interval via heartbeat
+    "XIOSYNC_PATCHRIGHT_BINARY_PATH",       # Override Patchright Chromium binary path
+    "XIOSYNC_SESSION_CASCADE_TIMEOUT",      # Max seconds for Phase 0 cascade
+    "XIOSYNC_HITL_TIMEOUT",                 # Max seconds to wait for HITL resume
+    "XIOSYNC_TOTP_MIN_REMAINING_SEC",       # Min seconds left in TOTP window before waiting
+    "XIOSYNC_TOTP_MAX_RETRIES",             # TOTP submission retry count
+    "XIOSYNC_MIN_COOKIE_COUNT",             # Minimum cookies for profile push acceptance
+    "XIOSYNC_WORKFLOW_SLOT_POLICY",         # Default slot acquisition: exclusive/shared/profile_bound
 })
 
 _ALLOWED_DATABASE_SCHEMES = frozenset({"postgresql", "postgresql+psycopg"})

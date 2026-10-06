@@ -17,7 +17,6 @@ from xiosync.persistence.models.browser import (
 )
 from xiosync.platform.ids import new_id
 from xiosync.services.events import EventService
-from xiosync.services.operations import OperationService
 
 __all__ = [
     "MeshNetworkRecord",
@@ -55,7 +54,7 @@ class MeshNetworkService:
                 organization_id=ctx.organization_id,
                 actor_id=actor_id,
                 operation=operation,
-                trigger="api",
+                trigger="user_command",   # allowed: user_command|schedule|auto|error|system
                 initiated_by=actor_id,
                 depth_level=0,
             )
@@ -114,6 +113,7 @@ class MeshNetworkService:
         network_id: uuid.UUID,
         node_id: uuid.UUID,
         address: str,
+        runtime_type: str | None = None,
     ) -> None:
         now = datetime.now(tz=UTC)
         network = self._session.scalar(
@@ -131,6 +131,7 @@ class MeshNetworkService:
             network_id=network_id,
             node_id=node_id,
             address=address,
+            runtime_type=runtime_type,
             created_at=now,
         )
         self._session.add(row)

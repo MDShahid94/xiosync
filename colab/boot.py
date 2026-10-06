@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 
-# ── Config resolution — three sources in priority order ───────────────────────
+# ── Config resolution — three sources in priority order ───────────────────────────────────────────────────
 #
 # 1. Bootstrap token (XIOSYNC-native, preferred):
 #    Colab notebook passes BOOTSTRAP_TOKEN + XIOSYNC_BASE.
@@ -49,20 +49,101 @@ _BOOTSTRAP_TOKEN = globals().get("BOOTSTRAP_TOKEN") or \
 _XIOSYNC_BASE_HINT = globals().get("XIOSYNC_BASE") or \
                      os.environ.get("XIOSYNC_PUBLIC_URL", "")
 
+# ── Robust URL fetcher: handles transient Tailscale Funnel startup lag ───────────────
+# Root cause of intermittent boot failures:
+#   On Mac system boot, Tailscale takes ~30-60s to come up. During this window
+#   the Funnel is down and karmas-mac-mini.taildd8b9a.ts.net has no public DNS.
+#   Once Tailscale is running, the hostname resolves to Tailscale's public edge
+#   IPs (103.84.155.x) and everything works normally.
+#
+# Fix: if DNS fails, connect directly to the known Tailscale Funnel public IPs
+# with the correct hostname for TLS SNI. Certificate validation passes fully
+# (no security downgrade) because SNI carries the right hostname.
+import ssl as _ssl
+import socket as _socket
+import http.client as _http_client
+import urllib.request as _urq_boot
+import urllib.parse as _up_boot
+import re as _re_boot
+
+_FUNNEL_FALLBACK_IPS = ["103.84.155.217", "103.84.155.153"]  # Tailscale Funnel edge IPs
+
+
+def _fetch_url_with_fallback(url: str, timeout: int = 20, max_attempts: int = 3) -> bytes:
+    """Fetch *url*. On DNS failure, retry via hardcoded Tailscale Funnel public IPs.
+
+    Normal path: urllib DNS lookup → Tailscale Funnel edge IPs → XIOSYNC server.
+    Fallback path: direct TCP to Funnel edge IPs with correct SNI — identical
+    security, bypasses the DNS step that fails during Tailscale startup lag.
+    """
+    # ── Normal urllib path ─────────────────────────────────────────────────────────────────────────────
+    _last: Exception | None = None
+    for _att in range(1, max_attempts + 1):
+        try:
+            return _urq_boot.urlopen(url, timeout=timeout).read()
+        except Exception as _exc:
+            _last = _exc
+            _r = str(_exc).lower()
+            # Fast-path to IP fallback on DNS errors (don't waste retry slots)
+            if any(k in _r for k in ("name or service not known", "nodename nor servname",
+                                     "getaddrinfo", "errno -2", "name resolution",
+                                     "failed to resolve")):
+                break
+            if _att < max_attempts:
+                time.sleep(3)
+
+    # ── Funnel-IP fallback path ──────────────────────────────────────────────────────────────────
+    _parsed = _up_boot.urlparse(url)
+    _hostname = _parsed.hostname or ""
+    _path = _parsed.path or "/"
+    if _parsed.query:
+        _path += "?" + _parsed.query
+    _port = _parsed.port or (443 if _parsed.scheme == "https" else 80)
+    _ctx = _ssl.create_default_context()  # full cert validation via SNI
+
+    for _ip in _FUNNEL_FALLBACK_IPS:
+        for _att in range(1, max_attempts + 1):
+            try:
+                _raw = _socket.create_connection((_ip, _port), timeout=timeout)
+                _tls = _ctx.wrap_socket(_raw, server_hostname=_hostname)
+                _req = (
+                    f"GET {_path} HTTP/1.1\r\n"
+                    f"Host: {_hostname}\r\n"
+                    f"Connection: close\r\n\r\n"
+                )
+                _tls.sendall(_req.encode())
+                _resp = _http_client.HTTPResponse(_tls)
+                _resp.begin()
+                if _resp.status >= 400:
+                    raise RuntimeError(f"HTTP {_resp.status}")
+                _data = _resp.read()
+                _tls.close()
+                return _data
+            except Exception as _fe:
+                _last = _fe
+                if _att < max_attempts:
+                    time.sleep(3)
+
+    raise RuntimeError(
+        f"All fetch attempts failed for {url}: {_last}\n"
+        f"Tailscale Funnel IPs tried: {_FUNNEL_FALLBACK_IPS}\n"
+        "The XIOSYNC server may not be running (check karmas-mac-mini)."
+    ) from _last
+
+
 C: dict = {}
 
 if _BOOTSTRAP_TOKEN and _XIOSYNC_BASE_HINT:
-    # ── Path 1: Fetch config from XIOSYNC ────────────────────────────────────
+    # ── Path 1: Fetch config from XIOSYNC ──────────────────────────────────────────────────────────────────────────────
     print(f"Fetching worker config from XIOSYNC ({_XIOSYNC_BASE_HINT})…", flush=True)
-    import urllib.request as _urq
     _MAX_ATTEMPTS = 3
     for _attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            _resp = _urq.urlopen(
+            _payload = json.loads(_fetch_url_with_fallback(
                 f"{_XIOSYNC_BASE_HINT}/api/v1/workers/bootstrap/{_BOOTSTRAP_TOKEN}",
-                timeout=15,
-            )
-            _payload = json.loads(_resp.read())
+                timeout=20,
+                max_attempts=_MAX_ATTEMPTS,
+            ))
             C = _payload.get("config", {})
             _node_from_server = _payload.get("node_name", "")
             if _node_from_server:
@@ -76,7 +157,7 @@ if _BOOTSTRAP_TOKEN and _XIOSYNC_BASE_HINT:
             else:
                 print("❌ Cannot fetch worker config — check XIOSYNC_BASE and token", flush=True)
 else:
-    # ── Path 2/3: Legacy / local config ──────────────────────────────────────
+    # ── Path 2/3: Legacy / local config ──────────────────────────────────────────────────────────────────────
     C = globals().get("CONFIG") or {}
     if not C:
         try:
@@ -190,7 +271,20 @@ else:
 _run("npm install -g npm@latest >/dev/null 2>&1", silent=True)
 _run("mkdir -p /opt/xio_workflows", silent=True)
 _run("npm install --prefix /opt/xio_workflows patchright otpauth >/dev/null 2>&1", silent=True)
-_run(f"curl -sf {ASSET_BASE}/api/v1/workers/google-signin.mjs -o /opt/xio_workflows/google-signin.mjs", silent=True)
+try:
+    _gs_url = f"{ASSET_BASE}/api/v1/workers/google-signin.mjs"
+    # Endpoint requires worker auth — use Request with header, fall back to IP if DNS fails
+    try:
+        import urllib.request as _gs_urq
+        _gs_req = _gs_urq.Request(_gs_url, headers={"X-Worker-Secret": XIOSYNC_TOKEN})
+        _gs_mjs = _gs_urq.urlopen(_gs_req, timeout=15).read()
+    except Exception:
+        # DNS failed or token not yet known — use fallback fetch (may get 401, that's ok)
+        _gs_mjs = _fetch_url_with_fallback(_gs_url, timeout=15)
+    with open("/opt/xio_workflows/google-signin.mjs", "wb") as _gsf:
+        _gsf.write(_gs_mjs)
+except Exception as _gs_err:
+    _p(f"  ⚠️  google-signin.mjs fetch failed (non-fatal): {_gs_err}")
 _p("  ✅ Node.js workflows & patchright ready")
 
 # ── SSH setup (pubkey-only, root login via Tailscale) ─────────────────────────
@@ -224,9 +318,13 @@ if os.system("pgrep Xvfb > /dev/null") != 0:
     os.environ["DISPLAY"] = ":99"
     _p("  ✅ Xvfb started on :99")
 
-# ── Chrome 131 install (optimal for UC 3.5.5 stealth — bypasses Chrome 153 detection) ──
-# Priority: Drive cache → direct download.  Skipped if already installed.
-_CHROME131_BIN = "/opt/chrome131/chrome"
+# ── Chrome install (version from worker config — Phase 4 audit Fix 24) ───────
+# Version is configurable via worker config: C.get("chrome_version", "131")
+# Allows centralized A/B testing and auto-update without boot.py changes.
+_CHROME_MAJOR    = C.get("chrome_version", "131")
+_CHROME_FULL_VER = C.get("chrome_full_version", "131.0.6778.204")
+_CHROME_BIN_DIR  = f"/opt/chrome{_CHROME_MAJOR}"
+_CHROME131_BIN   = f"{_CHROME_BIN_DIR}/chrome"
 if not os.path.isfile(_CHROME131_BIN):
     _p("  🔽 Chrome 131 not found — installing (UC 3.5.5 optimal version)…")
     _CHROME131_DRIVE_TAR = f"{ASSET_BASE_DRIVE}/cache/chrome131.tar.gz" if \
@@ -249,7 +347,7 @@ if not os.path.isfile(_CHROME131_BIN):
         _p("    ⬇️ Downloading Chrome 131 from dl.google.com…")
         _CHROME131_URL = (
             "https://storage.googleapis.com/chrome-for-testing-public"
-            "/131.0.6778.204/linux64/chrome-linux64.zip"
+            f"/{_CHROME_FULL_VER}/linux64/chrome-linux64.zip"
         )
         _dl_rc = _run(
             f"curl -L --retry 3 -o /tmp/chrome131.zip '{_CHROME131_URL}' 2>&1 | tail -2",
@@ -329,7 +427,7 @@ try:
     _fs_module_path = "/tmp/xio_drive_fs.py"
     _fs_url = f"{ASSET_BASE}/api/v1/workers/xio-drive-fs.py"
     try:
-        _fs_src = _urq.urlopen(_fs_url, timeout=10).read().decode()
+        _fs_src = _fetch_url_with_fallback(_fs_url, timeout=15).decode()
         with open(_fs_module_path, "w") as _f:
             _f.write(_fs_src)
         _p(f"  ✅ Fetched xio_drive_fs.py from XIOSYNC")
@@ -783,8 +881,8 @@ else:
 _PR_BOOT_URL  = f"{ASSET_BASE}/api/v1/workers/patchright-boot.py"
 _PR_BOOT_PATH = "/tmp/patchright_boot.py"
 try:
-    import urllib.request as _urq  # noqa
-    _urq.urlretrieve(_PR_BOOT_URL, _PR_BOOT_PATH)
+    with open(_PR_BOOT_PATH, "wb") as _pbf_out:
+        _pbf_out.write(_fetch_url_with_fallback(_PR_BOOT_URL, timeout=20))
     # exec into current namespace so setup_patchright() is available
     with open(_PR_BOOT_PATH) as _pbf:
         exec(compile(_pbf.read(), _PR_BOOT_PATH, "exec"), globals())  # noqa
@@ -939,12 +1037,12 @@ if _fetched:
         # XIORUN_PROXY_SSH_HOST = Mac Tailscale IP (100.86.149.127)
         # Agent will SSH -D to this host on startup to create socks5://127.0.0.1:19056
         "XIORUN_PROXY_SSH_HOST":    C.get("proxy_ssh_host", ""),
-        "XIORUN_PROXY_SSH_USER":    C.get("proxy_ssh_user", "karmareturns"),
+        "XIORUN_PROXY_SSH_USER":    C.get("proxy_ssh_user", ""),
         "XIORUN_PROXY_SSH_KEY":     "/root/.ssh/xio_proxy_key",
         "XIORUN_PROXY_LOCAL_PORT":  "19056",  # 1055 conflicts with tailscaled userspace
         # ── WS SOCKS5 bridge (primary — bypasses Tailscale ACL via XIOSYNC HTTPS) ──
         "XIORUN_INTERNAL_SECRET":   INTERNAL_SECRET,
-        "XIORUN_PPPOE_PROXY":       C.get("pppoe_proxy", "100.106.81.15:10001"),
+        "XIORUN_PPPOE_PROXY":       C.get("pppoe_proxy", ""),
         # ─────────────────────────────────────────────────────────────────────
         "DISPLAY":                  ":99",
     }

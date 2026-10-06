@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
 
 from xiosync.api.pagination import (
@@ -159,7 +159,7 @@ def list_workers(
         items=[
             WorkerItem(
                 id=r.id, organization_id=r.organization_id,
-                worker_id=r.worker_id, enrollment_state=r.enrollment_state,
+                worker_id=str(r.worker_id), enrollment_state=r.enrollment_state,
                 pool_type=r.pool_type, software_version=r.software_version,
                 created_at=r.created_at,
             )

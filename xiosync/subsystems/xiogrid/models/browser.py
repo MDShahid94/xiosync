@@ -248,4 +248,9 @@ class MeshNode(Base):
     )
     node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     address: Mapped[str] = mapped_column(Text, nullable=False)
+    # Stable serial assigned from mesh_node_serial_seq (via migration 0051)
+    serial: Mapped[int | None] = mapped_column(nullable=True)
+    # Runtime type: colab_cpu | colab_gpu | vm | etc.
+    runtime_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ts_state_object_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(_ts, nullable=False, server_default=text("now()"))

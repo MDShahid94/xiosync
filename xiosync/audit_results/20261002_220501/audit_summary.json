@@ -1,0 +1,331 @@
+{
+  "timestamp": "2026-10-02T16:35:04.987038+00:00",
+  "cdp_ws_url": "ws://100.111.130.118:52611/devtools/browser/57b9e4f7-e778-4280-abd4-3ffb9b3169ac",
+  "browser_meta": {
+    "cdp_ws_url": "ws://100.111.130.118:52611/devtools/browser/57b9e4f7-e778-4280-abd4-3ffb9b3169ac",
+    "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "chrome_version": "131.0.0.0",
+    "webdriver_flag": false,
+    "plugins_count": 5,
+    "languages": "en-US",
+    "webgl_vendor": "WebKit",
+    "stealth_js_injected": true
+  },
+  "vectors": {
+    "ip_reputation": {
+      "ip": "223.181.55.148",
+      "is_datacenter": false,
+      "is_vpn": false,
+      "is_proxy": false,
+      "is_tor": false,
+      "company": "Bharti Airtel Ltd.",
+      "asn": "AS24560 Bharti Airtel Limited",
+      "city": "Burla",
+      "country": "India",
+      "timezone": "Asia/Kolkata",
+      "location": "Burla, India",
+      "pass": true
+    },
+    "sannysoft": {
+      "tests": {
+        "User Agent (Old)": {
+          "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+          "pass": true
+        },
+        "WebDriver (New)": {
+          "value": "missing (passed)",
+          "pass": true
+        },
+        "WebDriver Advanced": {
+          "value": "passed",
+          "pass": true
+        },
+        "Chrome (New)": {
+          "value": "present (passed)",
+          "pass": true
+        },
+        "Permissions (New)": {
+          "value": "denied",
+          "pass": true
+        },
+        "Plugins Length (Old)": {
+          "value": "",
+          "pass": false
+        },
+        "Plugins is of type PluginArray": {
+          "value": "",
+          "pass": false
+        },
+        "Languages (Old)": {
+          "value": "",
+          "pass": false
+        },
+        "WebGL Vendor": {
+          "value": "",
+          "pass": false
+        },
+        "WebGL Renderer": {
+          "value": "",
+          "pass": false
+        },
+        "Broken Image Dimensions": {
+          "value": "",
+          "pass": false
+        },
+        "PHANTOM_UA": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_PROPERTIES": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_ETSL": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_LANGUAGE": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_WEBSOCKET": {
+          "value": "ok",
+          "pass": true
+        },
+        "MQ_SCREEN": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_OVERFLOW": {
+          "value": "ok",
+          "pass": true
+        },
+        "PHANTOM_WINDOW_HEIGHT": {
+          "value": "ok",
+          "pass": true
+        },
+        "HEADCHR_UA": {
+          "value": "ok",
+          "pass": true
+        },
+        "HEADCHR_CHROME_OBJ": {
+          "value": "ok",
+          "pass": true
+        },
+        "HEADCHR_PERMISSIONS": {
+          "value": "ok",
+          "pass": true
+        },
+        "HEADCHR_PLUGINS": {
+          "value": "ok",
+          "pass": true
+        },
+        "HEADCHR_IFRAME": {
+          "value": "ok",
+          "pass": true
+        },
+        "CHR_DEBUG_TOOLS": {
+          "value": "ok",
+          "pass": true
+        },
+        "SELENIUM_DRIVER": {
+          "value": "ok",
+          "pass": true
+        },
+        "CHR_BATTERY": {
+          "value": "ok",
+          "pass": true
+        },
+        "CHR_MEMORY": {
+          "value": "ok",
+          "pass": true
+        },
+        "TRANSPARENT_PIXEL": {
+          "value": "WARN",
+          "pass": false
+        },
+        "SEQUENTUM": {
+          "value": "ok",
+          "pass": true
+        },
+        "VIDEO_CODECS": {
+          "value": "ok",
+          "pass": true
+        },
+        "navigator.cookieEnabled": {
+          "value": "true",
+          "pass": false
+        },
+        "navigator.doNotTrack": {
+          "value": "null",
+          "pass": false
+        },
+        "navigator.msDoNotTrack": {
+          "value": "undefined",
+          "pass": false
+        },
+        "navigator.sendBeacon": {
+          "value": "",
+          "pass": false
+        },
+        "navigator.userAgent": {
+          "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+          "pass": false
+        },
+        "navigator.appName": {
+          "value": "Netscape",
+          "pass": false
+        },
+        "navigator.vendor": {
+          "value": "Google Inc.",
+          "pass": false
+        },
+        "navigator.appCodeName": {
+          "value": "Mozilla",
+          "pass": false
+        },
+        "navigator.getUserMedia": {
+          "value": "",
+          "pass": false
+        },
+        "navigator.sayswho": {
+          "value": "undefined",
+          "pass": false
+        },
+        "navigator.javaEnabled": {
+          "value": "false",
+          "pass": false
+        },
+        "navigator.plugins": {
+          "value": "",
+          "pass": false
+        },
+        "screen.width": {
+          "value": "2560",
+          "pass": false
+        },
+        "screen.height": {
+          "value": "1600",
+          "pass": false
+        },
+        "screen.colorDepth": {
+          "value": "24",
+          "pass": false
+        },
+        "navigator.language": {
+          "value": "en-US",
+          "pass": false
+        },
+        "navigator.loadPurpose": {
+          "value": "undefined",
+          "pass": false
+        },
+        "navigator.platform": {
+          "value": "MacIntel",
+          "pass": false
+        },
+        "navigator.mediaDevices": {
+          "value": "audioinput: id = default\nvideoinput: id = default\naudiooutput: id = default",
+          "pass": false
+        },
+        "navigator.getBattery details": {
+          "value": "Charging: true\nLevel: 0.87",
+          "pass": false
+        },
+        "Canvas1": {
+          "value": "",
+          "pass": false
+        },
+        "Canvas2": {
+          "value": "",
+          "pass": false
+        },
+        "Canvas3 (iframe sandbox)": {
+          "value": "",
+          "pass": false
+        },
+        "Canvas4 (iframe sandbox)": {
+          "value": "",
+          "pass": false
+        },
+        "Canvas5 (iframe)": {
+          "value": "",
+          "pass": false
+        }
+      },
+      "webdriver": {
+        "value": "missing (passed)",
+        "pass": true
+      },
+      "advanced_webdriver": {
+        "value": "passed",
+        "pass": true
+      },
+      "chrome_object": {
+        "value": "present (passed)",
+        "pass": true
+      },
+      "webgl_vendor": {
+        "value": "",
+        "pass": false
+      },
+      "webgl_renderer": {
+        "value": "",
+        "pass": false
+      },
+      "user_agent": {
+        "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+        "pass": true
+      },
+      "permissions": {
+        "value": "denied",
+        "pass": true
+      },
+      "plugins_length": {
+        "value": "",
+        "pass": false
+      },
+      "languages": {
+        "value": "",
+        "pass": false
+      },
+      "all_pass": false
+    },
+    "headless_detect": {
+      "score": 0.07,
+      "status": "\u2705 Normal Browser",
+      "webdriver": null,
+      "cdp_detected": null,
+      "cdc_keys": null,
+      "cdp_signals": null,
+      "ua_suspicious": null,
+      "webgl_software": null,
+      "webgl_renderer": null,
+      "platform": null,
+      "cores": null,
+      "device_memory": null,
+      "inner_eq_outer": null,
+      "worker_mismatch": null,
+      "worker_status": null,
+      "playwright": null,
+      "pass": true
+    },
+    "creepjs": {
+      "raw_percentages": [
+        "0",
+        "0",
+        "0",
+        "16",
+        "87"
+      ],
+      "note": "trust-score selector not found \u2014 scraped body percentages",
+      "pass": true
+    },
+    "cloudflare_turnstile": {
+      "token_generated": true,
+      "token_length": 21,
+      "success_message": "",
+      "pass": true
+    }
+  }
+}

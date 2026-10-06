@@ -285,6 +285,15 @@ _RBAC_MATRIX = [
     (MembershipRole.ORG_ADMIN, "webhook.manage", True),
     (MembershipRole.ORG_ADMIN, "capability.manage", True),
     (MembershipRole.ORG_ADMIN, "platform.admin", False),
+    # XIOVIEW — session observation and control
+    (MembershipRole.ORG_VIEWER, "session.observe", False),
+    (MembershipRole.ORG_VIEWER, "session.control", False),
+    (MembershipRole.ORG_MEMBER, "session.observe", True),
+    (MembershipRole.ORG_MEMBER, "session.control", False),
+    (MembershipRole.ORG_ADMIN, "session.observe", True),
+    (MembershipRole.ORG_ADMIN, "session.control", True),
+    (MembershipRole.ORG_OWNER, "session.observe", True),
+    (MembershipRole.ORG_OWNER, "session.control", True),
     # Owner
     (MembershipRole.ORG_OWNER, "readonly", True),
     (MembershipRole.ORG_OWNER, "plugin.admin", True),

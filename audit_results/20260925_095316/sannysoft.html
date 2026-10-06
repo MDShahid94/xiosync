@@ -1,0 +1,1877 @@
+<!DOCTYPE html><html lang="en" style="" class=" no-hairline"><head><script async="" src="https://mc.yandex.ru/metrika/tag.js"></script><script>
+(function () {
+  'use strict';
+
+  const _NavProto    = Navigator.prototype;
+  const _ScreenProto = Screen.prototype;
+
+  // ── 1. navigator.webdriver ─────────────────────────────────────────────────
+  try {
+    delete _NavProto.webdriver;
+    Object.defineProperty(_NavProto, 'webdriver', {
+      get: function webdriver() { return false; },
+      configurable: false,
+      enumerable: true,
+    });
+  } catch (_) {}
+
+  // ── 2. navigator platform / hardwareConcurrency / deviceMemory / languages ─
+  try {
+    const _frozenLangs = Object.freeze(['en-US', 'en']);
+    Object.defineProperty(_NavProto, 'platform',            { get: function platform() { return "Linux x86_64"; },           configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'hardwareConcurrency', { get: function hardwareConcurrency() { return 8; },               configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'deviceMemory',        { get: function deviceMemory() { return 8; },                                configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'languages',           { get: function languages() { return _frozenLangs; },                           configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'language',            { get: function language() { return 'en-US'; },                                 configurable: false, enumerable: true });
+  } catch (_) {}
+
+  // ── 3. navigator.plugins + mimeTypes (Chrome 131 format) ───────────────────
+  (function () {
+    const _pdfMime = Object.create(MimeType.prototype, {
+      type:        { value: 'application/pdf', enumerable: true },
+      suffixes:    { value: 'pdf',             enumerable: true },
+      description: { value: 'Portable Document Format', enumerable: true },
+    });
+    const _pluginNames = [
+      'PDF Viewer', 'Chrome PDF Viewer', 'Chromium PDF Viewer',
+      'Microsoft Edge PDF Viewer', 'WebKit built-in PDF',
+    ];
+    const _plugins = _pluginNames.map(function (name) {
+      const p = Object.create(Plugin.prototype, {
+        name:        { value: name,        enumerable: true },
+        filename:    { value: 'internal-pdf-viewer', enumerable: true },
+        description: { value: 'Portable Document Format', enumerable: true },
+        length:      { value: 1 },
+      });
+      Object.defineProperty(p, 0, { value: _pdfMime, enumerable: true });
+      return p;
+    });
+    const _pa = Object.create(null);
+    Object.setPrototypeOf(_pa, PluginArray.prototype);
+    _plugins.forEach(function (p, i) {
+      Object.defineProperty(_pa, i,      { value: p, enumerable: true });
+      Object.defineProperty(_pa, p.name, { value: p });
+    });
+    Object.defineProperty(_pa, 'length',    { value: _plugins.length });
+    Object.defineProperty(_pa, 'item',      { value: function item(i) { return _plugins[i] || null; } });
+    Object.defineProperty(_pa, 'namedItem', { value: function namedItem(n) { return _plugins.find(function(p) { return p.name === n; }) || null; } });
+    Object.defineProperty(_pa, 'refresh',   { value: function refresh() {} });
+    Object.defineProperty(_pa, Symbol.iterator, { value: function* () { yield* _plugins; } });
+    const _mta = Object.create(null);
+    Object.setPrototypeOf(_mta, MimeTypeArray.prototype);
+    Object.defineProperty(_mta, 0,                   { value: _pdfMime, enumerable: true });
+    Object.defineProperty(_mta, 'application/pdf',   { value: _pdfMime });
+    Object.defineProperty(_mta, 'length',            { value: 1 });
+    Object.defineProperty(_mta, 'item',              { value: function item(i) { return i === 0 ? _pdfMime : null; } });
+    Object.defineProperty(_mta, 'namedItem',         { value: function namedItem(n) { return n === 'application/pdf' ? _pdfMime : null; } });
+    Object.defineProperty(_mta, Symbol.iterator,     { value: function* () { yield _pdfMime; } });
+    Object.defineProperty(_NavProto, 'plugins',   { get: function plugins() { return _pa; },   configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'mimeTypes', { get: function mimeTypes() { return _mta; }, configurable: false, enumerable: true });
+  })();
+
+  // ── 4. window.chrome — only add missing, never overwrite runtime ─────────
+  // Patchright sets chrome.runtime correctly. Overwriting it causes
+  // hasBadChromeRuntime:true in CreepJS detection.
+  try {
+    if (!window.chrome) window.chrome = {};
+    const _c = window.chrome;
+    if (!_c.app) {
+      _c.app = {
+        isInstalled: false,
+        InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+        RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+        getDetails:     function getDetails() { return null; },
+        getIsInstalled: function getIsInstalled() { return false; },
+        installState:   function installState() { return 'not_installed'; },
+        runningState:   function runningState() { return 'cannot_run'; },
+      };
+    }
+    if (!_c.csi) _c.csi = function csi() { return { onloadT: Date.now(), pageT: Date.now(), startE: Date.now(), tran: 15 }; };
+    if (!_c.loadTimes) _c.loadTimes = function loadTimes() { return {
+      commitLoadTime: Date.now() / 1000, connectionInfo: 'h2', finishDocumentLoadTime: 0,
+      finishLoadTime: 0, firstPaintAfterLoadTime: 0, firstPaintTime: 0,
+      navigationType: 'Other', npnNegotiatedProtocol: 'h2', requestTime: Date.now() / 1000,
+      startLoadTime: Date.now() / 1000, wasAlternateProtocolAvailable: false,
+      wasFetchedViaSpdy: true, wasNpnNegotiated: true,
+    }; };
+  } catch (_) {}
+
+  // ── 5. Remove cdc_* CDP leak keys ──────────────────────────────────────────
+  // Only delete existing keys — patchright prevents future cdc_ injections.
+  // Do NOT override Object.defineProperty — CreepJS detects any override.
+  try {
+    const _cdcRe = /^cdc_/;
+    for (const key of Object.getOwnPropertyNames(window)) {
+      if (_cdcRe.test(key)) try { delete window[key]; } catch (_) {}
+    }
+  } catch (_) {}
+
+  // ── 6. WebGL vendor / renderer ─────────────────────────────────────────────
+  (function () {
+    const _vendor   = "Google Inc. (Intel)";
+    const _renderer = "ANGLE (Intel, Intel(R) UHD Graphics 630 (CML GT2), OpenGL 4.1)";
+    function _patchGetParam(proto) {
+      if (!proto || !proto.getParameter) return;
+      const _orig = proto.getParameter;
+      proto.getParameter = function getParameter(param) {
+        if (param === 37445) return _vendor;
+        if (param === 37446) return _renderer;
+        return _orig.call(this, param);
+      };
+    }
+    try { _patchGetParam(WebGLRenderingContext.prototype); } catch (_) {}
+    try { _patchGetParam(WebGL2RenderingContext.prototype); } catch (_) {}
+    // Also intercept canvas.getContext to patch each WebGL context instance
+    // This catches cases where scripts save a ref to the original getParameter
+    const _origGC = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function getContext(type) {
+      const ctx = _origGC.apply(this, arguments);
+      if (ctx && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) {
+        if (ctx.getParameter) {
+          const _ctxOrig = ctx.getParameter.bind(ctx);
+          ctx.getParameter = function getParameter(p) {
+            if (p === 37445) return _vendor;
+            if (p === 37446) return _renderer;
+            return _ctxOrig(p);
+          };
+        }
+        // Also patch getExtension on the instance to return consistent extension
+        if (ctx.getExtension) {
+          const _ctxOrigExt = ctx.getExtension.bind(ctx);
+          ctx.getExtension = function getExtension(name) {
+            if (name === 'WEBGL_debug_renderer_info') {
+              return { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
+            }
+            return _ctxOrigExt(name);
+          };
+        }
+      }
+      return ctx;
+    };
+    if (typeof OffscreenCanvas !== 'undefined') {
+      try {
+        const _oc = OffscreenCanvas.prototype.getContext;
+        OffscreenCanvas.prototype.getContext = function getContext(type) {
+          const ctx = _oc.apply(this, arguments);
+          if (ctx && (type === 'webgl' || type === 'webgl2') && ctx.getParameter) {
+            const _orig = ctx.getParameter.bind(ctx);
+            ctx.getParameter = function (p) {
+              if (p === 37445) return _vendor;
+              if (p === 37446) return _renderer;
+              return _orig(p);
+            };
+          }
+          return ctx;
+        };
+      } catch (_) {}
+    }
+  })();
+
+  // ── 6b. WebGPU adapter override (GPU info normalization) ────────────────
+  try {
+    if (navigator.gpu && navigator.gpu.requestAdapter) {
+      const _fakeInfo = {
+        vendor: 'intel',
+        architecture: 'gen-9.5',
+        device: '',
+        description: 'Intel(R) UHD Graphics 630',
+      };
+      if (typeof GPUAdapterInfo !== 'undefined') {
+        try { Object.setPrototypeOf(_fakeInfo, GPUAdapterInfo.prototype); } catch(_) {}
+      }
+      Object.freeze(_fakeInfo);
+      const _origRA = navigator.gpu.requestAdapter.bind(navigator.gpu);
+      navigator.gpu.requestAdapter = async function requestAdapter(opts) {
+        const adapter = await _origRA(opts);
+        if (!adapter) return adapter;
+        // Override requestAdapterInfo
+        if (adapter.requestAdapterInfo) {
+          adapter.requestAdapterInfo = async function requestAdapterInfo() {
+            return _fakeInfo;
+          };
+        }
+        // Override adapter.info property
+        try {
+          Object.defineProperty(adapter, 'info', {
+            get: function info() { return _fakeInfo; },
+            configurable: true, enumerable: true,
+          });
+        } catch (_) {}
+        return adapter;
+      };
+    }
+  } catch (_) {}
+
+  // ── 6c. CSS prefers-color-scheme override (fixes prefersLightColor) ────────
+  try {
+    const _origMatch = window.matchMedia;
+    window.matchMedia = function matchMedia(query) {
+      const result = _origMatch.call(this, query);
+      if (query === '(prefers-color-scheme: light)') {
+        return Object.create(result, {
+          matches: { get: function() { return false; }, configurable: true },
+        });
+      }
+      if (query === '(prefers-color-scheme: dark)') {
+        return Object.create(result, {
+          matches: { get: function() { return true; }, configurable: true },
+        });
+      }
+      return result;
+    };
+  } catch (_) {}
+  try {
+    const _cam = "FaceTime HD Camera";
+    const _origEnum = navigator.mediaDevices?.enumerateDevices?.bind(navigator.mediaDevices);
+    if (_origEnum) {
+      navigator.mediaDevices.enumerateDevices = async function enumerateDevices() {
+        const real = await _origEnum();
+        if (real.length > 0) return real;
+        return [{ deviceId: 'default', groupId: 'default', kind: 'videoinput', label: _cam,
+          toJSON() { return { deviceId: 'default', groupId: 'default', kind: 'videoinput', label: _cam }; } }];
+      };
+    }
+  } catch (_) {}
+
+  // ── 8. WebRTC — comprehensive IP leak prevention ───────────────────────────
+  try {
+    if (typeof RTCPeerConnection !== 'undefined') {
+      const _OrigRTC = RTCPeerConnection;
+      const _filterCandidate = function (e) {
+        if (e.candidate && e.candidate.candidate) {
+          const c = e.candidate.candidate;
+          if (c.includes('typ host') || c.includes('typ srflx')) return true;
+        }
+        return false;
+      };
+      window.RTCPeerConnection = function RTCPeerConnection(cfg, constraints) {
+        cfg = cfg || {};
+        cfg.iceServers = [];
+        const pc = new _OrigRTC(cfg, constraints);
+        const _origAddEvent = pc.addEventListener.bind(pc);
+        pc.addEventListener = function (type, fn) {
+          if (type === 'icecandidate') {
+            return _origAddEvent(type, function (e) {
+              if (!_filterCandidate(e)) fn.call(this, e);
+            });
+          }
+          return _origAddEvent.apply(this, arguments);
+        };
+        return pc;
+      };
+      window.RTCPeerConnection.prototype = _OrigRTC.prototype;
+      Object.defineProperty(_OrigRTC.prototype, 'constructor', { value: window.RTCPeerConnection });
+      const _oicDesc = Object.getOwnPropertyDescriptor(_OrigRTC.prototype, 'onicecandidate');
+      if (_oicDesc && _oicDesc.set) {
+        const _origSet = _oicDesc.set;
+        Object.defineProperty(_OrigRTC.prototype, 'onicecandidate', {
+          get: _oicDesc.get,
+          set: function (fn) {
+            _origSet.call(this, function (e) {
+              if (!_filterCandidate(e)) { if (fn) fn.call(this, e); }
+            });
+          },
+          configurable: true, enumerable: true,
+        });
+      }
+      const _origDC = _OrigRTC.prototype.createDataChannel;
+      _OrigRTC.prototype.createDataChannel = function createDataChannel() {
+        try { return _origDC.apply(this, arguments); } catch (_) { return null; }
+      };
+    }
+    if (typeof webkitRTCPeerConnection !== 'undefined' && window.RTCPeerConnection) {
+      window.webkitRTCPeerConnection = window.RTCPeerConnection;
+    }
+  } catch (_) {}
+
+  // ── 9. Screen dimensions + window geometry ─────────────────────────────────
+  try {
+    const _sw = 1920, _sh = 1080;
+    Object.defineProperty(_ScreenProto, 'width',       { get: function width() { return _sw; },       configurable: true, enumerable: true });
+    Object.defineProperty(_ScreenProto, 'height',      { get: function height() { return _sh; },      configurable: true, enumerable: true });
+    Object.defineProperty(_ScreenProto, 'availWidth',  { get: function availWidth() { return _sw; },  configurable: true, enumerable: true });
+    Object.defineProperty(_ScreenProto, 'availHeight', { get: function availHeight() { return _sh - 40; }, configurable: true, enumerable: true });
+    Object.defineProperty(_ScreenProto, 'availLeft',   { get: function availLeft() { return 0; },     configurable: true });
+    Object.defineProperty(_ScreenProto, 'availTop',    { get: function availTop() { return 0; },      configurable: true });
+    Object.defineProperty(_ScreenProto, 'colorDepth',  { get: function colorDepth() { return 24; },   configurable: true, enumerable: true });
+    Object.defineProperty(_ScreenProto, 'pixelDepth',  { get: function pixelDepth() { return 24; },   configurable: true, enumerable: true });
+    Object.defineProperty(window, 'devicePixelRatio', { get: function devicePixelRatio() { return 1.0; }, configurable: false });
+    Object.defineProperty(window, 'outerWidth',  { get: function outerWidth() { return _sw; },        configurable: false });
+    Object.defineProperty(window, 'outerHeight', { get: function outerHeight() { return _sh - 80; },  configurable: false });
+    Object.defineProperty(window, 'innerWidth',  { get: function innerWidth() { return _sw; },        configurable: false });
+    Object.defineProperty(window, 'innerHeight', { get: function innerHeight() { return _sh - 120; }, configurable: false });
+    Object.defineProperty(window, 'screenX',     { get: function screenX() { return 0; },             configurable: false });
+    Object.defineProperty(window, 'screenY',     { get: function screenY() { return 0; },             configurable: false });
+  } catch (_) {}
+
+  // ── 10. Canvas fingerprint — idempotent noise ──────────────────────────────
+  (function () {
+    const _seed = 1715004;
+    function _lcg(s) { return ((1664525 * s + 1013904223) >>> 0); }
+    function _applyNoise(imageData) {
+      const d = imageData.data;
+      let s = _seed;
+      for (let i = 0; i < Math.min(d.length, 64); i += 4) {
+        // Skip fully transparent pixels — Sannysoft TRANSPARENT_PIXEL test requires alpha=0
+        if (d[i + 3] === 0) { s = _lcg(_lcg(s)); continue; }
+        s = _lcg(s);
+        d[i]     = Math.max(0, Math.min(255, d[i]     + ((s >>> 31) ? 1 : -1)));
+        s = _lcg(s);
+        d[i + 1] = Math.max(0, Math.min(255, d[i + 1] + ((s >>> 31) ? 1 : -1)));
+      }
+      return imageData;
+    }
+    const _origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+    HTMLCanvasElement.prototype.toDataURL = function toDataURL() {
+      const ctx = this.getContext('2d');
+      if (!ctx) return _origToDataURL.apply(this, arguments);
+      const c = document.createElement('canvas');
+      c.width = this.width; c.height = this.height;
+      const c2 = c.getContext('2d');
+      c2.drawImage(this, 0, 0);
+      _applyNoise(c2.getImageData(0, 0, c.width, c.height));
+      c2.putImageData(c2.getImageData(0, 0, c.width, c.height), 0, 0);
+      return _origToDataURL.apply(c, arguments);
+    };
+    const _origToBlob = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function toBlob(callback) {
+      const ctx = this.getContext('2d');
+      if (!ctx) return _origToBlob.apply(this, arguments);
+      const c = document.createElement('canvas');
+      c.width = this.width; c.height = this.height;
+      const c2 = c.getContext('2d');
+      c2.drawImage(this, 0, 0);
+      const id = c2.getImageData(0, 0, c.width, c.height);
+      _applyNoise(id);
+      c2.putImageData(id, 0, 0);
+      const args = Array.prototype.slice.call(arguments);
+      args[0] = callback;
+      return _origToBlob.apply(c, args);
+    };
+    const _origGetImageData = CanvasRenderingContext2D.prototype.getImageData;
+    CanvasRenderingContext2D.prototype.getImageData = function getImageData() {
+      return _applyNoise(_origGetImageData.apply(this, arguments));
+    };
+  })();
+
+  // ── 11. AudioContext + OfflineAudioContext ──────────────────────────────────
+  (function () {
+    const _aseed = 5070447;
+    function _alc(s) { return ((22695477 * s + 1) >>> 0); }
+    let _as = _aseed;
+    function _anoise() { _as = _alc(_as); return (_as / 4294967296 - 0.5) * 1e-5; }
+    const _AC = window.AudioContext || window.webkitAudioContext;
+    if (_AC) {
+      const _origCA = _AC.prototype.createAnalyser;
+      _AC.prototype.createAnalyser = function createAnalyser() {
+        const node = _origCA.apply(this, arguments);
+        const _origFloat = node.getFloatFrequencyData.bind(node);
+        const _origByte  = node.getByteFrequencyData.bind(node);
+        node.getFloatFrequencyData = function getFloatFrequencyData(arr) {
+          _origFloat(arr);
+          for (let i = 0; i < arr.length; i++) arr[i] += _anoise();
+        };
+        node.getByteFrequencyData = function getByteFrequencyData(arr) {
+          _origByte(arr);
+          for (let i = 0; i < arr.length; i++) arr[i] = Math.max(0, Math.min(255, arr[i] + (_anoise() > 0 ? 1 : 0)));
+        };
+        return node;
+      };
+    }
+    if (typeof OfflineAudioContext !== 'undefined') {
+      const _origSR = OfflineAudioContext.prototype.startRendering;
+      OfflineAudioContext.prototype.startRendering = function startRendering() {
+        return _origSR.call(this).then(function (buffer) {
+          const data = buffer.getChannelData(0);
+          let s = _aseed;
+          for (let i = 0; i < data.length; i++) {
+            s = _alc(s);
+            data[i] += (s / 4294967296 - 0.5) * 1e-7;
+          }
+          return buffer;
+        });
+      };
+    }
+  })();
+
+  // ── 12. Timezone consistency ───────────────────────────────────────────────
+  try {
+    const _tz = "America/Chicago";
+    const _origDTF = Intl.DateTimeFormat;
+    const _newDTF = function DateTimeFormat(locale, options) {
+      if (!options || !options.timeZone) {
+        options = Object.assign({}, options || {}, { timeZone: _tz });
+      }
+      return new _origDTF(locale, options);
+    };
+    _newDTF.prototype = _origDTF.prototype;
+    Object.defineProperty(_newDTF, 'supportedLocalesOf', {
+      value: _origDTF.supportedLocalesOf.bind(_origDTF), configurable: true,
+    });
+    Intl.DateTimeFormat = _newDTF;
+  } catch (_) {}
+
+  // ── 13. Permissions API — pass-through (do not override) ──────────────────
+  // Real headed Chrome: notifications = 'default'  (user not asked yet)
+  // Headless Chrome:    notifications = 'denied'   (bot signal!)
+  // Do NOT convert 'default' → 'denied' — that makes us look headless.
+  // Patchright already sets the correct permissions state for headed mode.
+
+  // ── 14. navigator.connection ───────────────────────────────────────────────
+  try {
+    // First, add missing mobile-only properties to NetworkInformation.prototype
+    // Chrome desktop Linux lacks downlinkMax/type/ontypechange on the prototype
+    if (typeof NetworkInformation !== 'undefined') {
+      const _niProto = NetworkInformation.prototype;
+      if (!('downlinkMax' in _niProto)) {
+        Object.defineProperty(_niProto, 'downlinkMax', {
+          get: function downlinkMax() { return Infinity; },
+          configurable: true, enumerable: true,
+        });
+      }
+      if (!('type' in _niProto)) {
+        Object.defineProperty(_niProto, 'type', {
+          get: function type() { return 'wifi'; },
+          configurable: true, enumerable: true,
+        });
+      }
+      if (!('ontypechange' in _niProto)) {
+        Object.defineProperty(_niProto, 'ontypechange', {
+          get: function ontypechange() { return null; },
+          set: function ontypechange(v) {},
+          configurable: true, enumerable: true,
+        });
+      }
+    }
+    const _fakeConn = {
+      effectiveType: '4g',
+      downlink:      10,
+      rtt:           50,
+      saveData:      false,
+      onchange:      null,
+      addEventListener:    function addEventListener() {},
+      removeEventListener: function removeEventListener() {},
+      dispatchEvent:       function dispatchEvent() { return false; },
+    };
+    // Set prototype to NetworkInformation for proper instanceof + property chain
+    if (typeof NetworkInformation !== 'undefined') {
+      Object.setPrototypeOf(_fakeConn, NetworkInformation.prototype);
+    }
+    Object.defineProperty(_NavProto, 'connection', {
+      get: function connection() { return _fakeConn; },
+      configurable: true, enumerable: true,
+    });
+  } catch (_) {}
+
+  // ── 15. Battery API ────────────────────────────────────────────────────────
+  try {
+    const _fakeBattery = {
+      charging: true,
+      chargingTime: 0,
+      dischargingTime: Infinity,
+      level: 0.87,
+      addEventListener:    function addEventListener() {},
+      removeEventListener: function removeEventListener() {},
+      dispatchEvent:       function dispatchEvent() { return true; },
+      onchargingchange: null, onchargingtimechange: null,
+      ondischargingtimechange: null, onlevelchange: null,
+    };
+    Object.defineProperty(_NavProto, 'getBattery', {
+      value: function getBattery() { return Promise.resolve(_fakeBattery); },
+      configurable: false, writable: false,
+    });
+  } catch (_) {}
+
+  // ── 16. navigator.userAgentData (Client Hints — synced with CDP) ───────────
+  try {
+    const _chBrands = [{"brand": "Chromium", "version": "131"}, {"brand": "Google Chrome", "version": "131"}, {"brand": "Not_A Brand", "version": "24"}];
+    const _uadObj = {
+      brands: _chBrands,
+      mobile: false,
+      platform: "Linux",
+      getHighEntropyValues: function getHighEntropyValues() {
+        return Promise.resolve({
+          brands: _chBrands,
+          mobile: false,
+          platform: "Linux",
+          platformVersion: "131",
+          architecture: "x86",
+          model: '', bitness: '64',
+          fullVersionList: _chBrands, wow64: false,
+        });
+      },
+      toJSON: function toJSON() {
+        return { brands: _chBrands, mobile: false, platform: "Linux" };
+      },
+    };
+    Object.defineProperty(_NavProto, 'userAgentData', {
+      get: function userAgentData() { return _uadObj; },
+      configurable: false, enumerable: true,
+    });
+  } catch (_) {}
+
+  // ── 17. Timing — monotonic performance.now() ──────────────────────────────
+  // Keep configurable:true so CreepJS descriptor checks don't flag it.
+  // Do NOT override Date.now — jitter wrapping is easily detected.
+  try {
+    let _lastPerfNow = 0;
+    const _origPerfNow = performance.now.bind(performance);
+    const _newPerfNow = function now() {
+      const real = _origPerfNow();
+      _lastPerfNow = Math.max(_lastPerfNow + 0.001, real);
+      return _lastPerfNow;
+    };
+    Object.defineProperty(Performance.prototype, 'now', {
+      value: _newPerfNow, writable: true, configurable: true, enumerable: true,
+    });
+  } catch (_) {}
+
+  // ── 18. Date.prototype.getTimezoneOffset — DST-aware ──────────────────────
+  try {
+    const _janOff = 360;
+    const _julOff = 300;
+    Date.prototype.getTimezoneOffset = function getTimezoneOffset() {
+      const ms = +this;
+      if (isNaN(ms)) return NaN;
+      const m = new Date(ms).getUTCMonth();
+      return (m >= 3 && m <= 9) ? _julOff : _janOff;
+    };
+  } catch (_) {}
+
+  // ── 19. Intl.DateTimeFormat.resolvedOptions ────────────────────────────────
+  try {
+    const _origRO = Intl.DateTimeFormat.prototype.resolvedOptions;
+    Intl.DateTimeFormat.prototype.resolvedOptions = function resolvedOptions() {
+      const r = _origRO.call(this);
+      r.timeZone = "America/Chicago";
+      return r;
+    };
+  } catch (_) {}
+
+  // ── 20. Geolocation API — async dispatch ──────────────────────────────────
+  try {
+    if (navigator.geolocation && 41.26 !== 0) {
+      const _mkPos = function () {
+        return {
+          coords: {
+            latitude: 41.26, longitude: -95.86, accuracy: 1000,
+            altitude: null, altitudeAccuracy: null, heading: null, speed: null,
+          },
+          timestamp: Date.now(),
+        };
+      };
+      navigator.geolocation.getCurrentPosition = function getCurrentPosition(success) {
+        setTimeout(function () { if (success) success(_mkPos()); }, 10);
+      };
+      navigator.geolocation.watchPosition = function watchPosition(success) {
+        setTimeout(function () { if (success) success(_mkPos()); }, 10);
+        return 1;
+      };
+      navigator.geolocation.clearWatch = function clearWatch() {};
+    }
+  } catch (_) {}
+
+  // ── 21. ClientRects + BoundingClientRect noise ─────────────────────────────
+  (function () {
+    const _crNoise = ((1715004 ^ 0xBEEF) % 3 + 1) * 0.0001;
+    const _origGBCR = Element.prototype.getBoundingClientRect;
+    Element.prototype.getBoundingClientRect = function getBoundingClientRect() {
+      const r = _origGBCR.call(this);
+      return new DOMRect(r.x + _crNoise, r.y + _crNoise, r.width, r.height);
+    };
+    const _origGCR = Element.prototype.getClientRects;
+    Element.prototype.getClientRects = function getClientRects() {
+      const rects = _origGCR.call(this);
+      const list = [];
+      for (let i = 0; i < rects.length; i++) {
+        list.push(new DOMRect(rects[i].x + _crNoise, rects[i].y + _crNoise, rects[i].width, rects[i].height));
+      }
+      return list;
+    };
+  })();
+
+  // ── 22. Font measureText noise ─────────────────────────────────────────────
+  try {
+    const _origMT = CanvasRenderingContext2D.prototype.measureText;
+    const _fNoise = ((1715004 & 0xFFFF) % 5 + 1) * 0.0001;
+    CanvasRenderingContext2D.prototype.measureText = function measureText(text) {
+      const m = _origMT.call(this, text);
+      const origW = m.width;
+      Object.defineProperty(m, 'width', { get: function () { return origW + _fNoise; }, configurable: true });
+      return m;
+    };
+  } catch (_) {}
+
+  // ── 23. WebGL getExtension + getSupportedExtensions ────────────────────────
+  (function () {
+    function _patchExt(proto) {
+      if (!proto || !proto.getExtension) return;
+      const _origExt = proto.getExtension;
+      proto.getExtension = function getExtension(name) {
+        if (name === 'WEBGL_debug_renderer_info') {
+          return { UNMASKED_VENDOR_WEBGL: 37445, UNMASKED_RENDERER_WEBGL: 37446 };
+        }
+        return _origExt.call(this, name);
+      };
+      if (proto.getSupportedExtensions) {
+        const _origSE = proto.getSupportedExtensions;
+        proto.getSupportedExtensions = function getSupportedExtensions() {
+          const exts = _origSE.call(this) || [];
+          if (!exts.includes('WEBGL_debug_renderer_info')) exts.push('WEBGL_debug_renderer_info');
+          return exts;
+        };
+      }
+    }
+    try { _patchExt(WebGLRenderingContext.prototype); } catch (_) {}
+    try { _patchExt(WebGL2RenderingContext.prototype); } catch (_) {}
+  })();
+
+  // ── 24. navigator misc ────────────────────────────────────────────────────
+  try {
+    Object.defineProperty(_NavProto, 'vendor',           { get: function vendor() { return 'Google Inc.'; },   configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'vendorSub',        { get: function vendorSub() { return ''; },          configurable: false });
+    Object.defineProperty(_NavProto, 'productSub',       { get: function productSub() { return '20030107'; }, configurable: false });
+    Object.defineProperty(_NavProto, 'maxTouchPoints',   { get: function maxTouchPoints() { return 0; }, configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'cookieEnabled',    { get: function cookieEnabled() { return true; },    configurable: false, enumerable: true });
+    Object.defineProperty(_NavProto, 'onLine',           { get: function onLine() { return true; },           configurable: false });
+    Object.defineProperty(_NavProto, 'doNotTrack',       { get: function doNotTrack() { return null; },       configurable: false });
+    Object.defineProperty(_NavProto, 'pdfViewerEnabled', { get: function pdfViewerEnabled() { return true; }, configurable: false });
+  } catch (_) {}
+
+  // ── 25. History.length ─────────────────────────────────────────────────────
+  try {
+    Object.defineProperty(History.prototype, 'length', {
+      get: function length() { return 3; },
+      configurable: false, enumerable: true,
+    });
+  } catch (_) {}
+
+  // ── 26. Speech synthesis voices ────────────────────────────────────────────
+  try {
+    if (window.speechSynthesis) {
+      const _fakeVoices = [
+        { voiceURI: 'Google US English',       name: 'Google US English',       lang: 'en-US', localService: false, default: true },
+        { voiceURI: 'Google UK English Female', name: 'Google UK English Female', lang: 'en-GB', localService: false, default: false },
+        { voiceURI: 'Google UK English Male',   name: 'Google UK English Male',   lang: 'en-GB', localService: false, default: false },
+        { voiceURI: 'Google español',           name: 'Google español',           lang: 'es-ES', localService: false, default: false },
+      ];
+      window.speechSynthesis.getVoices = function getVoices() { return _fakeVoices; };
+    }
+  } catch (_) {}
+
+  // ── 27. Worker / SharedWorker — module-safe injection ──────────────────────
+  (function () {
+    const _workerPayload = `
+      Object.defineProperties(Object.getPrototypeOf(navigator), {
+        hardwareConcurrency: {get:function(){ return 8; }},
+        deviceMemory: {get:function(){ return 8; }},
+        platform: {get:function(){ return "Linux x86_64"; }},
+        webdriver: {get:function(){ return false; }},
+      });
+      ['WebGLRenderingContext','WebGL2RenderingContext'].forEach(function(cn) {
+        if (self[cn]) {
+          var _og = self[cn].prototype.getParameter;
+          self[cn].prototype.getParameter = function(p) {
+            if (p === 37445) return "Google Inc. (Intel)";
+            if (p === 37446) return "ANGLE (Intel, Intel(R) UHD Graphics 630 (CML GT2), OpenGL 4.1)";
+            return _og.apply(this, arguments);
+          };
+        }
+      });
+      if (self.OffscreenCanvas) {
+        var _oc = self.OffscreenCanvas.prototype.getContext;
+        self.OffscreenCanvas.prototype.getContext = function(type) {
+          var ctx = _oc.apply(this, arguments);
+          if (ctx && (type === 'webgl' || type === 'webgl2') && ctx.getParameter) {
+            var _orig = ctx.getParameter.bind(ctx);
+            ctx.getParameter = function(p) {
+              if (p === 37445) return "Google Inc. (Intel)";
+              if (p === 37446) return "ANGLE (Intel, Intel(R) UHD Graphics 630 (CML GT2), OpenGL 4.1)";
+              return _orig(p);
+            };
+          }
+          return ctx;
+        };
+      }
+      if (self.WorkerNavigator) {
+        Object.defineProperty(self.WorkerNavigator.prototype, 'userAgentData', {
+          get: function() { return {
+            brands: [{"brand": "Chromium", "version": "131"}, {"brand": "Google Chrome", "version": "131"}, {"brand": "Not_A Brand", "version": "24"}],
+            mobile: false,
+            platform: "Linux",
+            getHighEntropyValues: function() { return Promise.resolve({
+              architecture: "x86",
+              bitness: '64', model: '',
+              platform: "Linux",
+              platformVersion: "131",
+            }); },
+          }; },
+          configurable: true, enumerable: true,
+        });
+      }
+    `;
+    const _resolveURL = function (url) {
+      try { return new URL(url, self.location.href).href; }
+      catch (_) { return url; }
+    };
+    if (typeof Worker !== 'undefined') {
+      const _OrigWorker = Worker;
+      window.Worker = function Worker(scriptURL, opts) {
+        if (typeof scriptURL === 'string' && !scriptURL.startsWith('blob:')) {
+          const resolved = _resolveURL(scriptURL);
+          if (opts && opts.type === 'module') {
+            const blob = new Blob(
+              [_workerPayload + ';import(' + JSON.stringify(resolved) + ');'],
+              { type: 'text/javascript' }
+            );
+            return new _OrigWorker(URL.createObjectURL(blob), opts);
+          }
+          const blob = new Blob(
+            [_workerPayload + ';importScripts(' + JSON.stringify(resolved) + ');'],
+            { type: 'application/javascript' }
+          );
+          return new _OrigWorker(URL.createObjectURL(blob), opts);
+        }
+        return new _OrigWorker(scriptURL, opts);
+      };
+      window.Worker.prototype = _OrigWorker.prototype;
+      Object.defineProperty(_OrigWorker.prototype, 'constructor', { value: window.Worker });
+    }
+    if (typeof SharedWorker !== 'undefined') {
+      const _OrigSW = SharedWorker;
+      window.SharedWorker = function SharedWorker(scriptURL, opts) {
+        if (typeof scriptURL === 'string' && !scriptURL.startsWith('blob:')) {
+          const resolved = _resolveURL(scriptURL);
+          if (opts && opts.type === 'module') {
+            const blob = new Blob(
+              [_workerPayload + ';import(' + JSON.stringify(resolved) + ');'],
+              { type: 'text/javascript' }
+            );
+            return new _OrigSW(URL.createObjectURL(blob), opts);
+          }
+          const blob = new Blob(
+            [_workerPayload + ';importScripts(' + JSON.stringify(resolved) + ');'],
+            { type: 'application/javascript' }
+          );
+          return new _OrigSW(URL.createObjectURL(blob), opts);
+        }
+        return new _OrigSW(scriptURL, opts);
+      };
+      window.SharedWorker.prototype = _OrigSW.prototype;
+      Object.defineProperty(_OrigSW.prototype, 'constructor', { value: window.SharedWorker });
+    }
+  })();
+
+  // ── 28. navigator.share — stub (fixes noWebShare) ─────────────────────────
+  try {
+    if (!navigator.share) {
+      Object.defineProperty(_NavProto, 'share', {
+        value: function share() { return Promise.reject(new DOMException('Share canceled', 'AbortError')); },
+        writable: true, configurable: true, enumerable: true,
+      });
+    }
+    if (!navigator.canShare) {
+      Object.defineProperty(_NavProto, 'canShare', {
+        value: function canShare() { return true; },
+        writable: true, configurable: true, enumerable: true,
+      });
+    }
+  } catch (_) {}
+
+  // ── 29. Content Index API stub (fixes noContentIndex) ─────────────────────
+  try {
+    if (typeof window.ContentIndex === 'undefined') {
+      window.ContentIndex = function ContentIndex() {
+        throw new TypeError('Illegal constructor');
+      };
+      window.ContentIndex.prototype = {
+        add: function add() { return Promise.resolve(); },
+        delete: function _delete() { return Promise.resolve(); },
+        getAll: function getAll() { return Promise.resolve([]); },
+      };
+      Object.defineProperty(window.ContentIndex.prototype, Symbol.toStringTag, {
+        value: 'ContentIndex', configurable: true,
+      });
+    }
+    // Also add to ServiceWorkerRegistration.prototype if available
+    try {
+      if (typeof ServiceWorkerRegistration !== 'undefined' && !('index' in ServiceWorkerRegistration.prototype)) {
+        Object.defineProperty(ServiceWorkerRegistration.prototype, 'index', {
+          get: function index() { return new (window.ContentIndex || Object)(); },
+          configurable: true, enumerable: true,
+        });
+      }
+    } catch (_) {}
+  } catch (_) {}
+
+  // ── 30. Contacts Manager API stub (fixes noContactsManager) ───────────────
+  try {
+    if (!navigator.contacts) {
+      Object.defineProperty(_NavProto, 'contacts', {
+        get: function contacts() {
+          return {
+            select: function select() { return Promise.reject(new DOMException('User canceled', 'InvalidStateError')); },
+            getProperties: function getProperties() { return Promise.resolve(['name', 'email', 'tel']); },
+          };
+        },
+        configurable: true, enumerable: true,
+      });
+    }
+    if (!navigator.ContactsManager) {
+      window.ContactsManager = function ContactsManager() {};
+    }
+  } catch (_) {}
+
+})();
+</script>
+    <meta charset="UTF-8">
+    <title>Antibot</title>
+
+    <style>
+        iframe.canvased {
+            display: none;
+        }
+
+        table {
+            border: 3px solid black;
+            padding: 0;
+            margin: 0 0 10px 0;
+        }
+
+        tr, td {
+            padding: 5px;
+            margin: 0;
+        }
+
+        td {
+            border: 1px solid #CCC;
+        }
+
+        td.passed {
+            background-color: #c8d86d;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+
+        td.warn {
+            background-color: #ffed53;
+            max-width: 300px;
+            word-wrap: break-word;
+        }
+
+        td.failed {
+            background-color: #f45159;
+        }
+
+        span.age {
+            float: right;
+            margin-left: 40px;
+            margin-right: 10px;
+        }
+    </style>
+    <script src="./fpCollect.min.js"></script>
+    <script src="./modernizr.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.11/lodash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/ua-parser-js@0.7.19/src/ua-parser.min.js"></script>
+    <script src="./fpScanner.js"></script>
+</head>
+<body>
+<!-- Yandex.Metrika counter -->
+<script type="text/javascript">
+    (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+        m[i].l=1*new Date();k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
+    (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+
+    ym(86860295, "init", {
+        clickmap:true,
+        trackLinks:true,
+        accurateTrackBounce:true
+    });
+</script>
+<noscript><div><img src="https://mc.yandex.ru/watch/86860295" style="position:absolute; left:-9999px;" alt="" /></div></noscript>
+<!-- /Yandex.Metrika counter -->
+
+<h1>Intoli.com tests + additions</h1>
+<table>
+    <tbody><tr>
+        <th>Test Name</th>
+        <th>Result</th>
+    </tr>
+    <tr>
+        <td>User Agent <span class="age">(Old)</span></td>
+        <td class="result passed" id="user-agent-result">Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36</td>
+    </tr>
+    <tr>
+        <td>WebDriver <span class="age">(New)</span></td>
+        <td class="result passed" id="webdriver-result">missing (passed)</td>
+    </tr>
+    <tr>
+        <td>WebDriver Advanced</td>
+        <td class="result passed" id="advanced-webdriver-result">passed</td>
+    </tr>
+    <tr>
+        <td>Chrome <span class="age">(New)</span></td>
+        <td class="result passed" id="chrome-result">present (passed)</td>
+    </tr>
+    <tr>
+        <td>Permissions <span class="age">(New)</span></td>
+        <td class="result passed" id="permissions-result">prompt</td>
+    </tr>
+    <tr>
+        <td>Plugins Length <span class="age">(Old)</span></td>
+        <td class="result passed" id="plugins-length-result">5</td>
+    </tr>
+    <tr>
+        <td>Plugins is of type PluginArray</td>
+        <td class="result passed" id="plugins-type-result">passed</td>
+    </tr>
+    <tr>
+        <td>Languages <span class="age">(Old)</span></td>
+        <td class="result passed" id="languages-result">en-US,en</td>
+    </tr>
+    <tr>
+        <td>WebGL Vendor</td>
+        <td id="webgl-vendor" class="passed">Google Inc. (Intel)</td>
+    </tr>
+    <tr>
+        <td>WebGL Renderer</td>
+        <td id="webgl-renderer" class="passed">ANGLE (Intel, Intel(R) UHD Graphics 630 (CML GT2), OpenGL 4.1)</td>
+    </tr>
+    <tr>
+        <td>Broken Image Dimensions</td>
+        <td id="broken-image-dimensions" class="passed">16x16</td>
+    </tr>
+</tbody></table>
+
+<h1><a href="https://github.com/antoinevastel/fpscanner" target="_blank">Fingerprint Scanner</a> tests</h1>
+<table id="fp2"><tr><td>PHANTOM_UA</td><td class="passed">ok</td><td><pre>{
+     "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+}</pre></td></tr><tr><td>PHANTOM_PROPERTIES</td><td class="passed">ok</td><td><pre>{
+     "attributesFound": [
+          false,
+          false,
+          false
+     ]
+}</pre></td></tr><tr><td>PHANTOM_ETSL</td><td class="passed">ok</td><td><pre>{
+     "etsl": 33
+}</pre></td></tr><tr><td>PHANTOM_LANGUAGE</td><td class="passed">ok</td><td><pre>{
+     "languages": [
+          "en-US",
+          "en"
+     ]
+}</pre></td></tr><tr><td>PHANTOM_WEBSOCKET</td><td class="passed">ok</td><td><pre>{}</pre></td></tr><tr><td>MQ_SCREEN</td><td class="passed">ok</td><td><pre>{}</pre></td></tr><tr><td>PHANTOM_OVERFLOW</td><td class="passed">ok</td><td><pre>{
+     "depth": 9644,
+     "errorMessage": "Maximum call stack size exceeded",
+     "errorName": "RangeError",
+     "errorStacklength": 894
+}</pre></td></tr><tr><td>PHANTOM_WINDOW_HEIGHT</td><td class="passed">ok</td><td><pre>{
+     "wInnerHeight": 960,
+     "wOuterHeight": 1000,
+     "wOuterWidth": 1920,
+     "wInnerWidth": 1920,
+     "wScreenX": 0,
+     "wPageXOffset": 0,
+     "wPageYOffset": 0,
+     "cWidth": 1888,
+     "cHeight": 1687,
+     "sWidth": 1920,
+     "sHeight": 1080,
+     "sAvailWidth": 1920,
+     "sAvailHeight": 1040,
+     "sColorDepth": 24,
+     "sPixelDepth": 24,
+     "wDevicePixelRatio": 1
+}</pre></td></tr><tr><td>HEADCHR_UA</td><td class="passed">ok</td><td><pre>{
+     "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+}</pre></td></tr><tr><td>HEADCHR_CHROME_OBJ</td><td class="passed">ok</td><td><pre>{}</pre></td></tr><tr><td>HEADCHR_PERMISSIONS</td><td class="passed">ok</td><td><pre>{}</pre></td></tr><tr><td>HEADCHR_PLUGINS</td><td class="passed">ok</td><td><pre>{
+     "plugins": [
+          "PDF Viewer::Portable Document Format::internal-pdf-viewer::__application/pdf~pdf~Portable Document Format,~~,~~,~~",
+          "Chrome PDF Viewer::Portable Document Format::internal-pdf-viewer::__application/pdf~pdf~Portable Document Format,~~,~~,~~",
+          "Chromium PDF Viewer::Portable Document Format::internal-pdf-viewer::__application/pdf~pdf~Portable Document Format,~~,~~,~~",
+          "Microsoft Edge PDF Viewer::Portable Document Format::internal-pdf-viewer::__application/pdf~pdf~Portable Document Format,~~,~~,~~",
+          "WebKit built-in PDF::Portable Document Format::internal-pdf-viewer::__application/pdf~pdf~Portable Document Format,~~,~~,~~"
+     ]
+}</pre></td></tr><tr><td>HEADCHR_IFRAME</td><td class="passed">ok</td><td><pre>{}</pre></td></tr><tr><td>CHR_DEBUG_TOOLS</td><td class="passed">ok</td><td><pre>{}</pre></td></tr><tr><td>SELENIUM_DRIVER</td><td class="passed">ok</td><td><pre>{
+     "attributesFound": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+     ]
+}</pre></td></tr><tr><td>CHR_BATTERY</td><td class="passed">ok</td><td><pre>{}</pre></td></tr><tr><td>CHR_MEMORY</td><td class="passed">ok</td><td><pre>{}</pre></td></tr><tr><td>TRANSPARENT_PIXEL</td><td class="passed">ok</td><td><pre>{
+     "0": 0,
+     "1": 0,
+     "2": 0,
+     "3": 0
+}</pre></td></tr><tr><td>SEQUENTUM</td><td class="passed">ok</td><td><pre>{}</pre></td></tr><tr><td>VIDEO_CODECS</td><td class="passed">ok</td><td><pre>{
+     "h264": "probably"
+}</pre></td></tr></table>
+
+<h1>Some details</h1>
+<table>
+    <tbody><tr>
+        <td>navigator.cookieEnabled</td>
+        <td>
+            <script>
+              document.write(navigator.cookieEnabled);
+            </script>true
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.doNotTrack</td>
+        <td>
+            <script>
+              document.write(navigator.doNotTrack);
+            </script>null
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.msDoNotTrack</td>
+        <td>
+            <script>
+              document.write(navigator.msDoNotTrack);
+            </script>undefined
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.sendBeacon</td>
+        <td>
+            <script>
+              document.write(navigator.sendBeacon());
+            </script>
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.cookieEnabled</td>
+        <td>
+            <script>
+              document.write(navigator.cookieEnabled);
+            </script>true
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.userAgent</td>
+        <td>
+            <script>
+              document.write(navigator.userAgent);
+            </script>Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.appName</td>
+        <td>
+            <script>
+              document.write(navigator.appName);
+            </script>Netscape
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.vendor</td>
+        <td>
+            <script>
+              document.write(navigator.vendor);
+            </script>Google Inc.
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.appCodeName</td>
+        <td>
+            <script>
+              document.write(navigator.appCodeName);
+            </script>Mozilla
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.getUserMedia</td>
+        <td>
+            <script>
+              document.write(navigator.getUserMedia());
+            </script>
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.sayswho</td>
+        <td>
+            <script>
+              document.write(navigator.sayswho);
+            </script>undefined
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.javaEnabled</td>
+        <td>
+            <script>
+              document.write(navigator.javaEnabled());
+            </script>false
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.plugins</td>
+        <td>
+            <script>
+              document.write(JSON.stringify(navigator.plugins));
+            </script>{"0":{"0":{"type":"application/pdf","suffixes":"pdf","description":"Portable Document Format"},"name":"PDF Viewer","filename":"internal-pdf-viewer","description":"Portable Document Format"},"1":{"0":{"type":"application/pdf","suffixes":"pdf","description":"Portable Document Format"},"name":"Chrome PDF Viewer","filename":"internal-pdf-viewer","description":"Portable Document Format"},"2":{"0":{"type":"application/pdf","suffixes":"pdf","description":"Portable Document Format"},"name":"Chromium PDF Viewer","filename":"internal-pdf-viewer","description":"Portable Document Format"},"3":{"0":{"type":"application/pdf","suffixes":"pdf","description":"Portable Document Format"},"name":"Microsoft Edge PDF Viewer","filename":"internal-pdf-viewer","description":"Portable Document Format"},"4":{"0":{"type":"application/pdf","suffixes":"pdf","description":"Portable Document Format"},"name":"WebKit built-in PDF","filename":"internal-pdf-viewer","description":"Portable Document Format"}}
+        </td>
+    </tr>
+    <tr>
+        <td>screen.width</td>
+        <td>
+            <script>
+              document.write(screen.width);
+            </script>1920
+        </td>
+    </tr>
+    <tr>
+        <td>screen.height</td>
+        <td>
+            <script>
+              document.write(screen.height);
+            </script>1080
+        </td>
+    </tr>
+    <tr>
+        <td>screen.colorDepth</td>
+        <td>
+            <script>
+              document.write(screen.colorDepth);
+            </script>24
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.language</td>
+        <td>
+            <script>
+              document.write(navigator.language);
+            </script>en-US
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.loadPurpose</td>
+        <td>
+            <script>
+              document.write(navigator.loadPurpose);
+            </script>undefined
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.platform</td>
+        <td>
+            <script>
+              document.write(navigator.platform);
+            </script>Linux x86_64
+        </td>
+    </tr>
+    <tr>
+        <td>navigator.mediaDevices</td>
+        <td id="media1">videoinput: FaceTime HD Camera id = default<br></td>
+    </tr>
+    <tr>
+        <td>navigator.getBattery details</td>
+        <td id="battery1">Charging: true<br>Level: 0.87
+        </td>
+    </tr>
+    <tr>
+        <td>Canvas1</td>
+        <td id="canvas1"><canvas width="220" height="30"></canvas><div>Hash: -1101727535</div></td>
+    </tr>
+    <tr>
+        <td>Canvas2</td>
+        <td id="canvas2"><canvas width="220" height="30"></canvas><div>Hash: -1101727535</div></td>
+    </tr>
+    <tr>
+        <td>Canvas3 (iframe sandbox)</td>
+        <td id="canvas3">
+            <iframe class="canvased" id="canvas3-iframe" sandbox="allow-same-origin"></iframe>
+        <canvas width="220" height="30"></canvas><div>Hash: -1101727535</div></td>
+    </tr>
+    <tr>
+        <td>Canvas4 (iframe sandbox)</td>
+        <td id="canvas4">
+            <iframe class="canvased" id="canvas4-iframe" sandbox="allow-same-origin"></iframe>
+        <canvas width="220" height="30"></canvas><div>Hash: -1101727535</div></td>
+    </tr>
+    <tr>
+        <td>Canvas5 (iframe)</td>
+        <td id="canvas5">
+            <iframe class="canvased" id="canvas5-iframe"></iframe>
+        <canvas width="220" height="30"></canvas><div>Hash: -1101727535</div></td>
+    </tr>
+</tbody></table>
+
+<h1>Fp-collect info</h1>
+<div style="padding:10px; border:1px solid red;">
+    <pre id="fp">{
+     "plugins": [
+          "PDF Viewer::Portable Document Format::internal-pdf-viewer::__application/pdf~pdf~Portable Document Format,~~,~~,~~",
+          "Chrome PDF Viewer::Portable Document Format::internal-pdf-viewer::__application/pdf~pdf~Portable Document Format,~~,~~,~~",
+          "Chromium PDF Viewer::Portable Document Format::internal-pdf-viewer::__application/pdf~pdf~Portable Document Format,~~,~~,~~",
+          "Microsoft Edge PDF Viewer::Portable Document Format::internal-pdf-viewer::__application/pdf~pdf~Portable Document Format,~~,~~,~~",
+          "WebKit built-in PDF::Portable Document Format::internal-pdf-viewer::__application/pdf~pdf~Portable Document Format,~~,~~,~~"
+     ],
+     "mimeTypes": [
+          "Portable Document Format~~application/pdf~~pdf"
+     ],
+     "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+     "platform": "Linux x86_64",
+     "languages": [
+          "en-US",
+          "en"
+     ],
+     "screen": {
+          "wInnerHeight": 960,
+          "wOuterHeight": 1000,
+          "wOuterWidth": 1920,
+          "wInnerWidth": 1920,
+          "wScreenX": 0,
+          "wPageXOffset": 0,
+          "wPageYOffset": 0,
+          "cWidth": 1888,
+          "cHeight": 1687,
+          "sWidth": 1920,
+          "sHeight": 1080,
+          "sAvailWidth": 1920,
+          "sAvailHeight": 1040,
+          "sColorDepth": 24,
+          "sPixelDepth": 24,
+          "wDevicePixelRatio": 1
+     },
+     "touchScreen": [
+          0,
+          false,
+          false
+     ],
+     "videoCard": [
+          "Google Inc. (Intel)",
+          "ANGLE (Intel, Intel(R) UHD Graphics 630 (CML GT2), OpenGL 4.1)"
+     ],
+     "multimediaDevices": {
+          "speakers": 0,
+          "micros": 0,
+          "webcams": 1
+     },
+     "productSub": "20030107",
+     "navigatorPrototype": [
+          "vendorSub~~~function vendorSub() { return ''; }",
+          "productSub~~~function productSub() { return '20030107'; }",
+          "vendor~~~function vendor() { return 'Google Inc.'; }",
+          "maxTouchPoints~~~function maxTouchPoints() { return 0; }",
+          "scheduling~~~function get scheduling() { [native code] }",
+          "userActivation~~~function get userActivation() { [native code] }",
+          "doNotTrack~~~function doNotTrack() { return null; }",
+          "geolocation~~~function get geolocation() { [native code] }",
+          "connection~~~function connection() { return _fakeConn; }",
+          "plugins~~~function plugins() { return _pa; }",
+          "mimeTypes~~~function mimeTypes() { return _mta; }",
+          "pdfViewerEnabled~~~function pdfViewerEnabled() { return true; }",
+          "webkitTemporaryStorage~~~function get webkitTemporaryStorage() { [native code] }",
+          "webkitPersistentStorage~~~function get webkitPersistentStorage() { [native code] }",
+          "windowControlsOverlay~~~function get windowControlsOverlay() { [native code] }",
+          "hardwareConcurrency~~~function hardwareConcurrency() { return 8; }",
+          "cookieEnabled~~~function cookieEnabled() { return true; }",
+          "appCodeName~~~function get appCodeName() { [native code] }",
+          "appName~~~function get appName() { [native code] }",
+          "appVersion~~~function get appVersion() { [native code] }",
+          "platform~~~function platform() { return \"Linux x86_64\"; }",
+          "product~~~function get product() { [native code] }",
+          "userAgent~~~function get userAgent() { [native code] }",
+          "language~~~function language() { return 'en-US'; }",
+          "languages~~~function languages() { return _frozenLangs; }",
+          "onLine~~~function onLine() { return true; }",
+          "getGamepads~~~function getGamepads() { [native code] }",
+          "javaEnabled~~~function javaEnabled() { [native code] }",
+          "sendBeacon~~~function sendBeacon() { [native code] }",
+          "vibrate~~~function vibrate() { [native code] }",
+          "constructor~~~function Navigator() { [native code] }",
+          "deprecatedRunAdAuctionEnforcesKAnonymity~~~function get deprecatedRunAdAuctionEnforcesKAnonymity() { [native code] }",
+          "protectedAudience~~~function get protectedAudience() { [native code] }",
+          "storageBuckets~~~function get storageBuckets() { [native code] }",
+          "clipboard~~~function get clipboard() { [native code] }",
+          "credentials~~~function get credentials() { [native code] }",
+          "keyboard~~~function get keyboard() { [native code] }",
+          "managed~~~function get managed() { [native code] }",
+          "mediaDevices~~~function get mediaDevices() { [native code] }",
+          "storage~~~function get storage() { [native code] }",
+          "serviceWorker~~~function get serviceWorker() { [native code] }",
+          "virtualKeyboard~~~function get virtualKeyboard() { [native code] }",
+          "wakeLock~~~function get wakeLock() { [native code] }",
+          "deviceMemory~~~function deviceMemory() { return 8; }",
+          "userAgentData~~~function userAgentData() { return _uadObj; }",
+          "cookieDeprecationLabel~~~function get cookieDeprecationLabel() { [native code] }",
+          "login~~~function get login() { [native code] }",
+          "ink~~~function get ink() { [native code] }",
+          "mediaCapabilities~~~function get mediaCapabilities() { [native code] }",
+          "hid~~~function get hid() { [native code] }",
+          "locks~~~function get locks() { [native code] }",
+          "gpu~~~function get gpu() { [native code] }",
+          "mediaSession~~~function get mediaSession() { [native code] }",
+          "permissions~~~function get permissions() { [native code] }",
+          "presentation~~~function get presentation() { [native code] }",
+          "usb~~~function get usb() { [native code] }",
+          "xr~~~function get xr() { [native code] }",
+          "serial~~~function get serial() { [native code] }",
+          "adAuctionComponents~~~function adAuctionComponents() { [native code] }",
+          "runAdAuction~~~function runAdAuction() { [native code] }",
+          "canLoadAdAuctionFencedFrame~~~function canLoadAdAuctionFencedFrame() { [native code] }",
+          "clearAppBadge~~~function clearAppBadge() { [native code] }",
+          "getBattery~~~function getBattery() { return Promise.resolve(_fakeBattery); }",
+          "getUserMedia~~~function getUserMedia() { [native code] }",
+          "requestMIDIAccess~~~function requestMIDIAccess() { [native code] }",
+          "requestMediaKeySystemAccess~~~function requestMediaKeySystemAccess() { [native code] }",
+          "setAppBadge~~~function setAppBadge() { [native code] }",
+          "webkitGetUserMedia~~~function webkitGetUserMedia() { [native code] }",
+          "clearOriginJoinedAdInterestGroups~~~function clearOriginJoinedAdInterestGroups() { [native code] }",
+          "createAuctionNonce~~~function createAuctionNonce() { [native code] }",
+          "joinAdInterestGroup~~~function joinAdInterestGroup() { [native code] }",
+          "leaveAdInterestGroup~~~function leaveAdInterestGroup() { [native code] }",
+          "updateAdInterestGroups~~~function updateAdInterestGroups() { [native code] }",
+          "deprecatedReplaceInURN~~~function deprecatedReplaceInURN() { [native code] }",
+          "deprecatedURNToURL~~~function deprecatedURNToURL() { [native code] }",
+          "getInstalledRelatedApps~~~function getInstalledRelatedApps() { [native code] }",
+          "getInterestGroupAdAuctionData~~~function getInterestGroupAdAuctionData() { [native code] }",
+          "registerProtocolHandler~~~function registerProtocolHandler() { [native code] }",
+          "unregisterProtocolHandler~~~function unregisterProtocolHandler() { [native code] }",
+          "webdriver~~~function webdriver() { return false; }",
+          "share~~~function share() { return Promise.reject(new DOMException('Share canceled', 'AbortError')); }",
+          "canShare~~~function canShare() { return true; }",
+          "contacts~~~function contacts() {\n          return {\n            select: function select() { return Promise.reject(new DOMException('User canceled', 'InvalidStateError')); },\n            getProperties: function getProperties() { return Promise.resolve(['name', 'email', 'tel']); },\n          };\n        }",
+          "constructor~~~function Navigator() { [native code] }",
+          "__defineGetter__~~~",
+          "__defineSetter__~~~",
+          "hasOwnProperty~~~",
+          "__lookupGetter__~~~",
+          "__lookupSetter__~~~",
+          "isPrototypeOf~~~",
+          "propertyIsEnumerable~~~",
+          "toString~~~",
+          "valueOf~~~",
+          "__proto__~~~",
+          "toLocaleString~~~"
+     ],
+     "etsl": 33,
+     "screenDesc": "function width() { return _sw; }",
+     "phantomJS": [
+          false,
+          false,
+          false
+     ],
+     "nightmareJS": false,
+     "selenium": [
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+     ],
+     "webDriver": true,
+     "webDriverValue": false,
+     "errorsGenerated": [
+          "azeaze is not defined",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+     ],
+     "resOverflow": {
+          "depth": 9644,
+          "errorMessage": "Maximum call stack size exceeded",
+          "errorName": "RangeError",
+          "errorStacklength": 894
+     },
+     "accelerometerUsed": false,
+     "screenMediaQuery": true,
+     "hasChrome": true,
+     "detailChrome": {
+          "webstore": "TypeError: Cannot read properties of undefined (reading 'constructor')",
+          "runtime": "TypeError: Cannot read properties of undefined (reading 'constructor')",
+          "app": "function Object() { [native code] }",
+          "csi": "function Function() { [native code] }",
+          "loadTimes": "function Function() { [native code] }",
+          "connect": "Cannot read properties of undefined (reading 'connect')",
+          "sendMessage": "Cannot read properties of undefined (reading 'sendMessage')"
+     },
+     "permissions": {
+          "state": "prompt",
+          "permission": "default"
+     },
+     "iframeChrome": "object",
+     "debugTool": false,
+     "battery": true,
+     "deviceMemory": 8,
+     "tpCanvas": {
+          "0": 0,
+          "1": 0,
+          "2": 0,
+          "3": 0
+     },
+     "sequentum": false,
+     "audioCodecs": {
+          "ogg": "probably",
+          "mp3": "probably",
+          "wav": "probably",
+          "m4a": "maybe",
+          "aac": "probably"
+     },
+     "videoCodecs": {
+          "ogg": "",
+          "h264": "probably",
+          "webm": "probably"
+     }
+}</pre>
+</div>
+
+<script>
+  fpCollect.generateFingerprint().then((fingerprint) => {
+    $("#fp").text(JSON.stringify(fingerprint, null, 5));
+
+    let xscanner = fpscanner;
+    scannerResults = xscanner.analyseFingerprint(fingerprint);
+
+    for (name in scannerResults) {
+      data = scannerResults[name];
+      let ok = "FAIL";
+      let c = "failed";
+      if (data.consistent == 2) {
+        ok = "WARN";
+        c = "warn";
+      }
+      if (data.consistent == 3) {
+        ok = "ok";
+        c = "passed";
+      }
+      $("#fp2").append("<tr><td>" + name + "</td><td class='" + c + "'>" + ok + "</td><td><pre>" + JSON.stringify(data.data, null, 5) + "</pre></td></tr>");
+    }
+  });
+</script>
+
+<script>
+  function utf8_encode(str_data) {	// Encodes an ISO-8859-1 string to UTF-8
+    //
+    // +   original by: Webtoolkit.info (http://www.webtoolkit.info/)
+
+    str_data = str_data.replace(/\r\n/g, "\n");
+    var utftext = "";
+
+    for (var n = 0; n < str_data.length; n++) {
+      var c = str_data.charCodeAt(n);
+      if (c < 128) {
+        utftext += String.fromCharCode(c);
+      } else if (( c > 127 ) && ( c < 2048 )) {
+        utftext += String.fromCharCode(( c >> 6 ) | 192);
+        utftext += String.fromCharCode(( c & 63 ) | 128);
+      } else {
+        utftext += String.fromCharCode(( c >> 12 ) | 224);
+        utftext += String.fromCharCode(( ( c >> 6 ) & 63 ) | 128);
+        utftext += String.fromCharCode(( c & 63 ) | 128);
+      }
+    }
+
+    return utftext;
+  }
+
+
+  function crc32(str) {	// Calculates the crc32 polynomial of a string
+    //
+    // +   original by: Webtoolkit.info (http://www.webtoolkit.info/)
+
+    str = utf8_encode(str);
+    var table = "00000000 77073096 EE0E612C 990951BA 076DC419 706AF48F E963A535 9E6495A3 0EDB8832 79DCB8A4 E0D5E91E 97D2D988 09B64C2B 7EB17CBD E7B82D07 90BF1D91 1DB71064 6AB020F2 F3B97148 84BE41DE 1ADAD47D 6DDDE4EB F4D4B551 83D385C7 136C9856 646BA8C0 FD62F97A 8A65C9EC 14015C4F 63066CD9 FA0F3D63 8D080DF5 3B6E20C8 4C69105E D56041E4 A2677172 3C03E4D1 4B04D447 D20D85FD A50AB56B 35B5A8FA 42B2986C DBBBC9D6 ACBCF940 32D86CE3 45DF5C75 DCD60DCF ABD13D59 26D930AC 51DE003A C8D75180 BFD06116 21B4F4B5 56B3C423 CFBA9599 B8BDA50F 2802B89E 5F058808 C60CD9B2 B10BE924 2F6F7C87 58684C11 C1611DAB B6662D3D 76DC4190 01DB7106 98D220BC EFD5102A 71B18589 06B6B51F 9FBFE4A5 E8B8D433 7807C9A2 0F00F934 9609A88E E10E9818 7F6A0DBB 086D3D2D 91646C97 E6635C01 6B6B51F4 1C6C6162 856530D8 F262004E 6C0695ED 1B01A57B 8208F4C1 F50FC457 65B0D9C6 12B7E950 8BBEB8EA FCB9887C 62DD1DDF 15DA2D49 8CD37CF3 FBD44C65 4DB26158 3AB551CE A3BC0074 D4BB30E2 4ADFA541 3DD895D7 A4D1C46D D3D6F4FB 4369E96A 346ED9FC AD678846 DA60B8D0 44042D73 33031DE5 AA0A4C5F DD0D7CC9 5005713C 270241AA BE0B1010 C90C2086 5768B525 206F85B3 B966D409 CE61E49F 5EDEF90E 29D9C998 B0D09822 C7D7A8B4 59B33D17 2EB40D81 B7BD5C3B C0BA6CAD EDB88320 9ABFB3B6 03B6E20C 74B1D29A EAD54739 9DD277AF 04DB2615 73DC1683 E3630B12 94643B84 0D6D6A3E 7A6A5AA8 E40ECF0B 9309FF9D 0A00AE27 7D079EB1 F00F9344 8708A3D2 1E01F268 6906C2FE F762575D 806567CB 196C3671 6E6B06E7 FED41B76 89D32BE0 10DA7A5A 67DD4ACC F9B9DF6F 8EBEEFF9 17B7BE43 60B08ED5 D6D6A3E8 A1D1937E 38D8C2C4 4FDFF252 D1BB67F1 A6BC5767 3FB506DD 48B2364B D80D2BDA AF0A1B4C 36034AF6 41047A60 DF60EFC3 A867DF55 316E8EEF 4669BE79 CB61B38C BC66831A 256FD2A0 5268E236 CC0C7795 BB0B4703 220216B9 5505262F C5BA3BBE B2BD0B28 2BB45A92 5CB36A04 C2D7FFA7 B5D0CF31 2CD99E8B 5BDEAE1D 9B64C2B0 EC63F226 756AA39C 026D930A 9C0906A9 EB0E363F 72076785 05005713 95BF4A82 E2B87A14 7BB12BAE 0CB61B38 92D28E9B E5D5BE0D 7CDCEFB7 0BDBDF21 86D3D2D4 F1D4E242 68DDB3F8 1FDA836E 81BE16CD F6B9265B 6FB077E1 18B74777 88085AE6 FF0F6A70 66063BCA 11010B5C 8F659EFF F862AE69 616BFFD3 166CCF45 A00AE278 D70DD2EE 4E048354 3903B3C2 A7672661 D06016F7 4969474D 3E6E77DB AED16A4A D9D65ADC 40DF0B66 37D83BF0 A9BCAE53 DEBB9EC5 47B2CF7F 30B5FFE9 BDBDF21C CABAC28A 53B39330 24B4A3A6 BAD03605 CDD70693 54DE5729 23D967BF B3667A2E C4614AB8 5D681B02 2A6F2B94 B40BBE37 C30C8EA1 5A05DF1B 2D02EF8D";
+
+    if (typeof ( crc ) == "undefined") {
+      crc = 0;
+    }
+    var x = 0;
+    var y = 0;
+
+    crc = crc ^ ( -1 );
+    for (var i = 0, iTop = str.length; i < iTop; i++) {
+      y = ( crc ^ str.charCodeAt(i) ) & 0xFF;
+      x = "0x" + table.substr(y * 9, 8);
+      crc = ( crc >>> 8 ) ^ x;
+    }
+
+    return crc ^ ( -1 );
+  }
+
+  String.prototype.hashCode = function () {
+    var hash = 0, i, chr;
+    if (this.length === 0) return hash;
+    for (i = 0; i < this.length; i++) {
+      chr = this.charCodeAt(i);
+      hash = ( ( hash << 5 ) - hash ) + chr;
+      hash |= 0; // Convert to 32bit integer
+    }
+    return hash;
+  };
+</script>
+
+<script>
+  runBotDetection = function () {
+    var documentDetectionKeys = [
+      "__webdriver_evaluate",
+      "__selenium_evaluate",
+      "__webdriver_script_function",
+      "__webdriver_script_func",
+      "__webdriver_script_fn",
+      "__fxdriver_evaluate",
+      "__driver_unwrapped",
+      "__webdriver_unwrapped",
+      "__driver_evaluate",
+      "__selenium_unwrapped",
+      "__fxdriver_unwrapped",
+      "webdriver",
+      "__driver_evaluate",
+      "__webdriver_evaluate",
+      "__selenium_evaluate",
+      "__fxdriver_evaluate",
+      "__driver_unwrapped",
+      "__webdriver_unwrapped",
+      "__selenium_unwrapped",
+      "__fxdriver_unwrapped",
+      "_Selenium_IDE_Recorder",
+      "_selenium",
+      "calledSelenium",
+      "_WEBDRIVER_ELEM_CACHE",
+      "ChromeDriverw",
+      "driver-evaluate",
+      "webdriver-evaluate",
+      "selenium-evaluate",
+      "webdriverCommand",
+      "webdriver-evaluate-response",
+      "__webdriverFunc",
+      "__webdriver_script_fn",
+      "__$webdriverAsyncExecutor",
+      "__lastWatirAlert",
+      "__lastWatirConfirm",
+      "__lastWatirPrompt",
+      "$chrome_asyncScriptInfo",
+      "$cdc_asdjflasutopfhvcZLmcfl_"
+    ];
+
+    var windowDetectionKeys = [
+      "_phantom",
+      "__nightmare",
+      "_selenium",
+      "callPhantom",
+      "callSelenium",
+      "_Selenium_IDE_Recorder",
+    ];
+
+    for (const windowDetectionKey in windowDetectionKeys) {
+      const windowDetectionKeyValue = windowDetectionKeys[windowDetectionKey];
+      if (window[windowDetectionKeyValue]) {
+        return true;
+      }
+    }
+    for (const documentDetectionKey in documentDetectionKeys) {
+      const documentDetectionKeyValue = documentDetectionKeys[documentDetectionKey];
+      if (window['document'][documentDetectionKeyValue]) {
+        return true;
+      }
+    }
+
+    for (const documentKey in window['document']) {
+      if (documentKey.match(/\$[a-z]dc_/) && window['document'][documentKey]['cache_']) {
+        return true;
+      }
+    }
+
+    if (window['external'] && window['external'].toString() && (window['external'].toString()['indexOf']('Sequentum') != -1)) return true;
+
+    if (window['document']['documentElement']['getAttribute']('selenium')) return true;
+    if (window['document']['documentElement']['getAttribute']('webdriver')) return true;
+    if (window['document']['documentElement']['getAttribute']('driver')) return true;
+
+    return false;
+  };
+
+  // User-Agent Test
+  const userAgentElement = document.getElementById('user-agent-result');
+  userAgentElement.innerHTML = navigator.userAgent;
+  if (/HeadlessChrome/.test(navigator.userAgent)) {
+    userAgentElement.classList.add('failed');
+    userAgentElement.classList.remove('passed');
+  } else {
+    userAgentElement.classList.add('passed');
+    userAgentElement.classList.remove('failed');
+  }
+
+  // Webdriver Test
+  const webdriverElement = document.getElementById('webdriver-result');
+  if (navigator.webdriver || _.has(navigator, "webdriver")) {
+    webdriverElement.classList.add('failed');
+    webdriverElement.classList.remove('passed');
+    webdriverElement.innerHTML = 'present (failed)';
+  } else {
+    webdriverElement.classList.add('passed');
+    webdriverElement.classList.remove('failed');
+    webdriverElement.innerHTML = 'missing (passed)';
+  }
+
+  // Advanced Webdriver Test
+  const webdriverElement2 = document.getElementById('advanced-webdriver-result');
+  if (runBotDetection()) {
+    webdriverElement2.classList.add('failed');
+    webdriverElement2.classList.remove('passed');
+    webdriverElement2.innerHTML = 'failed';
+  } else {
+    webdriverElement2.classList.add('passed');
+    webdriverElement2.classList.remove('failed');
+    webdriverElement2.innerHTML = 'passed';
+  }
+
+  // Chrome Test
+  const chromeElement = document.getElementById('chrome-result');
+  if (!window.chrome) {
+    chromeElement.classList.add('failed');
+    chromeElement.classList.remove('passed');
+    chromeElement.innerHTML = 'missing (failed)';
+  } else {
+    chromeElement.classList.add('passed');
+    chromeElement.classList.remove('failed');
+    chromeElement.innerHTML = 'present (passed)';
+  }
+
+  // Permissions Test
+  const permissionsElement = document.getElementById('permissions-result');
+  ( async () => {
+    const permissionStatus = await navigator.permissions.query({ name: 'notifications' });
+    permissionsElement.innerHTML = permissionStatus.state;
+    if (Notification.permission === 'denied' && permissionStatus.state === 'prompt') {
+      permissionsElement.classList.add('failed');
+      permissionsElement.classList.remove('passed');
+    } else {
+      permissionsElement.classList.add('passed');
+      permissionsElement.classList.remove('failed');
+    }
+  } )();
+
+  // Plugins Length Test
+  const pluginsLengthElement = document.getElementById('plugins-length-result');
+  pluginsLengthElement.innerHTML = navigator.plugins.length;
+  if (navigator.plugins.length === 0) {
+    pluginsLengthElement.classList.add('failed');
+    pluginsLengthElement.classList.remove('passed');
+  } else {
+    pluginsLengthElement.classList.add('passed');
+    pluginsLengthElement.classList.remove('failed');
+  }
+
+  // Plugins type Test
+  const pluginsTypeElement = document.getElementById('plugins-type-result');
+  if (!( navigator.plugins instanceof PluginArray ) || navigator.plugins.length === 0 || window.navigator.plugins[0].toString() !== '[object Plugin]') {
+    pluginsTypeElement.classList.add('failed');
+    pluginsTypeElement.classList.remove('passed');
+    pluginsTypeElement.innerText = "failed";
+  } else {
+    pluginsTypeElement.classList.add('passed');
+    pluginsTypeElement.classList.remove('failed');
+    pluginsTypeElement.innerText = "passed";
+  }
+
+  // Languages Test
+  const languagesElement = document.getElementById('languages-result');
+  languagesElement.innerHTML = navigator.languages;
+  if (!navigator.languages || navigator.languages.length === 0) {
+    languagesElement.classList.add('failed');
+    languagesElement.classList.remove('passed');
+  } else {
+    languagesElement.classList.add('passed');
+    languagesElement.classList.remove('failed');
+  }
+
+  // WebGL Tests
+  const webGLVendorElement = document.getElementById('webgl-vendor');
+  const webGLRendererElement = document.getElementById('webgl-renderer');
+
+  const canvas = document.createElement('canvas');
+  const gl = canvas.getContext('webgl') || canvas.getContext('webgl-experimental');
+  if (gl) {
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+
+    try {
+      // WebGL Vendor Test
+      const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+      webGLVendorElement.innerHTML = vendor;
+      if (vendor === 'Brian Paul' || vendor === "Google Inc.") {
+        webGLVendorElement.classList.add('failed');
+      } else {
+        webGLVendorElement.classList.add('passed');
+      }
+    } catch (e) {
+      webGLVendorElement.innerHTML = "Error: " + e;
+    }
+
+    try {
+      // WebGL Renderer Test
+      const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+      webGLRendererElement.innerHTML = renderer;
+      if (renderer === 'Mesa OffScreen' || renderer.indexOf("Swift") !== -1) {
+        webGLRendererElement.classList.add('failed');
+      } else
+        webGLRendererElement.classList.add('passed');
+    } catch (e) {
+      webGLRendererElement.innerHTML = "Error: " + e;
+    }
+  } else {
+    webGLVendorElement.innerHTML = "Canvas has no webgl context";
+    webGLRendererElement.innerHTML = "Canvas has no webgl context";
+    webGLVendorElement.classList.add('failed');
+    webGLRendererElement.classList.add('failed');
+  }
+
+  // Broken Image Dimensions Test
+  const brokenImageDimensionsElement = document.getElementById('broken-image-dimensions');
+  const body = document.body;
+  const image = document.createElement('img');
+  image.onerror = function () {
+    brokenImageDimensionsElement.innerHTML = `${image.width}x${image.height}`;
+    if (image.width == 0 && image.height == 0) {
+      brokenImageDimensionsElement.classList.add('failed');
+    } else {
+      brokenImageDimensionsElement.classList.add('passed');
+    }
+  };
+  body.appendChild(image);
+  image.src = 'https://intoli.com/nonexistent-image.png';
+
+  let drawCanvas2 = function (num, useIframe = false) {
+    var canvas2d;
+
+    /** @type {boolean} */
+    var isOkCanvas = true;
+
+    /** @type {string} */
+    var canvasText = "Bot test <canvas> 1.1";
+
+    let canvasContainer = document.getElementById("canvas" + num);
+    let iframe = document.getElementById("canvas" + num + "-iframe");
+    //canvasContainer.appendChild(iframe);
+
+    var canvasElement = useIframe ? iframe.contentDocument.createElement("canvas") : document.createElement("canvas");
+
+    if (canvasElement.getContext) {
+      canvas2d = canvasElement.getContext("2d");
+
+      try {
+        canvasElement.setAttribute("width", 220);
+        canvasElement.setAttribute("height", 30);
+
+        canvas2d.textBaseline = "top";
+        canvas2d.font = "14px 'Arial'";
+        canvas2d.textBaseline = "alphabetic";
+        canvas2d.fillStyle = "#f60";
+        canvas2d.fillRect(53, 1, 62, 20);
+        canvas2d.fillStyle = "#069";
+        canvas2d.fillText(canvasText, 2, 15);
+        canvas2d.fillStyle = "rgba(102, 204, 0, 0.7)";
+        canvas2d.fillText(canvasText, 4, 17);
+      } catch (b) {
+        /** @type {!Element} */
+        canvasElement = document.createElement("canvas");
+        canvas2d = canvasElement.getContext("2d");
+        if (void 0 === canvas2d || "function" != typeof canvasElement.getContext("2d").fillText) {
+          isOkCanvas = false;
+        } else {
+          canvasElement.setAttribute("width", 220);
+          canvasElement.setAttribute("height", 30);
+          /** @type {string} */
+          canvas2d.textBaseline = "top";
+          /** @type {string} */
+          canvas2d.font = "14px 'Arial'";
+          /** @type {string} */
+          canvas2d.textBaseline = "alphabetic";
+          /** @type {string} */
+          canvas2d.fillStyle = "#f60";
+          canvas2d.fillRect(125, 1, 62, 20);
+          /** @type {string} */
+          canvas2d.fillStyle = "#069";
+          canvas2d.fillText(canvasText, 2, 15);
+          /** @type {string} */
+          canvas2d.fillStyle = "rgba(102, 204, 0, 0.7)";
+          canvas2d.fillText(canvasText, 4, 17);
+        }
+      }
+
+      if (isOkCanvas && "function" == typeof canvasElement.toDataURL) {
+        var datUrl = canvasElement.toDataURL("image/png");
+        try {
+          if ("boolean" == typeof ( datUrl ) || void 0 === datUrl) {
+            throw e;
+          }
+        } catch (a) {
+          /** @type {string} */
+          datUrl = "";
+        }
+        if (0 === datUrl.indexOf("data:image/png")) {
+
+        } else {
+          /** @type {boolean} */
+          isOkCanvas = false;
+        }
+      } else {
+        /** @type {boolean} */
+        isOkCanvas = false;
+      }
+    } else {
+      /** @type {boolean} */
+      isOkCanvas = false;
+    }
+
+
+    if (isOkCanvas) {
+      let newDiv = document.createElement("div");
+      newDiv.innerHTML = "Hash: " + datUrl.hashCode();
+      canvasContainer.appendChild(canvasElement);
+      canvasContainer.appendChild(newDiv);
+    } else {
+      let newDiv = document.createElement("div");
+      newDiv.innerHTML = "Canvas failed";
+      canvasContainer.appendChild(newDiv);
+    }
+  };
+
+  window.canvasCount = 0;
+
+  drawCanvas2("1");
+  drawCanvas2("2");
+
+  drawCanvas2("3", true);
+  drawCanvas2("4", true);
+  drawCanvas2("5", true);
+</script><img src="https://intoli.com/nonexistent-image.png">
+
+<iframe srcdoc="Test1"></iframe>
+<iframe srcdoc="Test2" sandbox="allow-same-origin"></iframe>
+
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df95cf4e85bb4c19e7a9bdbcba1788362987495" integrity="sha512-iIg7k2xntmwu6/uSb5tpc/hySgZc4eoL31yB29W6tJFo2akwjPWcEqnCEdJvGexCL0KEQwVYv5BlowfhVz26hg==" data-cf-beacon="{&quot;version&quot;:&quot;2024.11.0&quot;,&quot;token&quot;:&quot;4b5a55acea7a40a7a4ab78bd7ee490a3&quot;,&quot;r&quot;:1,&quot;spa&quot;:2}" crossorigin="anonymous"></script>
+
+
+</body></html>

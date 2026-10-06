@@ -1,0 +1,28 @@
+{
+  "timestamp": "2026-09-25T06:29:43.150723+00:00",
+  "worker_ip": "100.111.130.118",
+  "session_id": "ae72d38a-5ef4-4303-ac78-0048812b8f2d",
+  "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "vectors": {
+    "ip_reputation": {
+      "error": "Page.screenshot: Target page, context or browser has been closed",
+      "pass": false
+    },
+    "sannysoft": {
+      "error": "Page.goto: Target page, context or browser has been closed",
+      "pass": false
+    },
+    "headless_detect": {
+      "error": "Page.goto: Target page, context or browser has been closed",
+      "pass": false
+    },
+    "creepjs": {
+      "error": "Page.goto: Target page, context or browser has been closed",
+      "pass": false
+    },
+    "turnstile": {
+      "error": "Page.goto: Target page, context or browser has been closed",
+      "pass": false
+    }
+  }
+}

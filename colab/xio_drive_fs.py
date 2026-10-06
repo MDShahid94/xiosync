@@ -76,14 +76,16 @@ class XIODriveFS:
         self.xiosync_base  = xiosync_base.rstrip("/")
         self.worker_secret = worker_secret
         self.node_name     = node_name
-        self.root          = Path(drive_fs_root)
+        self.root          = Path(str(drive_fs_root).strip())   # strip trailing space/newline
         self.lock_ttl      = lock_ttl
 
     # ── Path helpers ──────────────────────────────────────────────────────────
 
     def _abspath(self, key: str) -> Path:
         resolved = (self.root / key).resolve()
-        if not str(resolved).startswith(str(self.root.resolve())):
+        root_str = str(self.root.resolve())
+        # Ensure trailing sep so /root/foo doesn't false-match /root/foobar
+        if not (str(resolved) + "/").startswith(root_str.rstrip("/") + "/"):
             raise ValueError(f"Key {key!r} escapes drive_fs_root")
         return resolved
 
@@ -343,8 +345,29 @@ def mount_drive_and_ensure_shortcut(
         from googleapiclient.discovery import build as _build   # noqa: PLC0415
 
         _auth.authenticate_user()
-        _drive.mount(mount_point, force_remount=False)
-        print(f"  ✅ Drive mounted at {mount_point}", flush=True)
+        import os as _os, shutil as _shu  # noqa: PLC0415
+        # force_remount=True alone is insufficient: Colab pre-populates /content/drive
+        # with files (.shortcut-targets-by-id, etc.) before the user mounts Drive.
+        # drive.mount() raises ValueError if ANY files exist in the mountpoint.
+        # Fix: clear the directory contents before mounting (not the dir itself).
+        if _os.path.ismount(mount_point):
+            print(f"  ✅ Drive already mounted at {mount_point} — skipping re-mount", flush=True)
+        else:
+            # Wipe any pre-existing contents so drive.mount() succeeds
+            if _os.path.exists(mount_point):
+                for _item in _os.listdir(mount_point):
+                    _ipath = _os.path.join(mount_point, _item)
+                    try:
+                        if _os.path.isdir(_ipath):
+                            _shu.rmtree(_ipath, ignore_errors=True)
+                        else:
+                            _os.remove(_ipath)
+                    except Exception:
+                        pass
+            _os.makedirs(mount_point, exist_ok=True)
+            _drive.mount(mount_point, force_remount=False)
+            print(f"  ✅ Drive mounted at {mount_point}", flush=True)
+
 
         _creds, _ = _gauth.default()
         _svc = _build("drive", "v3", credentials=_creds)

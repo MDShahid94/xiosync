@@ -131,3 +131,41 @@ def would_create_cycle(
 def next_version(current_version: int) -> int:
     """The successor version for a superseding Memory row (INV-MEM-2)."""
     return current_version + 1
+
+
+# ── Well-known edge types (relationship graph) ──────────────────────────
+#
+# These are semantic labels for edges in the ``relationship`` graph class.
+# They do not alter the four graph-class set or cycle-detection logic —
+# they are string constants that document the intended meaning of an edge
+# so services can query by intent rather than relying on convention.
+
+#: Identity authenticates with an external service (Identity → DomainRegistration).
+EDGE_TYPE_AUTHENTICATES_AS = "authenticates_as"
+
+#: Identity's profile is stored as an object (Identity → StorageObject).
+EDGE_TYPE_MATERIALIZES_TO = "materializes_to"
+
+#: Identity's traffic exits through a PPPoE slot (Identity → PPPoEExitNode).
+EDGE_TYPE_ROUTES_THROUGH = "routes_through"
+
+#: Mesh node runs on a compute runtime (MeshNode → ComputeRuntime).
+EDGE_TYPE_RUNS_ON = "runs_on"
+
+#: One domain's auth depends on another (child DomainReg → parent DomainReg).
+EDGE_TYPE_DEPENDS_ON_AUTH = "depends_on_auth"
+
+#: A workflow run is bound to a network scope (WorkflowRun → NetworkScope).
+EDGE_TYPE_BINDS_NETWORK = "binds_network"
+
+#: Closed set of well-known edge types for automated validation/querying.
+WELL_KNOWN_EDGE_TYPES: frozenset[str] = frozenset(
+    {
+        EDGE_TYPE_AUTHENTICATES_AS,
+        EDGE_TYPE_MATERIALIZES_TO,
+        EDGE_TYPE_ROUTES_THROUGH,
+        EDGE_TYPE_RUNS_ON,
+        EDGE_TYPE_DEPENDS_ON_AUTH,
+        EDGE_TYPE_BINDS_NETWORK,
+    }
+)
