@@ -15,6 +15,7 @@ Sharing model:
   This allows an org to share a GitHub PAT or a Cloudflare account across
   all their member orgs without duplicating credentials.
 """
+
 from alembic import op
 
 revision = "0035"
@@ -143,10 +144,14 @@ def upgrade() -> None:
         WHERE expires_at IS NOT NULL
     """)
 
-    op.execute("COMMENT ON TABLE accounts IS "
-               "'Universal service account registry. organization_id=NULL = platform-global shared account.'")
-    op.execute("COMMENT ON TABLE session_credentials IS "
-               "'Live credentials per account. Sensitive values via vault_key reference — never stored inline.'")
+    op.execute(
+        "COMMENT ON TABLE accounts IS "
+        "'Universal service account registry. organization_id=NULL = platform-global shared account.'"
+    )
+    op.execute(
+        "COMMENT ON TABLE session_credentials IS "
+        "'Live credentials per account. Sensitive values via vault_key reference — never stored inline.'"
+    )
 
 
 def downgrade() -> None:

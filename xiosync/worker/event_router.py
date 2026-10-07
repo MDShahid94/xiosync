@@ -1,4 +1,5 @@
 """Event trigger evaluator — matches fired events to xioflow_triggers and creates runs."""
+
 from __future__ import annotations
 
 import json
@@ -58,22 +59,32 @@ def evaluate_event_triggers(session: Session, *, limit: int = 100) -> int:
 
     for row in matches:
         run_id = new_id()
-        ctx = {**(row.context_defaults or {}), "event_type": row.event_type, "event_id": str(row.event_id)}
+        ctx = {
+            **(row.context_defaults or {}),
+            "event_type": row.event_type,
+            "event_id": str(row.event_id),
+        }
         # Snapshot template at dispatch for versioning
         tmpl_snap = None
         if row.template_id:
-            snap = session.execute(text("""
+            snap = session.execute(
+                text("""
                 SELECT slug, dag_domain, dag_root_intent, template_type,
                        COALESCE(config, '{}'::jsonb) as config
                 FROM workflow_templates WHERE id = :tid
-            """), {"tid": str(row.template_id)}).fetchone()
+            """),
+                {"tid": str(row.template_id)},
+            ).fetchone()
             if snap:
-                tmpl_snap = json.dumps({
-                    "slug": snap.slug, "dag_domain": snap.dag_domain,
-                    "dag_root_intent": snap.dag_root_intent,
-                    "template_type": snap.template_type,
-                    "config": snap.config if isinstance(snap.config, dict) else {},
-                })
+                tmpl_snap = json.dumps(
+                    {
+                        "slug": snap.slug,
+                        "dag_domain": snap.dag_domain,
+                        "dag_root_intent": snap.dag_root_intent,
+                        "template_type": snap.template_type,
+                        "config": snap.config if isinstance(snap.config, dict) else {},
+                    }
+                )
         session.execute(
             text("""
                 INSERT INTO xioflow_runs
@@ -95,7 +106,11 @@ def evaluate_event_triggers(session: Session, *, limit: int = 100) -> int:
         created += 1
         logger.info(
             "event_trigger_fired",
-            extra={"event_type": row.event_type, "trigger_id": str(row.trigger_id), "run_id": str(run_id)},
+            extra={
+                "event_type": row.event_type,
+                "trigger_id": str(row.trigger_id),
+                "run_id": str(run_id),
+            },
         )
 
     if created:

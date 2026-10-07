@@ -163,9 +163,7 @@ def test_event_delete_is_rejected_by_trigger(
     try:
         with pytest.raises(DBAPIError):
             with org_scoped_session(engine, context) as session:
-                session.execute(
-                    text("DELETE FROM events WHERE id = :id"), {"id": event_id}
-                )
+                session.execute(text("DELETE FROM events WHERE id = :id"), {"id": event_id})
         with org_scoped_session(engine, context) as session:
             count = session.execute(
                 text("SELECT count(*) FROM events WHERE id = :id"), {"id": event_id}
@@ -208,9 +206,7 @@ def test_least_privilege_role_cannot_update_or_delete_events(
             # It CANNOT delete — permission denied for table events.
             with pytest.raises(DBAPIError):
                 with org_scoped_session(engine, context) as session:
-                    session.execute(
-                        text("DELETE FROM events WHERE id = :id"), {"id": event_id}
-                    )
+                    session.execute(text("DELETE FROM events WHERE id = :id"), {"id": event_id})
         finally:
             engine.dispose()
 

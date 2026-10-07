@@ -20,6 +20,7 @@ Credentials:
     GET    /identities/{id}/credentials/{type}/value — decrypt and return credential value
     POST   /identities/{id}/credentials/{type}/health — worker updates health score
 """
+
 from __future__ import annotations
 
 import uuid
@@ -32,11 +33,13 @@ from pydantic import BaseModel, ConfigDict, Field
 router = APIRouter(prefix="/identities", tags=["Identities"])
 
 from xiosync.api.middleware.rbac import require_capability as _rc
-_require_write  = _rc("identities.write")  # returns Depends(_dependency) directly
+
+_require_write = _rc("identities.write")  # returns Depends(_dependency) directly
 _require_secret = _rc("identities.secret")  # returns Depends(_dependency) directly
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
+
 
 class _S(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -52,13 +55,12 @@ class CreateIdentityRequest(_S):
     display_name: str | None = None
     state: str = Field(
         default="active",
-        description="active | suspended | banned | unverified | expired | archived | …"
+        description="active | suspended | banned | unverified | expired | archived | …",
     )
     metadata: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
     platform_global: bool = Field(
-        default=False,
-        description="Register as a platform-level shared identity (org-independent)"
+        default=False, description="Register as a platform-level shared identity (org-independent)"
     )
 
 
@@ -90,23 +92,21 @@ class PutCredentialRequest(_S):
     label: str = Field(
         default="default",
         description="Differentiates multiple credentials of the same type on one identity. "
-                    "Use 'default' for the primary; 'sandbox', 'scope:calendar', 'host:vm-01' etc. for extras."
+        "Use 'default' for the primary; 'sandbox', 'scope:calendar', 'host:vm-01' etc. for extras.",
     )
     secret_value: str | None = Field(
         default=None,
-        description="Plaintext secret — auto-encrypted into vault. OR supply vault_key."
+        description="Plaintext secret — auto-encrypted into vault. OR supply vault_key.",
     )
     vault_key: str | None = Field(
-        default=None,
-        description="Existing vault key if already stored via /vault/secrets"
+        default=None, description="Existing vault key if already stored via /vault/secrets"
     )
     storage_object_key: str | None = Field(
         default=None,
-        description="Storage object key for large blobs (certs, profiles) in /storage/objects"
+        description="Storage object key for large blobs (certs, profiles) in /storage/objects",
     )
     health_score: float = 1.0
     expires_at: datetime | None = None
-
 
 
 class CredentialMetaResponse(_S):
@@ -124,7 +124,6 @@ class CredentialMetaResponse(_S):
     updated_at: str
 
 
-
 class CredentialValueResponse(_S):
     identity_id: uuid.UUID
     credential_type: str
@@ -137,14 +136,18 @@ class HealthUpdateRequest(_S):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _svc(request: Request):
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.subsystems.identities.service import IdentityService
+
     return IdentityService(cast(OrmSession, request.state.org_session))
 
 
 def _ctx(request: Request):
     from xiosync.domain.context import OrgContext
+
     return cast(OrgContext, request.state.org_context)
 
 
@@ -183,11 +186,17 @@ def _cred_resp(rec) -> CredentialMetaResponse:
 
 # ── Identity endpoints ────────────────────────────────────────────────────────
 
-@router.post("", status_code=201, response_model=IdentityResponse,
-             summary="Register a new external identity",
-             dependencies=[_require_write])
+
+@router.post(
+    "",
+    status_code=201,
+    response_model=IdentityResponse,
+    summary="Register a new external identity",
+    dependencies=[_require_write],
+)
 def create_identity(payload: CreateIdentityRequest, request: Request) -> IdentityResponse:
     from xiosync.subsystems.identities.service import IdentityConflictError
+
     try:
         rec = _svc(request).create_identity(
             _ctx(request),
@@ -206,8 +215,11 @@ def create_identity(payload: CreateIdentityRequest, request: Request) -> Identit
     return _ident_resp(rec)
 
 
-@router.get("", response_model=list[IdentityResponse],
-            summary="List identities (filter by platform/state/tags)")
+@router.get(
+    "",
+    response_model=list[IdentityResponse],
+    summary="List identities (filter by platform/state/tags)",
+)
 def list_identities(
     request: Request,
     platform: str | None = None,
@@ -218,27 +230,33 @@ def list_identities(
 ) -> list[IdentityResponse]:
     recs = _svc(request).list_identities(
         _ctx(request),
-        platform=platform, state=state, tags=tags,
-        include_platform=include_platform, limit=limit,
+        platform=platform,
+        state=state,
+        tags=tags,
+        include_platform=include_platform,
+        limit=limit,
     )
     return [_ident_resp(r) for r in recs]
 
 
-@router.get("/allocate", response_model=IdentityResponse,
-            summary="Allocate the next idle identity for a platform (LRU scheduling)",
-            dependencies=[_require_write])
+@router.get(
+    "/allocate",
+    response_model=IdentityResponse,
+    summary="Allocate the next idle identity for a platform (LRU scheduling)",
+    dependencies=[_require_write],
+)
 def allocate(
     request: Request,
     platform: str = Query(description="Target platform, e.g. 'google', 'github', 'stripe'"),
     tags: list[str] | None = Query(
-        default=None,
-        description="Optional tag filter — all listed tags must be present"
+        default=None, description="Optional tag filter — all listed tags must be present"
     ),
 ) -> IdentityResponse:
     """Returns the least-recently-used active identity and marks it as used.
     Workers call this to acquire an identity without manual assignment.
     """
     from xiosync.subsystems.identities.service import IdentityNotFoundError
+
     try:
         rec = _svc(request).allocate(_ctx(request), platform, tags=tags)
     except IdentityNotFoundError as exc:
@@ -246,9 +264,12 @@ def allocate(
     return _ident_resp(rec)
 
 
-@router.post("/allocate", response_model=list[IdentityResponse],
-             summary="Batch-allocate N idle identities for a platform (LRU, atomic)",
-             dependencies=[_require_write])
+@router.post(
+    "/allocate",
+    response_model=list[IdentityResponse],
+    summary="Batch-allocate N idle identities for a platform (LRU, atomic)",
+    dependencies=[_require_write],
+)
 def batch_allocate(
     platform: str = Query(..., description="Platform to allocate from: 'google', 'v0', etc."),
     count: int = Query(1, ge=1, le=50, description="Number of identities to allocate (max 50)"),
@@ -260,10 +281,11 @@ def batch_allocate(
     Returns fewer than `count` if the pool is exhausted. Use tags to filter
     by capability (e.g. tags=['pro'], tags=['verified']).
     """
-    from sqlalchemy.orm import Session as OrmSession
     from sqlalchemy import text as sqlt
+    from sqlalchemy.orm import Session as OrmSession
+
     ctx = _ctx(request)
-    db  = cast(OrmSession, request.state.org_session)
+    db = cast(OrmSession, request.state.org_session)
 
     tag_filter = ""
     params: dict = {
@@ -299,13 +321,14 @@ def batch_allocate(
     db.commit()
 
     from xiosync.subsystems.identities.service import _row_to_identity
+
     return [_ident_resp(_row_to_identity(r)) for r in rows]
 
 
-@router.get("/{identity_id}", response_model=IdentityResponse,
-            summary="Get an identity")
+@router.get("/{identity_id}", response_model=IdentityResponse, summary="Get an identity")
 def get_identity(identity_id: uuid.UUID, request: Request) -> IdentityResponse:
     from xiosync.subsystems.identities.service import IdentityNotFoundError
+
     try:
         rec = _svc(request).get_identity(_ctx(request), identity_id)
     except IdentityNotFoundError:
@@ -313,16 +336,21 @@ def get_identity(identity_id: uuid.UUID, request: Request) -> IdentityResponse:
     return _ident_resp(rec)
 
 
-@router.patch("/{identity_id}", response_model=IdentityResponse,
-              summary="Update identity state/display_name/tags/metadata",
-              dependencies=[_require_write])
+@router.patch(
+    "/{identity_id}",
+    response_model=IdentityResponse,
+    summary="Update identity state/display_name/tags/metadata",
+    dependencies=[_require_write],
+)
 def update_identity(
     identity_id: uuid.UUID, payload: UpdateIdentityRequest, request: Request
 ) -> IdentityResponse:
     from xiosync.subsystems.identities.service import IdentityNotFoundError
+
     try:
         rec = _svc(request).update_identity(
-            _ctx(request), identity_id,
+            _ctx(request),
+            identity_id,
             state=payload.state,
             display_name=payload.display_name,
             metadata_patch=payload.metadata_patch,
@@ -335,11 +363,12 @@ def update_identity(
     return _ident_resp(rec)
 
 
-@router.delete("/{identity_id}", status_code=204,
-               summary="Delete an identity",
-               dependencies=[_require_write])
+@router.delete(
+    "/{identity_id}", status_code=204, summary="Delete an identity", dependencies=[_require_write]
+)
 def delete_identity(identity_id: uuid.UUID, request: Request) -> None:
     from xiosync.subsystems.identities.service import IdentityNotFoundError
+
     try:
         _svc(request).delete_identity(_ctx(request), identity_id)
     except IdentityNotFoundError:
@@ -348,10 +377,13 @@ def delete_identity(identity_id: uuid.UUID, request: Request) -> None:
 
 # ── Credential endpoints ──────────────────────────────────────────────────────
 
-@router.put("/{identity_id}/credentials/{credential_type}",
-            response_model=CredentialMetaResponse,
-            summary="Store or rotate a credential (any type, secret auto-vaulted)",
-            dependencies=[_require_write])
+
+@router.put(
+    "/{identity_id}/credentials/{credential_type}",
+    response_model=CredentialMetaResponse,
+    summary="Store or rotate a credential (any type, secret auto-vaulted)",
+    dependencies=[_require_write],
+)
 def put_credential(
     identity_id: uuid.UUID,
     credential_type: str,
@@ -361,9 +393,12 @@ def put_credential(
     """credential_type is free-form: password, api_key, oauth_token, cookie,
     totp_secret, ssh_key, session_token, client_cert, refresh_token, …"""
     from xiosync.subsystems.identities.service import IdentityNotFoundError
+
     try:
         rec = _svc(request).put_credential(
-            _ctx(request), identity_id, credential_type,
+            _ctx(request),
+            identity_id,
+            credential_type,
             label=payload.label,
             secret_value=payload.secret_value,
             vault_key=payload.vault_key,
@@ -378,21 +413,26 @@ def put_credential(
     return _cred_resp(rec)
 
 
-@router.get("/{identity_id}/credentials",
-            response_model=list[CredentialMetaResponse],
-            summary="List credentials for an identity (metadata only, never values)")
+@router.get(
+    "/{identity_id}/credentials",
+    response_model=list[CredentialMetaResponse],
+    summary="List credentials for an identity (metadata only, never values)",
+)
 def list_credentials(identity_id: uuid.UUID, request: Request) -> list[CredentialMetaResponse]:
     recs = _svc(request).list_credentials(_ctx(request), identity_id)
     return [_cred_resp(r) for r in recs]
 
 
-@router.get("/{identity_id}/credentials/{credential_type}",
-            response_model=CredentialMetaResponse,
-            summary="Get credential metadata")
+@router.get(
+    "/{identity_id}/credentials/{credential_type}",
+    response_model=CredentialMetaResponse,
+    summary="Get credential metadata",
+)
 def get_credential_meta(
     identity_id: uuid.UUID, credential_type: str, request: Request
 ) -> CredentialMetaResponse:
     from xiosync.subsystems.identities.service import IdentityNotFoundError
+
     try:
         rec = _svc(request).get_credential(_ctx(request), identity_id, credential_type)
     except IdentityNotFoundError:
@@ -400,15 +440,18 @@ def get_credential_meta(
     return _cred_resp(rec)  # type: ignore[arg-type]
 
 
-@router.get("/{identity_id}/credentials/{credential_type}/value",
-            response_model=CredentialValueResponse,
-            summary="Decrypt and return a credential value",
-            dependencies=[_require_secret])
+@router.get(
+    "/{identity_id}/credentials/{credential_type}/value",
+    response_model=CredentialValueResponse,
+    summary="Decrypt and return a credential value",
+    dependencies=[_require_secret],
+)
 def get_credential_value(
     identity_id: uuid.UUID, credential_type: str, request: Request
 ) -> CredentialValueResponse:
     """Returns plaintext credential. Requires identities.secret capability."""
     from xiosync.subsystems.identities.service import IdentityNotFoundError
+
     try:
         rec, value = _svc(request).get_credential(
             _ctx(request), identity_id, credential_type, decrypt=True
@@ -426,14 +469,18 @@ def get_credential_value(
 
 # ── Lease endpoints ───────────────────────────────────────────────────────────
 
-@router.put("/{identity_id}/lease",
-            summary="Acquire an exclusive TTL lease on an identity",
-            dependencies=[_require_write])
+
+@router.put(
+    "/{identity_id}/lease",
+    summary="Acquire an exclusive TTL lease on an identity",
+    dependencies=[_require_write],
+)
 def acquire_lease(
     identity_id: uuid.UUID,
     request: Request,
-    duration_seconds: int = Query(default=1800, ge=60, le=86400,
-                                   description="Lease TTL in seconds (60s–24h, default 30m)"),
+    duration_seconds: int = Query(
+        default=1800, ge=60, le=86400, description="Lease TTL in seconds (60s–24h, default 30m)"
+    ),
     worker_id: uuid.UUID | None = Query(default=None, description="Enrolling worker UUID"),
     run_context: str = Query(default="{}", description="JSON: {run_id, task_ref, purpose}"),
 ):
@@ -444,11 +491,14 @@ def acquire_lease(
     returns 409 Conflict. Release with DELETE /lease when done.
     """
     import json as _json
+
     from xiosync.subsystems.identities.service import IdentityNotFoundError
+
     try:
         ctx = cast(any, _ctx(request))
         lease = _svc(request).acquire_lease(
-            ctx, identity_id,
+            ctx,
+            identity_id,
             duration_seconds=duration_seconds,
             worker_id=worker_id,
             run_context=_json.loads(run_context),
@@ -458,10 +508,12 @@ def acquire_lease(
     return lease
 
 
-@router.delete("/{identity_id}/lease/{lease_id}",
-               status_code=204,
-               summary="Release an identity lease (explicit release)",
-               dependencies=[_require_write])
+@router.delete(
+    "/{identity_id}/lease/{lease_id}",
+    status_code=204,
+    summary="Release an identity lease (explicit release)",
+    dependencies=[_require_write],
+)
 def release_lease(identity_id: uuid.UUID, lease_id: uuid.UUID, request: Request):
     """Explicitly release a lease when a task completes.
 
@@ -470,10 +522,10 @@ def release_lease(identity_id: uuid.UUID, lease_id: uuid.UUID, request: Request)
     _svc(request).release_lease(_ctx(request), lease_id)
 
 
-@router.get("/{identity_id}/lease",
-            summary="List active leases on an identity")
+@router.get("/{identity_id}/lease", summary="List active leases on an identity")
 def list_identity_leases(
-    identity_id: uuid.UUID, request: Request,
+    identity_id: uuid.UUID,
+    request: Request,
     active_only: bool = Query(default=True),
 ):
     return _svc(request).list_leases(
@@ -481,9 +533,11 @@ def list_identity_leases(
     )
 
 
-@router.post("/leases/expire",
-             summary="Sweep and mark all expired leases (admin maintenance)",
-             dependencies=[_require_write])
+@router.post(
+    "/leases/expire",
+    summary="Sweep and mark all expired leases (admin maintenance)",
+    dependencies=[_require_write],
+)
 def expire_stale_leases(request: Request):
     """Mark all active leases past their TTL as expired.
 
@@ -493,17 +547,16 @@ def expire_stale_leases(request: Request):
     return {"expired_count": count}
 
 
-
-@router.post("/{identity_id}/credentials/{credential_type}/health",
-             status_code=204,
-             summary="Worker updates credential health score",
-             dependencies=[_require_write])
+@router.post(
+    "/{identity_id}/credentials/{credential_type}/health",
+    status_code=204,
+    summary="Worker updates credential health score",
+    dependencies=[_require_write],
+)
 def update_health(
     identity_id: uuid.UUID,
     credential_type: str,
     payload: HealthUpdateRequest,
     request: Request,
 ) -> None:
-    _svc(request).update_health(
-        _ctx(request), identity_id, credential_type, payload.health_score
-    )
+    _svc(request).update_health(_ctx(request), identity_id, credential_type, payload.health_score)

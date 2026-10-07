@@ -13,16 +13,16 @@ The API server itself handles upload/download for local storage since the
 worker and server share a filesystem (or NFS mount). Access info returns
 a file:// URL that the server resolves.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
-from xiosync.subsystems.storage.adapters.base import StorageAdapter, AccessInfo
+from xiosync.subsystems.storage.adapters.base import AccessInfo, StorageAdapter
 
 
 class LocalAdapter(StorageAdapter):
-
     def validate_config(self) -> None:
         if "base_path" not in self.config:
             raise ValueError("local provider requires config.base_path")
@@ -62,10 +62,12 @@ class LocalAdapter(StorageAdapter):
                 if prefix and not rel_key.startswith(prefix):
                     continue
                 stat = path.stat()
-                results.append({
-                    "key": rel_key,
-                    "size_bytes": stat.st_size,
-                    "content_type": None,
-                    "checksum": None,
-                })
+                results.append(
+                    {
+                        "key": rel_key,
+                        "size_bytes": stat.st_size,
+                        "content_type": None,
+                        "checksum": None,
+                    }
+                )
         return results

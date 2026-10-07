@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement = """            # Normal flow: fill email
@@ -13,7 +13,7 @@ code = re.sub(
     r"            # Normal flow: fill email\n            ef = find\(\['input\[name=\"identifier\"\]', 'input\[type=\"email\"\]', \"#identifierId\"\]\)\n            type_human\(ef, email\)\n            time\.sleep\(rnd\(0\.5, 1\.0\)\)\n            find\(\['#identifierNext', 'button\[jsname=\"LgbsSe\"\]', 'div\[id=\"identifierNext\"\]'\]\)\.click\(\)",
     replacement,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

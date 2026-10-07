@@ -1,4 +1,5 @@
 """Unit tests for xiosync.subsystems.xiorun.pg_advisory_lock and worker_locks router."""
+
 from __future__ import annotations
 
 import hashlib

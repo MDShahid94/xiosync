@@ -40,8 +40,10 @@ def export_openapi(output_path: str = "openapi.json") -> None:
     output.write_text(json.dumps(spec, indent=2, default=str) + "\n")
 
     endpoint_count = sum(
-        len(methods) for path_item in spec.get("paths", {}).values()
-        for methods in [path_item] if isinstance(path_item, dict)
+        len(methods)
+        for path_item in spec.get("paths", {}).values()
+        for methods in [path_item]
+        if isinstance(path_item, dict)
     )
     print(f"✓ OpenAPI spec exported to {output} ({len(spec.get('paths', {}))} paths)")
 

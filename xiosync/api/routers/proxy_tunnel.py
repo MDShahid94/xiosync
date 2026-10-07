@@ -14,6 +14,7 @@ Authentication: X-Internal-Secret header (same secret used for internal calls).
 Usage from xiorun_agent: see the socks5_ws_bridge() helper which spins up a
 local SOCKS5 port forwarded through this WebSocket tunnel.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -30,7 +31,7 @@ _INTERNAL_SECRET = os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
 _ALLOWED_HOSTS = {
     "100.106.81.15",  # xiogrid-exit-vm-1
 }
-_ALLOWED_PORT_RANGE = (10000, 10010)   # PPPoE SOCKS5 slots only
+_ALLOWED_PORT_RANGE = (10000, 10010)  # PPPoE SOCKS5 slots only
 
 
 @router.websocket("/tunnel")
@@ -67,9 +68,7 @@ async def proxy_tunnel(
 
     # ── Connect to upstream ───────────────────────────────────────────────────
     try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port), timeout=10
-        )
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout=10)
     except Exception as exc:
         logger.warning(f"proxy_tunnel: upstream connect failed: {host}:{port} — {exc}")
         await ws.close(code=4502, reason=f"upstream connect failed: {exc}")
@@ -96,7 +95,7 @@ async def proxy_tunnel(
                 if not chunk:
                     break
                 await ws.send_bytes(chunk)
-        except (WebSocketDisconnect, asyncio.TimeoutError, Exception):
+        except (TimeoutError, WebSocketDisconnect, Exception):
             pass
         finally:
             try:
@@ -106,5 +105,3 @@ async def proxy_tunnel(
 
     await asyncio.gather(ws_to_tcp(), tcp_to_ws(), return_exceptions=True)
     logger.info(f"proxy_tunnel: closed {host}:{port}")
-
-

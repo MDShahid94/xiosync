@@ -118,5 +118,3 @@ def logout(
     context: OrgContext = request.state.org_context
     service.logout(context, now=clock.now())
     return LogoutResponse(request_id=request.state.request_id)
-
-

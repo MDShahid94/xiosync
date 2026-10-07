@@ -16,8 +16,8 @@ That constraint is a prerequisite for the composite FK from ``mesh_nodes`` →
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 
 revision = "0021"
@@ -65,9 +65,7 @@ def upgrade() -> None:
         sa.Column("network_id", UUID(as_uuid=True), nullable=False),
         sa.Column("node_id", UUID(as_uuid=True), nullable=False),
         sa.Column("address", sa.Text, nullable=False),
-        sa.Column(
-            "created_at", _ts, nullable=False, server_default=sa.text("now()")
-        ),
+        sa.Column("created_at", _ts, nullable=False, server_default=sa.text("now()")),
         # Composite unique: org-scoped surrogate for downstream FK chains.
         sa.UniqueConstraint("organization_id", "id", name="uq_mesh_nodes_org_id"),
         # Same-org enforcement: node must belong to a network in the same org.

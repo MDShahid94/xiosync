@@ -5,10 +5,10 @@ Endpoints:
   POST /xioflow/dags/convert   Convert a .mjs script to DAG JSON via Gemini
                                Add ?commit=true to also persist as memory nodes
 """
+
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from pathlib import Path
 from typing import Any, cast
@@ -37,8 +37,10 @@ def _ctx(request: Request) -> OrgContext:
 
 # ── Request models ─────────────────────────────────────────────────────────────
 
+
 class DeployRequest(BaseModel):
     """Declarative DAG graph to seed into memory nodes."""
+
     dag_domain: str
     dag_root_intent: str
     nodes: list[dict[str, Any]]
@@ -52,13 +54,15 @@ class DeployRequest(BaseModel):
 
 class ConvertRequest(BaseModel):
     """Convert a .mjs script file to a declarative DAG JSON spec."""
-    script_ref: str          # e.g. "google-signin.mjs"
-    dag_domain: str | None = None    # override domain (default: infer from script)
+
+    script_ref: str  # e.g. "google-signin.mjs"
+    dag_domain: str | None = None  # override domain (default: infer from script)
     dag_root_intent: str | None = None  # override root intent
     model_config = ConfigDict(from_attributes=True)
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
+
 
 @router.post("/deploy", summary="Seed DAG memory nodes from a JSON spec", status_code=201)
 async def deploy_dag(request: Request, body: DeployRequest) -> dict[str, Any]:
@@ -72,8 +76,8 @@ async def deploy_dag(request: Request, body: DeployRequest) -> dict[str, Any]:
     ctx = _ctx(request)
     org_id = str(ctx.organization_id)
 
-    from xiosync.subsystems.xioflow.memory.memory_graph import MemoryGraph
     from xiosync.subsystems.xioflow.ingestion.dag_deployer import DAGDeployer
+    from xiosync.subsystems.xioflow.memory.memory_graph import MemoryGraph
 
     memory_graph = MemoryGraph(session)
     deployer = DAGDeployer(memory_graph)
@@ -98,6 +102,7 @@ async def deploy_dag(request: Request, body: DeployRequest) -> dict[str, Any]:
     template_id: str | None = None
     if body.register_template:
         from xiosync.subsystems.xioflow.services.templates import WorkflowTemplateService
+
         svc = WorkflowTemplateService(session)
         tmpl_name = body.template_name or f"{body.dag_domain}/{body.dag_root_intent}"
         record = svc.register_template(
@@ -196,11 +201,13 @@ Return ONLY valid JSON matching this exact schema (no markdown, no explanation):
     # Call Gemini via AIGateway
     try:
         from xiosync.subsystems.xioai.gateway import AIGateway
+
         gw = AIGateway()
-        result_ai = await gw.generate(prompt, output_format='json')
+        result_ai = await gw.generate(prompt, output_format="json")
         if not result_ai.success:
             raise HTTPException(status_code=500, detail="AIGateway conversion failed")
         import json
+
         dag_json = json.loads(result_ai.text)
     except HTTPException:
         raise
@@ -225,15 +232,13 @@ Return ONLY valid JSON matching this exact schema (no markdown, no explanation):
     if commit:
         ctx = _ctx(request)
         session = _session(request)
-        from xiosync.subsystems.xioflow.memory.memory_graph import MemoryGraph
         from xiosync.subsystems.xioflow.ingestion.dag_deployer import DAGDeployer
+        from xiosync.subsystems.xioflow.memory.memory_graph import MemoryGraph
         from xiosync.subsystems.xioflow.services.templates import WorkflowTemplateService
 
         memory_graph = MemoryGraph(session)
         deployer = DAGDeployer(memory_graph)
-        node_ids = await deployer.deploy_from_json(
-            dag_json, org_id=str(ctx.organization_id)
-        )
+        node_ids = await deployer.deploy_from_json(dag_json, org_id=str(ctx.organization_id))
 
         svc = WorkflowTemplateService(session)
         tmpl = svc.register_template(

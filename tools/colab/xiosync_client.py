@@ -39,13 +39,14 @@ Usage (boot.py):
         # execute locally via DAGExecutor …
         client.complete_run(run["run_id"], run["task_id"], success=True)
 """
+
 from __future__ import annotations
 
 import json
 import time
-import urllib.request
 import urllib.error
-from datetime import datetime, timezone
+import urllib.request
+from datetime import datetime
 from typing import Any
 
 
@@ -244,7 +245,8 @@ class XIOSyncClient:
 
     def _do_login(self) -> None:
         data = self._request(
-            "POST", "/api/v1/auth/login",
+            "POST",
+            "/api/v1/auth/login",
             body={"organization_id": self.org_id, "email": self.email, "password": self.password},
             auth=False,
         )
@@ -252,7 +254,8 @@ class XIOSyncClient:
 
     def _do_refresh(self) -> None:
         data = self._request(
-            "POST", "/api/v1/auth/refresh",
+            "POST",
+            "/api/v1/auth/refresh",
             body={"refresh_token": self._refresh_token},
             auth=False,
         )
@@ -310,14 +313,13 @@ class XIOSyncClient:
                 raise XIOSyncAuthError(
                     f"Auth failed [{exc.code}]: {err.get('detail', raw)}"
                 ) from exc
-            raise RuntimeError(
-                f"XIOSYNC API error [{exc.code}] {method} {path}: {err}"
-            ) from exc
+            raise RuntimeError(f"XIOSYNC API error [{exc.code}] {method} {path}: {err}") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"XIOSYNC unreachable at {url}: {exc.reason}") from exc
 
 
 # ── Convenience singleton ─────────────────────────────────────────────────────
+
 
 def make_client_from_env() -> XIOSyncClient:
     """Build a client from environment variables.
@@ -333,6 +335,7 @@ def make_client_from_env() -> XIOSyncClient:
         XIOSYNC_TS_IP          — this worker's Tailscale IP
     """
     import os
+
     return XIOSyncClient(
         base_url=os.environ["XIOSYNC_BASE_URL"],
         org_id=os.environ["XIOSYNC_ORG_ID"],

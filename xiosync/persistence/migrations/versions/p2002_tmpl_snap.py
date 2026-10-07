@@ -12,6 +12,7 @@ Adds template_snapshot JSONB column to xioflow_runs that stores
 {slug, dag_domain, dag_root_intent, config, template_type} at dispatch
 time. Workers use this snapshot instead of querying the live template.
 """
+
 from alembic import op
 from sqlalchemy import text
 
@@ -23,13 +24,11 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     # Add the snapshot column (nullable — old runs won't have it)
-    conn.execute(text(
-        "ALTER TABLE xioflow_runs "
-        "ADD COLUMN IF NOT EXISTS template_snapshot JSONB"
-    ))
+    conn.execute(text("ALTER TABLE xioflow_runs ADD COLUMN IF NOT EXISTS template_snapshot JSONB"))
 
     # Backfill existing runs from their current template
-    conn.execute(text("""
+    conn.execute(
+        text("""
         UPDATE xioflow_runs r
         SET template_snapshot = jsonb_build_object(
             'slug', t.slug,
@@ -41,11 +40,10 @@ def upgrade() -> None:
         FROM workflow_templates t
         WHERE r.template_id = t.id
           AND r.template_snapshot IS NULL
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:
     conn = op.get_bind()
-    conn.execute(text(
-        "ALTER TABLE xioflow_runs DROP COLUMN IF EXISTS template_snapshot"
-    ))
+    conn.execute(text("ALTER TABLE xioflow_runs DROP COLUMN IF EXISTS template_snapshot"))

@@ -72,9 +72,7 @@ def _context(organization_id: uuid.UUID, actor_id: uuid.UUID) -> OrgContext:
     )
 
 
-def _insert_memory(
-    engine: Engine, context: OrgContext, *, version: int, content: str
-) -> uuid.UUID:
+def _insert_memory(engine: Engine, context: OrgContext, *, version: int, content: str) -> uuid.UUID:
     """Insert one ``memory`` row within the org scope; return its id."""
     memory_id = new_id()
     with org_scoped_session(engine, context) as session:

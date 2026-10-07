@@ -16,6 +16,7 @@ Each element in the array:
 
 Security: No foreign JavaScript is injected. Uses only CDP commands.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,16 +28,36 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # HTML tags that are typically interactive (clickable/typeable)
-_INTERACTIVE_TAGS = frozenset({
-    "a", "button", "input", "select", "textarea", "label",
-    "details", "summary", "option", "dialog",
-})
+_INTERACTIVE_TAGS = frozenset(
+    {
+        "a",
+        "button",
+        "input",
+        "select",
+        "textarea",
+        "label",
+        "details",
+        "summary",
+        "option",
+        "dialog",
+    }
+)
 
 # CSS selectors for interactive elements
-_INTERACTIVE_ROLES = frozenset({
-    "button", "link", "textbox", "checkbox", "radio", "combobox",
-    "tab", "menuitem", "switch", "slider",
-})
+_INTERACTIVE_ROLES = frozenset(
+    {
+        "button",
+        "link",
+        "textbox",
+        "checkbox",
+        "radio",
+        "combobox",
+        "tab",
+        "menuitem",
+        "switch",
+        "slider",
+    }
+)
 
 
 async def dom_overlay_loop(
@@ -73,12 +94,14 @@ async def dom_overlay_loop(
             try:
                 elements = await _extract_interactive_elements(cdp, max_elements)
 
-                msg = json.dumps({
-                    "type": "dom_overlay",
-                    "elements": elements,
-                    "count": len(elements),
-                    "timestamp": time.time(),
-                })
+                msg = json.dumps(
+                    {
+                        "type": "dom_overlay",
+                        "elements": elements,
+                        "count": len(elements),
+                        "timestamp": time.time(),
+                    }
+                )
 
                 try:
                     queue.put_nowait(msg)
@@ -92,9 +115,13 @@ async def dom_overlay_loop(
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning("xioview.dom_overlay.scan_error", extra={
-                    "session_id": session_id, "error": str(exc),
-                })
+                logger.warning(
+                    "xioview.dom_overlay.scan_error",
+                    extra={
+                        "session_id": session_id,
+                        "error": str(exc),
+                    },
+                )
 
             await asyncio.sleep(interval_sec)
 
@@ -112,7 +139,8 @@ async def dom_overlay_loop(
 
 
 async def _extract_interactive_elements(
-    cdp: Any, max_elements: int = 200,
+    cdp: Any,
+    max_elements: int = 200,
 ) -> list[dict[str, Any]]:
     """Extract interactive DOM elements with bounding boxes via CDP.
 
@@ -142,8 +170,10 @@ async def _extract_interactive_elements(
                         w = max(content[2], content[4]) - x
                         h = max(content[5], content[7]) - y
                         elem["rect"] = {
-                            "x": round(x), "y": round(y),
-                            "width": round(w), "height": round(h),
+                            "x": round(x),
+                            "y": round(y),
+                            "width": round(w),
+                            "height": round(h),
                         }
                 except Exception:
                     # Element may be hidden/detached — skip its rect
@@ -191,16 +221,18 @@ def _collect_interactive(
                         text = (child.get("nodeValue", "") or "").strip()[:80]
                         break
 
-                result.append({
-                    "nodeId": node_id,
-                    "tag": node_name,
-                    "id": attrs.get("id", ""),
-                    "classes": attrs.get("class", "").split() if attrs.get("class") else [],
-                    "text": text,
-                    "type": attrs.get("type", ""),
-                    "role": attrs.get("role", ""),
-                    "interactive": True,
-                })
+                result.append(
+                    {
+                        "nodeId": node_id,
+                        "tag": node_name,
+                        "id": attrs.get("id", ""),
+                        "classes": attrs.get("class", "").split() if attrs.get("class") else [],
+                        "text": text,
+                        "type": attrs.get("type", ""),
+                        "role": attrs.get("role", ""),
+                        "interactive": True,
+                    }
+                )
 
     # Recurse into children
     for child in node.get("children", []):

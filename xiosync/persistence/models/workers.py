@@ -102,9 +102,7 @@ class WorkerEnrollment(Base):
     enrollment_token_hash: Mapped[str] = mapped_column(
         Text, nullable=False
     )  # hash of the one-time enrollment token; never stored plaintext
-    approved_by: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True)
-    )  # set when approved
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))  # set when approved
     approved_at: Mapped[datetime | None] = mapped_column(_timestamptz)
     # Gap W-4: worker fleet versioning — track software version and digest.
     software_version: Mapped[str | None] = mapped_column(Text)
@@ -152,9 +150,7 @@ class WorkerCredential(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
     )  # IMM
-    enrollment_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )  # IMM
+    enrollment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)  # IMM
     scoped_capabilities: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )  # list of capability UUIDs (as strings) granted to this credential

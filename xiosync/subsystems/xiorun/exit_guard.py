@@ -20,6 +20,7 @@ Why TCP probe (not SOCKS5 handshake):
   port is reliable, fast (3s timeout), and doesn't depend on SOCKS5 version.
   Tailscale userspace-mode socks5 at :1055 responds to TCP connect when alive.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -30,9 +31,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-PROBE_INTERVAL_SEC: float = 15.0   # probe every 15 seconds
-FAILURE_THRESHOLD:  int   = 2      # 2 consecutive failures = 30s total grace period
-TCP_PROBE_TIMEOUT:  float = 3.0    # per-probe connect timeout
+PROBE_INTERVAL_SEC: float = 15.0  # probe every 15 seconds
+FAILURE_THRESHOLD: int = 2  # 2 consecutive failures = 30s total grace period
+TCP_PROBE_TIMEOUT: float = 3.0  # per-probe connect timeout
 
 
 def _parse_proxy(proxy_url: str) -> tuple[str, int]:
@@ -77,7 +78,7 @@ class ExitGuard:
         probe_interval: float = PROBE_INTERVAL_SEC,
         failure_threshold: int = FAILURE_THRESHOLD,
     ) -> None:
-        self._probe_interval   = probe_interval
+        self._probe_interval = probe_interval
         self._failure_threshold = failure_threshold
 
     async def monitor(
@@ -97,15 +98,20 @@ class ExitGuard:
         try:
             host, port = _parse_proxy(proxy_url)
         except ValueError as exc:
-            logger.error("xiorun.exit_guard.bad_proxy_url", extra={
-                "session_id": session_id, "error": str(exc)
-            })
+            logger.error(
+                "xiorun.exit_guard.bad_proxy_url",
+                extra={"session_id": session_id, "error": str(exc)},
+            )
             return
 
         failures = 0
-        logger.info("xiorun.exit_guard.started", extra={
-            "session_id": session_id, "proxy": proxy_url,
-        })
+        logger.info(
+            "xiorun.exit_guard.started",
+            extra={
+                "session_id": session_id,
+                "proxy": proxy_url,
+            },
+        )
 
         while True:
             await asyncio.sleep(self._probe_interval)
@@ -113,28 +119,39 @@ class ExitGuard:
             reachable = await _tcp_probe(host, port)
             if reachable:
                 if failures > 0:
-                    logger.info("xiorun.exit_guard.proxy_recovered", extra={
-                        "session_id": session_id, "failures_cleared": failures,
-                    })
+                    logger.info(
+                        "xiorun.exit_guard.proxy_recovered",
+                        extra={
+                            "session_id": session_id,
+                            "failures_cleared": failures,
+                        },
+                    )
                 failures = 0
             else:
                 failures += 1
-                logger.warning("xiorun.exit_guard.probe_failed", extra={
-                    "session_id": session_id,
-                    "consecutive_failures": failures,
-                    "threshold": self._failure_threshold,
-                })
+                logger.warning(
+                    "xiorun.exit_guard.probe_failed",
+                    extra={
+                        "session_id": session_id,
+                        "consecutive_failures": failures,
+                        "threshold": self._failure_threshold,
+                    },
+                )
 
                 if failures >= self._failure_threshold:
-                    logger.error("xiorun.exit_guard.exit_node_lost", extra={
-                        "session_id": session_id,
-                        "proxy_url":  proxy_url,
-                        "message":    "Proxy unreachable — terminating session immediately. No IP fallback.",
-                    })
+                    logger.error(
+                        "xiorun.exit_guard.exit_node_lost",
+                        extra={
+                            "session_id": session_id,
+                            "proxy_url": proxy_url,
+                            "message": "Proxy unreachable — terminating session immediately. No IP fallback.",
+                        },
+                    )
                     try:
                         await on_loss()
                     except Exception as exc:
-                        logger.error("xiorun.exit_guard.on_loss_error", extra={
-                            "session_id": session_id, "error": str(exc)
-                        })
-                    return   # monitor exits — session is dead
+                        logger.error(
+                            "xiorun.exit_guard.on_loss_error",
+                            extra={"session_id": session_id, "error": str(exc)},
+                        )
+                    return  # monitor exits — session is dead

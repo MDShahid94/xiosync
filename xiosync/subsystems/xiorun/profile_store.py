@@ -25,6 +25,7 @@ Save flow (on teardown):
     3. XIODriveFS.put(key, bytes, skip_if_same=True)  → SHA-256 dedup, no-op if unchanged
     4. Upsert storage_objects row (size_bytes, checksum, last_accessed_at)
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -96,12 +97,10 @@ def _get_drive_fs():
     if _XIO_FS_INSTANCE is not None:
         return _XIO_FS_INSTANCE
 
-    xiosync_base  = os.environ.get("XIOSYNC_BASE", "").rstrip("/")
+    xiosync_base = os.environ.get("XIOSYNC_BASE", "").rstrip("/")
     worker_secret = os.environ.get("WORKER_SECRET", "")
-    node_name     = os.environ.get("NODE_NAME", "xiorun-worker")
-    drive_root    = os.environ.get(
-        "XIO_DRIVE_ROOT", "/content/drive/MyDrive/XIOSYNC-Shared"
-    )
+    node_name = os.environ.get("NODE_NAME", "xiorun-worker")
+    drive_root = os.environ.get("XIO_DRIVE_ROOT", "/content/drive/MyDrive/XIOSYNC-Shared")
 
     if not xiosync_base:
         raise RuntimeError(
@@ -117,8 +116,9 @@ def _get_drive_fs():
     for cand in _candidates:
         if os.path.exists(cand):
             import importlib.util as _ilu  # noqa: PLC0415
+
             _spec = _ilu.spec_from_file_location("xio_drive_fs", cand)
-            mod   = _ilu.module_from_spec(_spec)
+            mod = _ilu.module_from_spec(_spec)
             _spec.loader.exec_module(mod)
             break
 
@@ -154,6 +154,7 @@ def _normalize_username(identifier: str) -> str:
       'PRFL-003_user' → 'user'  (strip existing prefix)
     """
     import re as _re  # noqa: PLC0415
+
     u = identifier.split("@")[0]
     u = _re.sub(r"^PRFL-\d+_", "", u, flags=_re.IGNORECASE)
     u = _re.sub(r"[^a-zA-Z0-9]", "_", u)
@@ -178,15 +179,19 @@ def _canonical_profile_key(identity_id: str, engine: object) -> str:
     from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
 
     with OrmSession(engine) as sess:
-        row = sess.execute(
-            text("""
+        row = (
+            sess.execute(
+                text("""
                 SELECT profile_serial AS serial
                 FROM identities
                 WHERE id = :iid
                 LIMIT 1
             """),
-            {"iid": uuid.UUID(identity_id)},
-        ).mappings().first()
+                {"iid": uuid.UUID(identity_id)},
+            )
+            .mappings()
+            .first()
+        )
 
         if row and row["serial"] is not None:
             return f"profiles/PRFL-{int(row['serial']):03d}.tar.gz"
@@ -210,8 +215,9 @@ def lookup_drive_object_key(identity_id: str, engine: object) -> str:
 
     with OrmSession(engine) as sess:
         # 1. Explicit override stored in credentials
-        row = sess.execute(
-            text("""
+        row = (
+            sess.execute(
+                text("""
                 SELECT c.storage_object_key
                 FROM credentials c
                 WHERE c.identity_id = :iid
@@ -219,8 +225,11 @@ def lookup_drive_object_key(identity_id: str, engine: object) -> str:
                   AND c.storage_object_key IS NOT NULL
                 LIMIT 1
             """),
-            {"iid": uuid.UUID(identity_id)},
-        ).mappings().first()
+                {"iid": uuid.UUID(identity_id)},
+            )
+            .mappings()
+            .first()
+        )
 
         if row and row["storage_object_key"]:
             return row["storage_object_key"]
@@ -233,10 +242,12 @@ def lookup_drive_object_key(identity_id: str, engine: object) -> str:
 # Public canonical alias — Drive replaced Cloudflare R2 as the primary profile store.
 lookup_drive_object_key = lookup_drive_object_key  # noqa: PLW0127 (explicit re-export)
 
+
 # Backward-compat alias — deprecated; use lookup_drive_object_key instead.
 def lookup_r2_object_key(identity_id: str, engine) -> str | None:  # type: ignore[return]
     """Deprecated: use lookup_drive_object_key. Will be removed in a future release."""
     import warnings  # noqa: PLC0415
+
     warnings.warn(
         "lookup_r2_object_key is deprecated; use lookup_drive_object_key instead.",
         DeprecationWarning,
@@ -265,22 +276,30 @@ class ChromeProfileStore:
         import asyncio  # noqa: PLC0415
 
         object_key = lookup_drive_object_key(identity_id, self._engine)
-        local_dir  = _local_extract_path(identity_id, node_name)
+        local_dir = _local_extract_path(identity_id, node_name)
 
         # Warm pool reuse: already extracted on this runtime
         if local_dir.exists() and any(local_dir.iterdir()):
-            logger.info("xiorun.profile.cache_hit", extra={
-                "identity_id": identity_id, "local_dir": str(local_dir),
-            })
+            logger.info(
+                "xiorun.profile.cache_hit",
+                extra={
+                    "identity_id": identity_id,
+                    "local_dir": str(local_dir),
+                },
+            )
             return str(local_dir)
 
         tar_bytes: bytes | None = await asyncio.get_event_loop().run_in_executor(
             None, self._download_sync, object_key
         )
         if tar_bytes is None:
-            logger.info("xiorun.profile.not_in_drive", extra={
-                "identity_id": identity_id, "key": object_key,
-            })
+            logger.info(
+                "xiorun.profile.not_in_drive",
+                extra={
+                    "identity_id": identity_id,
+                    "key": object_key,
+                },
+            )
             return None
 
         local_dir.mkdir(parents=True, exist_ok=True)
@@ -295,9 +314,14 @@ class ChromeProfileStore:
 
         _trim_profile(local_dir)
 
-        logger.info("xiorun.profile.restored", extra={
-            "identity_id": identity_id, "key": object_key, "local_dir": str(local_dir),
-        })
+        logger.info(
+            "xiorun.profile.restored",
+            extra={
+                "identity_id": identity_id,
+                "key": object_key,
+                "local_dir": str(local_dir),
+            },
+        )
         return str(local_dir)
 
     async def save(
@@ -311,9 +335,13 @@ class ChromeProfileStore:
 
         profile_path = Path(local_dir)
         if not profile_path.exists():
-            logger.warning("xiorun.profile.save_no_dir", extra={
-                "identity_id": identity_id, "local_dir": local_dir,
-            })
+            logger.warning(
+                "xiorun.profile.save_no_dir",
+                extra={
+                    "identity_id": identity_id,
+                    "local_dir": local_dir,
+                },
+            )
             return
 
         await asyncio.get_event_loop().run_in_executor(
@@ -331,9 +359,13 @@ class ChromeProfileStore:
                 return None
             return data
         except Exception as exc:
-            logger.warning("xiorun.profile.drive_download_error", extra={
-                "key": object_key, "error": str(exc),
-            })
+            logger.warning(
+                "xiorun.profile.drive_download_error",
+                extra={
+                    "key": object_key,
+                    "error": str(exc),
+                },
+            )
             return None
 
     def _save_sync(self, identity_id: str, org_id: str, profile_path: Path) -> None:
@@ -361,12 +393,15 @@ class ChromeProfileStore:
 
             self._upsert_storage_object(identity_id, object_key, len(tar_bytes), checksum)
 
-            logger.info("xiorun.profile.saved", extra={
-                "identity_id": identity_id,
-                "key":         object_key,
-                "size_bytes":  len(tar_bytes),
-                "written":     written,  # False = content unchanged, Drive write skipped
-            })
+            logger.info(
+                "xiorun.profile.saved",
+                extra={
+                    "identity_id": identity_id,
+                    "key": object_key,
+                    "size_bytes": len(tar_bytes),
+                    "written": written,  # False = content unchanged, Drive write skipped
+                },
+            )
         finally:
             os.unlink(tmp_path)
 
@@ -378,9 +413,10 @@ class ChromeProfileStore:
         checksum: str,
     ) -> None:
         """Upsert storage_objects row for Drive provider tracking."""
+        from datetime import UTC, datetime  # noqa: PLC0415
+
         from sqlalchemy import text  # noqa: PLC0415
         from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
-        from datetime import UTC, datetime  # noqa: PLC0415
 
         with OrmSession(self._engine) as sess:
             provider_id = sess.execute(
@@ -411,8 +447,8 @@ class ChromeProfileStore:
                 {
                     "pid": provider_id,
                     "key": object_key,
-                    "sz":  size_bytes,
-                    "ck":  checksum,
+                    "sz": size_bytes,
+                    "ck": checksum,
                     "iid": uuid.UUID(identity_id),
                     "now": now,
                 },

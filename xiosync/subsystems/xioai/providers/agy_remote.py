@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
 
 from xiosync.subsystems.xioai.providers.base import GenerationProvider, GenerationResult
 
 logger = logging.getLogger(__name__)
+
 
 class AGYRemoteProvider(GenerationProvider):
     @property
@@ -18,9 +18,10 @@ class AGYRemoteProvider(GenerationProvider):
         url = os.environ.get("XIOAI_REMOTE_URL")
         if not url:
             return False
-        
+
         try:
             import httpx
+
             base = url.rstrip("/")
             # Try /ai/status first; fall back to /health (both exist on xiorun_agent)
             for path in ("/ai/status", "/health"):
@@ -47,10 +48,13 @@ class AGYRemoteProvider(GenerationProvider):
     ) -> GenerationResult:
         url = os.environ.get("XIOAI_REMOTE_URL")
         if not url:
-            return GenerationResult(success=False, error="XIOAI_REMOTE_URL not set", provider=self.name)
-            
+            return GenerationResult(
+                success=False, error="XIOAI_REMOTE_URL not set", provider=self.name
+            )
+
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.post(
                     f"{url.rstrip('/')}/ai/generate",
@@ -62,11 +66,11 @@ class AGYRemoteProvider(GenerationProvider):
                         "temperature": temperature,
                         "max_tokens": max_tokens,
                         "timeout": timeout,
-                    }
+                    },
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                
+
                 return GenerationResult(
                     text=data.get("text", ""),
                     provider=data.get("provider", self.name),

@@ -68,9 +68,7 @@ def trust_tier_index(tier: str) -> int:
     try:
         return TRUST_TIERS.index(tier)
     except ValueError as exc:
-        raise ValueError(
-            f"Unknown trust tier {tier!r}. Must be one of {TRUST_TIERS}."
-        ) from exc
+        raise ValueError(f"Unknown trust tier {tier!r}. Must be one of {TRUST_TIERS}.") from exc
 
 
 def trust_tier_satisfies(actor_tier: str, required_tier: str) -> bool:

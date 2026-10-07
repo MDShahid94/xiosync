@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement = """            # ── Handle "Choose how you want to sign in" (passkey selection page) ──
@@ -67,7 +67,7 @@ code = re.sub(
     r"            # ── Handle \"Choose how you want to sign in\" \(passkey selection page\) ──(.*?)logger\.info\(\"uc-login: password submitted\"\)",
     replacement,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

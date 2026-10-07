@@ -1,4 +1,5 @@
 """Browser Pools CRUD API endpoints."""
+
 from __future__ import annotations
 
 import uuid
@@ -10,20 +11,29 @@ from pydantic import BaseModel, ConfigDict
 
 router = APIRouter(tags=["browser-pools"])
 
+
 class _S(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
 
 class CreateBrowserPoolRequest(_S):
     name: str
     engine_type: str = "chromium"
     max_instances: int = 5
 
+
 class ScaleBrowserPoolRequest(_S):
     replicas: int
 
-@router.post("/browser-pools", status_code=201, summary="Create a browser pool", response_model=None)
-def create_pool(payload: CreateBrowserPoolRequest, request: Request) -> dict[str, Any] | JSONResponse:
+
+@router.post(
+    "/browser-pools", status_code=201, summary="Create a browser pool", response_model=None
+)
+def create_pool(
+    payload: CreateBrowserPoolRequest, request: Request
+) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.domain.context import OrgContext
     from xiosync.subsystems.xiogrid.services.browser_pools import BrowserPoolService
 
@@ -32,7 +42,12 @@ def create_pool(payload: CreateBrowserPoolRequest, request: Request) -> dict[str
     svc = BrowserPoolService(session)
 
     try:
-        pool = svc.create_pool(ctx, name=payload.name, engine_type=payload.engine_type, max_instances=payload.max_instances)
+        pool = svc.create_pool(
+            ctx,
+            name=payload.name,
+            engine_type=payload.engine_type,
+            max_instances=payload.max_instances,
+        )
         return {"id": str(pool.id), "name": pool.name}
     except Exception as exc:
         return JSONResponse(
@@ -46,12 +61,14 @@ def create_pool(payload: CreateBrowserPoolRequest, request: Request) -> dict[str
             },
         )
 
+
 @router.get("/browser-pools", summary="List browser pools", response_model=None)
 def list_pools(
     request: Request,
     project_id: uuid.UUID | None = Query(default=None, description="Filter pools by project"),
 ) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.domain.context import OrgContext
     from xiosync.subsystems.xiogrid.services.browser_pools import BrowserPoolService
 
@@ -62,11 +79,16 @@ def list_pools(
     pools = svc.list_pools(ctx, project_id=project_id)
     return {"pools": [{"id": str(p.id), "name": p.name} for p in pools]}
 
+
 @router.get("/browser-pools/{pool_id}", summary="Get browser pool", response_model=None)
 def get_pool(pool_id: uuid.UUID, request: Request) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.domain.context import OrgContext
-    from xiosync.subsystems.xiogrid.services.browser_pools import BrowserPoolService, BrowserPoolNotFoundError
+    from xiosync.subsystems.xiogrid.services.browser_pools import (
+        BrowserPoolNotFoundError,
+        BrowserPoolService,
+    )
 
     ctx = cast(OrgContext, request.state.org_context)
     session = cast(OrmSession, request.state.org_session)
@@ -86,11 +108,18 @@ def get_pool(pool_id: uuid.UUID, request: Request) -> dict[str, Any] | JSONRespo
             },
         )
 
+
 @router.post("/browser-pools/{pool_id}/scale", summary="Scale browser pool", response_model=None)
-def scale_pool(pool_id: uuid.UUID, payload: ScaleBrowserPoolRequest, request: Request) -> dict[str, Any] | JSONResponse:
+def scale_pool(
+    pool_id: uuid.UUID, payload: ScaleBrowserPoolRequest, request: Request
+) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.domain.context import OrgContext
-    from xiosync.subsystems.xiogrid.services.browser_pools import BrowserPoolService, BrowserPoolNotFoundError
+    from xiosync.subsystems.xiogrid.services.browser_pools import (
+        BrowserPoolNotFoundError,
+        BrowserPoolService,
+    )
 
     ctx = cast(OrgContext, request.state.org_context)
     session = cast(OrmSession, request.state.org_session)
@@ -121,11 +150,16 @@ def scale_pool(pool_id: uuid.UUID, payload: ScaleBrowserPoolRequest, request: Re
             },
         )
 
+
 @router.delete("/browser-pools/{pool_id}", summary="Destroy browser pool", response_model=None)
 def destroy_pool(pool_id: uuid.UUID, request: Request) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.domain.context import OrgContext
-    from xiosync.subsystems.xiogrid.services.browser_pools import BrowserPoolService, BrowserPoolNotFoundError
+    from xiosync.subsystems.xiogrid.services.browser_pools import (
+        BrowserPoolNotFoundError,
+        BrowserPoolService,
+    )
 
     ctx = cast(OrgContext, request.state.org_context)
     session = cast(OrmSession, request.state.org_session)
@@ -145,11 +179,13 @@ def destroy_pool(pool_id: uuid.UUID, request: Request) -> dict[str, Any] | JSONR
             },
         )
 
-from xiosync.api.router_registry import register_router
+
 from xiosync.api.middleware.rbac import require_capability
+from xiosync.api.router_registry import register_router
+
 register_router(
     router,
-    prefix='/api/v1',
+    prefix="/api/v1",
     tags=["browser-pools"],
     dependencies=[require_capability("browser_pool.manage")],
 )

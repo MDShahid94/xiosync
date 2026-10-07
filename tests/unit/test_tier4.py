@@ -9,21 +9,16 @@ from __future__ import annotations
 
 import asyncio
 import os
-import json
-import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock
 
 import pytest
-
 from xiosync.platform.ids import new_id
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # QuotaService
 # ═══════════════════════════════════════════════════════════════════════════════
-
 from xiosync.services.quotas import QuotaExceededError, QuotaService
 
 
@@ -217,6 +212,7 @@ class TestInProcessEventBus:
     def test_get_event_bus_returns_instance(self) -> None:
         """get_event_bus returns the same singleton."""
         import xiosync.core.event_bus as mod
+
         old_bus = mod._bus
         mod._bus = None
         try:
@@ -230,8 +226,8 @@ class TestInProcessEventBus:
 # Worker — system_context
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from xiosync.worker.context import system_context, SYSTEM_ACTOR_ID
-from xiosync.domain.context import PlatformRole, MembershipRole
+from xiosync.domain.context import MembershipRole, PlatformRole
+from xiosync.worker.context import SYSTEM_ACTOR_ID, system_context
 
 
 class TestSystemContext:
@@ -318,9 +314,8 @@ class TestEventRouterWorker:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from xiosync.platform.observability import (
-    ObservabilityMiddleware,
-    setup_opentelemetry,
     get_metrics_app,
+    setup_opentelemetry,
 )
 
 
@@ -426,6 +421,7 @@ class TestDBPoolConfig:
 
         with env_patch.dict(os.environ, {}, clear=False):
             from xiosync.persistence.database import create_database_engine
+
             engine = create_database_engine("postgresql+psycopg://x:x@localhost:5432/x")
             assert engine is not None
             engine.dispose()
@@ -434,6 +430,7 @@ class TestDBPoolConfig:
         """Pool params are read from environment."""
         import os
         from unittest.mock import patch as env_patch
+
         env = {
             "DB_POOL_SIZE": "20",
             "DB_MAX_OVERFLOW": "40",
@@ -442,6 +439,7 @@ class TestDBPoolConfig:
         }
         with env_patch.dict(os.environ, env, clear=False):
             from xiosync.persistence.database import create_database_engine
+
             engine = create_database_engine("postgresql+psycopg://x:x@localhost:5432/x")
             assert engine is not None
             engine.dispose()
@@ -452,8 +450,8 @@ class TestDBPoolConfig:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from xiosync.services.sharing import (
-    SHAREABLE_TYPES,
     SHARE_PERMISSIONS,
+    SHAREABLE_TYPES,
     SharingDisabledError,
     SharingService,
 )
@@ -514,7 +512,6 @@ class TestSharesRouter:
         assert resp["resource_type"] == "capability"
         assert "id" in resp
 
-
     def test_list_shares_router(self) -> None:
         from xiosync.api.routers.shares import list_shares
 
@@ -542,7 +539,7 @@ class TestSharesRouter:
         mock_row.resource_id = new_id()
         mock_row.permissions = ["read"]
         mock_row.state = "active"
-        mock_row.created_at = datetime.now(timezone.utc)
+        mock_row.created_at = datetime.now(UTC)
         mock_row.expires_at = None
         session.scalar.return_value = mock_row
         req.state.org_session = session
@@ -550,7 +547,6 @@ class TestSharesRouter:
         assert isinstance(resp, dict)
         assert resp["share_id"] == str(share_id)
         assert resp["state"] == "revoked"
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -591,10 +587,9 @@ class TestSecretValidators:
 
 
 from xiosync.domain.triggers import (
-    validate_cron_expression,
+    next_cron_fire,
     validate_trigger_state,
     validate_trigger_type,
-    next_cron_fire,
 )
 
 
@@ -616,7 +611,7 @@ class TestTriggerValidators:
             validate_trigger_state("invalid_state")
 
     def test_next_cron_fire_returns_future(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         nf = next_cron_fire("*/5 * * * *", now)
         assert nf > now
 
@@ -682,19 +677,23 @@ class TestWebhookServiceSigningSecret:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from xiosync.core.capability_rate import build_rate_checker
-from xiosync.core.rate_limit import RateLimitResult, RateLimiterNotAvailable
+from xiosync.core.rate_limit import RateLimiterNotAvailable, RateLimitResult
 
 
 class TestBuildRateChecker:
     def test_under_limit_allows(self) -> None:
         limiter = MagicMock()
-        limiter.check.return_value = RateLimitResult(allowed=True, remaining=5, reset_after_seconds=30)
+        limiter.check.return_value = RateLimitResult(
+            allowed=True, remaining=5, reset_after_seconds=30
+        )
         checker = build_rate_checker(limiter, new_id(), "docs.read")
         assert checker({"limit": 10, "window_seconds": 60}) is True
 
     def test_over_limit_denies(self) -> None:
         limiter = MagicMock()
-        limiter.check.return_value = RateLimitResult(allowed=False, remaining=0, reset_after_seconds=30)
+        limiter.check.return_value = RateLimitResult(
+            allowed=False, remaining=0, reset_after_seconds=30
+        )
         checker = build_rate_checker(limiter, new_id(), "docs.read")
         assert checker({"limit": 10, "window_seconds": 60}) is False
 
@@ -723,7 +722,9 @@ class TestBuildRateChecker:
     def test_key_format(self) -> None:
         """Rate key includes actor_id and capability."""
         limiter = MagicMock()
-        limiter.check.return_value = RateLimitResult(allowed=True, remaining=5, reset_after_seconds=30)
+        limiter.check.return_value = RateLimitResult(
+            allowed=True, remaining=5, reset_after_seconds=30
+        )
         actor_id = new_id()
         checker = build_rate_checker(limiter, actor_id, "docs.read")
         checker({"limit": 10, "window_seconds": 60})

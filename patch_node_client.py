@@ -1,6 +1,6 @@
 import re
 
-with open("xiosync/subsystems/xiorun/node_client.py", "r") as f:
+with open("xiosync/subsystems/xiorun/node_client.py") as f:
     code = f.read()
 
 # 1. Add secret initialization
@@ -15,13 +15,13 @@ code = re.sub(
     r"    def __init__\(self, tailscale_ip: str, port: int = AGENT_PORT\) -> None:\n        self\._base = f\"http://\{tailscale_ip\}:\{port\}\"\n        self\._tailscale_ip = tailscale_ip",
     replacement_init,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 # 2. Add headers to client initialization globally
 code = code.replace(
     "async with httpx.AsyncClient(timeout=",
-    "async with httpx.AsyncClient(headers=self._headers, timeout="
+    "async with httpx.AsyncClient(headers=self._headers, timeout=",
 )
 
 with open("xiosync/subsystems/xiorun/node_client.py", "w") as f:

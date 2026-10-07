@@ -32,14 +32,18 @@ def upgrade() -> None:
         "workflow_templates",
         sa.Column("id", pg.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "organization_id", pg.UUID(as_uuid=True),
+            "organization_id",
+            pg.UUID(as_uuid=True),
             sa.ForeignKey("organizations.id", ondelete="CASCADE"),
-            nullable=True, index=True,
+            nullable=True,
+            index=True,
         ),
         sa.Column(
-            "project_id", pg.UUID(as_uuid=True),
+            "project_id",
+            pg.UUID(as_uuid=True),
             sa.ForeignKey("projects.id", ondelete="CASCADE"),
-            nullable=True, index=True,
+            nullable=True,
+            index=True,
         ),
         sa.Column("name", sa.Text, nullable=False),
         sa.Column("slug", sa.Text, nullable=False),
@@ -50,10 +54,15 @@ def upgrade() -> None:
         sa.Column("dag_root_intent", sa.Text, nullable=True),
         sa.Column("category", sa.Text, nullable=True),
         sa.Column("config", pg.JSONB, nullable=False, server_default="{}"),
-        sa.Column("is_platform_global", sa.Boolean, nullable=False,
-                  server_default=sa.text("false")),
-        sa.Column("created_at", pg.TIMESTAMP(timezone=True), nullable=False,
-                  server_default=sa.text("now()")),
+        sa.Column(
+            "is_platform_global", sa.Boolean, nullable=False, server_default=sa.text("false")
+        ),
+        sa.Column(
+            "created_at",
+            pg.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.Column("updated_at", pg.TIMESTAMP(timezone=True), nullable=True),
         sa.CheckConstraint(
             "template_type IN ('script', 'xioflow_dag')",
@@ -70,17 +79,23 @@ def upgrade() -> None:
         sa.Column("id", pg.UUID(as_uuid=True), primary_key=True),
         sa.Column("organization_id", pg.UUID(as_uuid=True), nullable=False, index=True),
         sa.Column(
-            "template_id", pg.UUID(as_uuid=True),
+            "template_id",
+            pg.UUID(as_uuid=True),
             sa.ForeignKey("workflow_templates.id", ondelete="SET NULL"),
-            nullable=True, index=True,
+            nullable=True,
+            index=True,
         ),
         sa.Column("trigger_id", pg.UUID(as_uuid=True), nullable=True),
         sa.Column("state", sa.Text, nullable=False, server_default="PENDING"),
         sa.Column("context", pg.JSONB, nullable=False, server_default="{}"),
         sa.Column("result", pg.JSONB, nullable=True),
         sa.Column("error", sa.Text, nullable=True),
-        sa.Column("started_at", pg.TIMESTAMP(timezone=True), nullable=False,
-                  server_default=sa.text("now()")),
+        sa.Column(
+            "started_at",
+            pg.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.Column("finished_at", pg.TIMESTAMP(timezone=True), nullable=True),
         sa.CheckConstraint(
             "state IN ('PENDING', 'RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED')",
@@ -94,9 +109,11 @@ def upgrade() -> None:
         "xioflow_tasks",
         sa.Column("id", pg.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "run_id", pg.UUID(as_uuid=True),
+            "run_id",
+            pg.UUID(as_uuid=True),
             sa.ForeignKey("xioflow_runs.id", ondelete="CASCADE"),
-            nullable=False, index=True,
+            nullable=False,
+            index=True,
         ),
         sa.Column("node_intent", sa.Text, nullable=False),
         sa.Column("node_id", pg.UUID(as_uuid=True), nullable=True),
@@ -104,8 +121,12 @@ def upgrade() -> None:
         sa.Column("attempt_count", sa.Integer, nullable=False, server_default="0"),
         sa.Column("result", pg.JSONB, nullable=True),
         sa.Column("error", sa.Text, nullable=True),
-        sa.Column("created_at", pg.TIMESTAMP(timezone=True), nullable=False,
-                  server_default=sa.text("now()")),
+        sa.Column(
+            "created_at",
+            pg.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.Column("claimed_at", pg.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("completed_at", pg.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("worker_id", pg.UUID(as_uuid=True), nullable=True),
@@ -122,7 +143,8 @@ def upgrade() -> None:
         sa.Column("id", pg.UUID(as_uuid=True), primary_key=True),
         sa.Column("organization_id", pg.UUID(as_uuid=True), nullable=False, index=True),
         sa.Column(
-            "template_id", pg.UUID(as_uuid=True),
+            "template_id",
+            pg.UUID(as_uuid=True),
             sa.ForeignKey("workflow_templates.id", ondelete="CASCADE"),
             nullable=False,
         ),
@@ -132,8 +154,12 @@ def upgrade() -> None:
         sa.Column("enabled", sa.Boolean, nullable=False, server_default=sa.text("true")),
         sa.Column("context_defaults", pg.JSONB, nullable=False, server_default="{}"),
         sa.Column("last_fired_at", pg.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column("created_at", pg.TIMESTAMP(timezone=True), nullable=False,
-                  server_default=sa.text("now()")),
+        sa.Column(
+            "created_at",
+            pg.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.CheckConstraint(
             "trigger_type IN ('cron', 'event')",
             name="ck_xftr_type",
@@ -145,22 +171,26 @@ def upgrade() -> None:
         "xioflow_dead_letters",
         sa.Column("id", pg.UUID(as_uuid=True), primary_key=True),
         sa.Column(
-            "run_id", pg.UUID(as_uuid=True),
+            "run_id",
+            pg.UUID(as_uuid=True),
             sa.ForeignKey("xioflow_runs.id", ondelete="CASCADE"),
-            nullable=False, index=True,
+            nullable=False,
+            index=True,
         ),
         sa.Column("task_id", pg.UUID(as_uuid=True), nullable=True),
         sa.Column("payload", pg.JSONB, nullable=False, server_default="{}"),
         sa.Column("retry_count", sa.Integer, nullable=False, server_default="0"),
         sa.Column("last_error", sa.Text, nullable=True),
         sa.Column("resolved", sa.Boolean, nullable=False, server_default=sa.text("false")),
-        sa.Column("created_at", pg.TIMESTAMP(timezone=True), nullable=False,
-                  server_default=sa.text("now()")),
+        sa.Column(
+            "created_at",
+            pg.TIMESTAMP(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
         sa.Column("resolved_at", pg.TIMESTAMP(timezone=True), nullable=True),
     )
-    op.create_index(
-        "ix_xioflow_dlq_unresolved", "xioflow_dead_letters", ["resolved", "run_id"]
-    )
+    op.create_index("ix_xioflow_dlq_unresolved", "xioflow_dead_letters", ["resolved", "run_id"])
 
 
 def downgrade() -> None:

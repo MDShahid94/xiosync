@@ -1,6 +1,6 @@
 import re
 
-with open("scripts/xio_signin_flow.py", "r") as f:
+with open("scripts/xio_signin_flow.py") as f:
     code = f.read()
 
 # I need to find where local_dir is constructed in xio_signin_flow.py
@@ -21,7 +21,7 @@ code = re.sub(
     r'    # ── Step 6: Push profile to Drive ───────────────────────────────────────\n.*?    print\(f"   Local dir : \{local_dir\}"\)',
     new_step6,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("scripts/xio_signin_flow.py", "w") as f:

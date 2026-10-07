@@ -42,14 +42,9 @@ def sqlite_engine_with_migrations(sqlite_engine: Engine) -> Engine:
     """
     with sqlite_engine.connect() as conn:
         conn.execute(
-            text(
-                "CREATE TABLE alembic_version "
-                "(version_num VARCHAR(32) NOT NULL PRIMARY KEY)"
-            )
+            text("CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL PRIMARY KEY)")
         )
-        conn.execute(
-            text("INSERT INTO alembic_version (version_num) VALUES ('14c2c1f29abe')")
-        )
+        conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('14c2c1f29abe')"))
         conn.commit()
     return sqlite_engine
 
@@ -99,12 +94,8 @@ class TestGetDatabaseCurrentRevision:
                 """)
             )
             # Insert in reverse order to test ORDER BY DESC
-            conn.execute(
-                text("INSERT INTO alembic_version (version_num) VALUES ('aaa1111')")
-            )
-            conn.execute(
-                text("INSERT INTO alembic_version (version_num) VALUES ('zzz9999')")
-            )
+            conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('aaa1111')"))
+            conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('zzz9999')"))
             conn.commit()
 
         revision = get_database_current_revision(sqlite_engine)
@@ -174,9 +165,7 @@ class TestVerifyMigrationsAtHead:
 
                 mock_engine = MagicMock(spec=Engine)
 
-                with pytest.raises(
-                    MigrationNotAtHeadError, match="Database schema is at revision"
-                ):
+                with pytest.raises(MigrationNotAtHeadError, match="Database schema is at revision"):
                     verify_migrations_at_head(mock_engine, alembic_dir="test_dir")
 
     def test_verify_at_head_database_error(self) -> None:
@@ -230,9 +219,7 @@ class TestCheckReadiness:
 
     def test_readiness_state_immutable(self) -> None:
         """ReadinessState is frozen (immutable)."""
-        state = ReadinessState(
-            is_live=True, is_ready=True, live_reason="test", ready_reason=""
-        )
+        state = ReadinessState(is_live=True, is_ready=True, live_reason="test", ready_reason="")
 
         with pytest.raises(AttributeError):
             state.is_live = False
@@ -254,9 +241,7 @@ class TestIntegration:
                 )
                 """)
             )
-            conn.execute(
-                text("INSERT INTO alembic_version (version_num) VALUES ('14c2c1f29abe')")
-            )
+            conn.execute(text("INSERT INTO alembic_version (version_num) VALUES ('14c2c1f29abe')"))
             conn.commit()
 
         # Should verify successfully

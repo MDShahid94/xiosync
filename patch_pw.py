@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 # Replace Input.insertText with cdp_type_text for password
@@ -13,7 +13,7 @@ code = re.sub(
     r'            cdp_click_element\(\[\'input\[type="password"\]\', \'input\[name="Passwd"\]\', \'input\[name="password"\]\'\], 15\)\n            uc_sleep\(0\.4, 0\.8\)\n            driver\.execute_cdp_cmd\("Input\.insertText", \{"text": password\}\)\n            logger\.info\("uc-login: password typed via Input\.insertText \(isTrusted\)"\)',
     replacement,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 # Also fix email if it uses insertText
@@ -26,7 +26,7 @@ code = re.sub(
     r'            cdp_click_element\(\[\'input\[name="identifier"\]\', \'input\[type="email"\]\', \'#identifierId\'\], 15\)\n            uc_sleep\(0\.4, 1\.2\)\n            driver\.execute_cdp_cmd\("Input\.insertText", \{"text": email\}\)\n            logger\.info\("uc-login: email entered"\)',
     replacement_email,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

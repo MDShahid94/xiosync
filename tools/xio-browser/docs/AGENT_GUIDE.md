@@ -473,21 +473,40 @@ db/                       <- Periodic SQLite snapshot (every 10 min via keep-ali
 ### 5.5 Config (start.ipynb Cell 1)
 ```python
 # Cloudflare credentials (required)
-CF_API_TOKEN      = 'cfat_...'
-CF_ACCOUNT_ID     = 'e63a13ef...'
-CF_D1_DATABASE_ID = 'acfd72de-...'
+CF_API_TOKEN = "cfat_..."
+CF_ACCOUNT_ID = "e63a13ef..."
+CF_D1_DATABASE_ID = "acfd72de-..."
 
-INDEXEDDB_ORIGINS = ["https://accounts.google.com","https://myaccount.google.com","https://www.google.com","https://v0.dev"]
+INDEXEDDB_ORIGINS = [
+    "https://accounts.google.com",
+    "https://myaccount.google.com",
+    "https://www.google.com",
+    "https://v0.dev",
+]
 LOCALSTORAGE_MIN_COOKIES = 5
-WARMUP_ORIGINS   = ["https://accounts.google.com","https://myaccount.google.com"]
-AUTO_SPAWN_ENABLED       = True
+WARMUP_ORIGINS = ["https://accounts.google.com", "https://myaccount.google.com"]
+AUTO_SPAWN_ENABLED = True
 AUTO_SPAWN_AFTER_MINUTES = 12
-AUTO_SPAWN_GOOGLE_SIGNIN = 'auto'  # 'auto'|'skip'|'force'
+AUTO_SPAWN_GOOGLE_SIGNIN = "auto"  # 'auto'|'skip'|'force'
 JOB_RETENTION_DAYS = 3
 
 DEVICE_FINGERPRINT = [
-    {'cores':10,'ram':16,'webgl_renderer':'Apple M4','macos_version':'15.2.0','width':2560,'height':1440},
-    {'cores':8,'ram':8,'webgl_renderer':'Apple M2','macos_version':'14.6.1','width':1920,'height':1200},
+    {
+        "cores": 10,
+        "ram": 16,
+        "webgl_renderer": "Apple M4",
+        "macos_version": "15.2.0",
+        "width": 2560,
+        "height": 1440,
+    },
+    {
+        "cores": 8,
+        "ram": 8,
+        "webgl_renderer": "Apple M2",
+        "macos_version": "14.6.1",
+        "width": 1920,
+        "height": 1200,
+    },
 ]
 ```
 
@@ -507,7 +526,7 @@ boot.py:
 
 **Slug formula:**
 ```python
-email.split('@')[0].split('+')[0].replace('.', '-')
+email.split("@")[0].split("+")[0].replace(".", "-")
 # shahid.raiganj@gmail.com  ->  colab-worker-shahid-raiganj
 ```
 

@@ -6,6 +6,7 @@ external Postgres, MySQL, etc.) for migration, federation, or live sync.
 
 This is the foundation for the one-time D1 → XIOSYNC migration (Phase 9).
 """
+
 from alembic import op
 
 revision = "0036"
@@ -52,9 +53,11 @@ def upgrade() -> None:
         ON integration_providers (organization_id)
     """)
 
-    op.execute("COMMENT ON TABLE integration_providers IS "
-               "'External DB/data-source connectors for migration and federation. "
-               "Credentials via vault_key. organization_id=NULL = platform-level shared connector.'")
+    op.execute(
+        "COMMENT ON TABLE integration_providers IS "
+        "'External DB/data-source connectors for migration and federation. "
+        "Credentials via vault_key. organization_id=NULL = platform-level shared connector.'"
+    )
 
 
 def downgrade() -> None:

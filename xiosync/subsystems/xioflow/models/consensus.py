@@ -37,7 +37,9 @@ class XioflowConsensusVote(Base):
     __tablename__ = "xioflow_consensus_votes"
     __table_args__ = (
         UniqueConstraint(
-            "node_id", "voter_id", "context_hash",
+            "node_id",
+            "voter_id",
+            "context_hash",
             name="uq_xfcv_node_voter_context",
         ),
         Index("idx_xfcv_org", "organization_id"),
@@ -45,21 +47,31 @@ class XioflowConsensusVote(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=new_id,
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=new_id,
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
     )
     node_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("xioflow_memory_nodes.id"), nullable=False,
+        UUID(as_uuid=True),
+        ForeignKey("xioflow_memory_nodes.id"),
+        nullable=False,
     )
     voter_id: Mapped[str] = mapped_column(Text, nullable=False)
     raw_vote: Mapped[float] = mapped_column(Float, nullable=False)
     tier_confidence: Mapped[float] = mapped_column(
-        Float, nullable=False, server_default=text("1.0"),
+        Float,
+        nullable=False,
+        server_default=text("1.0"),
     )
     winning_tier: Mapped[int | None] = mapped_column(Integer)
     context_hash: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(
-        _ts, nullable=False, server_default=text("now()"),
+        _ts,
+        nullable=False,
+        server_default=text("now()"),
     )

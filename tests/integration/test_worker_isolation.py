@@ -97,8 +97,7 @@ def _make_ctx(org_id: uuid.UUID, actor_id: uuid.UUID) -> OrgContext:
 def _insert_org(conn, org_id: uuid.UUID, slug: str) -> None:
     conn.execute(
         text(
-            "INSERT INTO organizations (id, slug, name, state) "
-            "VALUES (:id, :slug, :slug, 'active')"
+            "INSERT INTO organizations (id, slug, name, state) VALUES (:id, :slug, :slug, 'active')"
         ),
         {"id": org_id, "slug": slug},
     )
@@ -123,14 +122,9 @@ def _insert_actor(
     )
 
 
-def _insert_capability(
-    conn, cap_id: uuid.UUID, org_id: uuid.UUID, name: str
-) -> None:
+def _insert_capability(conn, cap_id: uuid.UUID, org_id: uuid.UUID, name: str) -> None:
     conn.execute(
-        text(
-            "INSERT INTO capabilities (id, organization_id, name) "
-            "VALUES (:id, :org, :name)"
-        ),
+        text("INSERT INTO capabilities (id, organization_id, name) VALUES (:id, :org, :name)"),
         {"id": cap_id, "org": org_id, "name": name},
     )
 
@@ -177,9 +171,7 @@ def _seed_org_and_worker(
     try:
         with engine.begin() as conn:
             _insert_org(conn, org_id, f"iso-test-{org_id}")
-            _insert_actor(
-                conn, owner_actor_id, org_id, actor_type="human", trust_tier="admin"
-            )
+            _insert_actor(conn, owner_actor_id, org_id, actor_type="human", trust_tier="admin")
             _insert_actor(
                 conn,
                 worker_actor_id,
@@ -386,10 +378,7 @@ def _load_authorization_inputs(
     fixtures.
     """
     actor_row = session.execute(
-        text(
-            "SELECT organization_id, state, trust_tier FROM actors "
-            "WHERE id = :id"
-        ),
+        text("SELECT organization_id, state, trust_tier FROM actors WHERE id = :id"),
         {"id": actor_id},
     ).one()
     org_row = session.execute(
@@ -567,18 +556,12 @@ def _seed_two_orgs_with_worker_and_target(
         with engine.begin() as conn:
             # org A: the compromised volunteer worker's home org.
             _insert_org(conn, org_a, f"iso-orga-{org_a}")
-            _insert_actor(
-                conn, worker_actor_a, org_a, actor_type="compute", trust_tier="newcomer"
-            )
+            _insert_actor(conn, worker_actor_a, org_a, actor_type="compute", trust_tier="newcomer")
             # org B: a completely separate tenant with its own actor + grant.
             _insert_org(conn, org_b, f"iso-orgb-{org_b}")
-            _insert_actor(
-                conn, actor_b, org_b, actor_type="human", trust_tier="trusted"
-            )
+            _insert_actor(conn, actor_b, org_b, actor_type="human", trust_tier="trusted")
             _insert_capability(conn, cap_b, org_b, "orgb.capability")
-            _insert_grant(
-                conn, grant_b, org_b, actor_b, cap_b, constraints={}
-            )
+            _insert_grant(conn, grant_b, org_b, actor_b, cap_b, constraints={})
     finally:
         engine.dispose()
     return org_a, worker_actor_a, org_b, actor_b, grant_b
@@ -597,8 +580,8 @@ class TestWorkerCannotMutateCrossActorState:
         The worker is scoped to org A; it attempts to plant a grant carrying
         org B's id (with otherwise valid foreign keys). RLS refuses the write.
         """
-        org_a, worker_a, org_b, actor_b, _grant_b = (
-            _seed_two_orgs_with_worker_and_target(migrated_database_url)
+        org_a, worker_a, org_b, actor_b, _grant_b = _seed_two_orgs_with_worker_and_target(
+            migrated_database_url
         )
         # Discover org B's capability id to keep the composite FK satisfiable,
         # so RLS — not a FK violation — is demonstrably the blocker.
@@ -606,9 +589,7 @@ class TestWorkerCannotMutateCrossActorState:
         try:
             with engine.begin() as conn:
                 cap_b = conn.execute(
-                    text(
-                        "SELECT id FROM capabilities WHERE organization_id = :org"
-                    ),
+                    text("SELECT id FROM capabilities WHERE organization_id = :org"),
                     {"org": org_b},
                 ).scalar_one()
         finally:
@@ -642,9 +623,7 @@ class TestWorkerCannotMutateCrossActorState:
         try:
             with engine.begin() as conn:
                 count = conn.execute(
-                    text(
-                        "SELECT count(*) FROM grants WHERE organization_id = :org"
-                    ),
+                    text("SELECT count(*) FROM grants WHERE organization_id = :org"),
                     {"org": org_b},
                 ).scalar_one()
             # Only the single grant seeded for actor_b should exist.
@@ -662,8 +641,8 @@ class TestWorkerCannotMutateCrossActorState:
         The target grant is invisible to org A's scope, so the revoke attempt
         matches nothing and the row stays ``active`` (verified via admin).
         """
-        org_a, worker_a, org_b, _actor_b, grant_b = (
-            _seed_two_orgs_with_worker_and_target(migrated_database_url)
+        org_a, worker_a, org_b, _actor_b, grant_b = _seed_two_orgs_with_worker_and_target(
+            migrated_database_url
         )
 
         ctx = _make_ctx(org_a, worker_a)
@@ -671,9 +650,7 @@ class TestWorkerCannotMutateCrossActorState:
         try:
             with org_scoped_session(engine, ctx) as session:
                 result = session.execute(
-                    text(
-                        "UPDATE grants SET state = 'revoked' WHERE id = :id"
-                    ),
+                    text("UPDATE grants SET state = 'revoked' WHERE id = :id"),
                     {"id": grant_b},
                 )
                 assert result.rowcount == 0
@@ -697,8 +674,8 @@ class TestWorkerCannotMutateCrossActorState:
         app_role_database_url: str,
     ) -> None:
         """A cross-org DELETE affects zero rows and the grant survives."""
-        org_a, worker_a, org_b, _actor_b, grant_b = (
-            _seed_two_orgs_with_worker_and_target(migrated_database_url)
+        org_a, worker_a, org_b, _actor_b, grant_b = _seed_two_orgs_with_worker_and_target(
+            migrated_database_url
         )
 
         ctx = _make_ctx(org_a, worker_a)
@@ -734,23 +711,19 @@ class TestWorkerCannotMutateCrossActorState:
         This is the read-side companion to the write blocks: a compromised
         worker cannot even enumerate cross-actor state to target it.
         """
-        org_a, worker_a, org_b, _actor_b, grant_b = (
-            _seed_two_orgs_with_worker_and_target(migrated_database_url)
+        org_a, worker_a, org_b, _actor_b, grant_b = _seed_two_orgs_with_worker_and_target(
+            migrated_database_url
         )
 
         ctx = _make_ctx(org_a, worker_a)
         engine = create_engine(app_role_database_url)
         try:
             with org_scoped_session(engine, ctx) as session:
-                visible = session.execute(
-                    text("SELECT id FROM grants")
-                ).fetchall()
+                visible = session.execute(text("SELECT id FROM grants")).fetchall()
                 # org A has no grants seeded; org B's grant must be invisible.
                 assert [row[0] for row in visible] == []
 
-                org_ids = session.execute(
-                    text("SELECT id FROM organizations")
-                ).fetchall()
+                org_ids = session.execute(text("SELECT id FROM organizations")).fetchall()
                 assert [row[0] for row in org_ids] == [org_a]
                 assert grant_b not in [row[0] for row in visible]
         finally:

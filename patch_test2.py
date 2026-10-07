@@ -1,6 +1,6 @@
 import re
 
-with open("scripts/xio_signin_flow.py", "r") as f:
+with open("scripts/xio_signin_flow.py") as f:
     code = f.read()
 
 code = re.sub(r'GOOGLE_PASSWORD\s*=\s*"[^"]+"', 'GOOGLE_PASSWORD  = "TheTruth1!"', code)

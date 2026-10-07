@@ -15,6 +15,7 @@ in ``xiosync/subsystems/xioflow/api/events.py`` and supports:
 Clients hitting the legacy path are redirected permanently so bookmarks and
 existing client code continue to work without change.
 """
+
 from __future__ import annotations
 
 from fastapi import APIRouter
@@ -41,8 +42,8 @@ async def event_stream_redirect() -> RedirectResponse:
     )
 
 
-from xiosync.api.router_registry import register_router  # noqa: E402
 from xiosync.api.middleware.rbac import require_capability  # noqa: E402
+from xiosync.api.router_registry import register_router  # noqa: E402
 
 register_router(
     router,

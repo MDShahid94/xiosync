@@ -110,7 +110,10 @@ def test_run_migrations_online_configures_on_version_apply() -> None:
 
     with (
         patch("xiosync.persistence.migrations.env.create_engine", return_value=mock_engine),
-        patch("xiosync.persistence.migrations.env._database_url", return_value="postgresql+psycopg://u:p@localhost/db"),
+        patch(
+            "xiosync.persistence.migrations.env._database_url",
+            return_value="postgresql+psycopg://u:p@localhost/db",
+        ),
         patch("xiosync.persistence.migrations.env.context") as mock_context,
     ):
         run_migrations_online()

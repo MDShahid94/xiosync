@@ -11,6 +11,7 @@ Endpoints:
   PATCH  /xioflow/triggers/{id}         Update schedule / context / enable-disable
   DELETE /xioflow/triggers/{id}         Delete (hard delete — runs are preserved)
 """
+
 from __future__ import annotations
 
 import logging
@@ -76,6 +77,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
 
 # ── Request models ─────────────────────────────────────────────────────────────
 
+
 class CreateTriggerRequest(BaseModel):
     """Create a workflow trigger.
 
@@ -83,6 +85,7 @@ class CreateTriggerRequest(BaseModel):
     For trigger_type='event':  event_name is required (e.g. 'user.created')
     template_id is required for both — it defines which workflow to run.
     """
+
     trigger_type: str
     template_id: uuid.UUID
     cron_schedule: str | None = None
@@ -104,6 +107,7 @@ class CreateTriggerRequest(BaseModel):
         if v is not None:
             try:
                 from croniter import croniter
+
                 if not croniter.is_valid(v):
                     raise ValueError(f"Invalid cron expression: {v!r}")
             except ImportError:
@@ -124,6 +128,7 @@ class UpdateTriggerRequest(BaseModel):
         if v is not None:
             try:
                 from croniter import croniter
+
                 if not croniter.is_valid(v):
                     raise ValueError(f"Invalid cron expression: {v!r}")
             except ImportError:
@@ -132,6 +137,7 @@ class UpdateTriggerRequest(BaseModel):
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
+
 
 @router.post("", summary="Create a workflow trigger", status_code=201)
 def create_trigger(request: Request, body: CreateTriggerRequest) -> dict[str, Any]:
@@ -142,9 +148,13 @@ def create_trigger(request: Request, body: CreateTriggerRequest) -> dict[str, An
 
     # Validate type-specific fields
     if body.trigger_type == "cron" and not body.cron_schedule:
-        raise HTTPException(status_code=422, detail="cron_schedule is required for trigger_type='cron'")
+        raise HTTPException(
+            status_code=422, detail="cron_schedule is required for trigger_type='cron'"
+        )
     if body.trigger_type == "event" and not body.event_name:
-        raise HTTPException(status_code=422, detail="event_name is required for trigger_type='event'")
+        raise HTTPException(
+            status_code=422, detail="event_name is required for trigger_type='event'"
+        )
 
     # Verify template exists and is visible to this org
     tmpl = session.execute(
@@ -160,6 +170,7 @@ def create_trigger(request: Request, body: CreateTriggerRequest) -> dict[str, An
 
     trigger_id = str(new_id())
     import json
+
     session.execute(
         text("""
             INSERT INTO xioflow_triggers
@@ -278,6 +289,7 @@ def update_trigger(
     _assert_trigger(session, trigger_id, org_id)
 
     import json
+
     sets: list[str] = []
     params: dict[str, Any] = {"id": trigger_id}
 

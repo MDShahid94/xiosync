@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement_func = """    def cdp_type_text(text):
@@ -35,10 +35,10 @@ replacement_func = """    def cdp_type_text(text):
         time.sleep(random.uniform(0.1, 0.3))"""
 
 code = re.sub(
-    r'    def cdp_type_text\(text\):\n.*?(?=    def cdp_clear_input)',
+    r"    def cdp_type_text\(text\):\n.*?(?=    def cdp_clear_input)",
     replacement_func + "\n\n",
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

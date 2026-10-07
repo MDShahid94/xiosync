@@ -15,7 +15,6 @@ from __future__ import annotations
 import pytest
 import sqlalchemy as sa
 
-
 # Tables that had ENABLE-only in 0008/0009, now fixed by 0010.
 _FORCE_RLS_TABLES = (
     "worker_enrollments",
@@ -77,9 +76,7 @@ def test_all_tenant_tables_have_force_rls(
             )
         ).fetchall()
 
-    violations = [
-        row[0] for row in rows if row[1] is True and row[2] is False
-    ]
+    violations = [row[0] for row in rows if row[1] is True and row[2] is False]
     assert violations == [], (
         f"Tables have ENABLE RLS but not FORCE RLS: {violations}. "
         "Add FORCE ROW LEVEL SECURITY in the migration."

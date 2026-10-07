@@ -12,6 +12,7 @@ Hardened against:
   - FingerprintJS Pro, DataDome, Akamai Bot Manager
   - PerimeterX / HUMAN Security
 """
+
 from __future__ import annotations
 
 import functools
@@ -570,10 +571,10 @@ def build_init_script(
   // ── 15. Battery API ────────────────────────────────────────────────────────
   try {{
     const _fakeBattery = {{
-      charging: {'false' if is_mobile else 'true'},
-      chargingTime: {'Infinity' if is_mobile else '0'},
-      dischargingTime: {'7200' if is_mobile else 'Infinity'},
-      level: {getattr(profile, 'battery_level', 0.72)},
+      charging: {"false" if is_mobile else "true"},
+      chargingTime: {"Infinity" if is_mobile else "0"},
+      dischargingTime: {"7200" if is_mobile else "Infinity"},
+      level: {getattr(profile, "battery_level", 0.72)},
       addEventListener:    function addEventListener() {{}},
       removeEventListener: function removeEventListener() {{}},
       dispatchEvent:       function dispatchEvent() {{ return true; }},
@@ -591,21 +592,21 @@ def build_init_script(
     const _chBrands = {brands_js};
     const _uadObj = {{
       brands: _chBrands,
-      mobile: {'true' if is_mobile else 'false'},
+      mobile: {"true" if is_mobile else "false"},
       platform: {json.dumps(profile.ch_platform)},
       getHighEntropyValues: function getHighEntropyValues() {{
         return Promise.resolve({{
           brands: _chBrands,
-          mobile: {'true' if is_mobile else 'false'},
+          mobile: {"true" if is_mobile else "false"},
           platform: {json.dumps(profile.ch_platform)},
-          platformVersion: {json.dumps(getattr(profile, 'ch_version', '131'))},
-          architecture: {json.dumps(getattr(profile, 'ch_arch', 'x86'))},
+          platformVersion: {json.dumps(getattr(profile, "ch_version", "131"))},
+          architecture: {json.dumps(getattr(profile, "ch_arch", "x86"))},
           model: '', bitness: '64',
           fullVersionList: _chBrands, wow64: false,
         }});
       }},
       toJSON: function toJSON() {{
-        return {{ brands: _chBrands, mobile: {'true' if is_mobile else 'false'}, platform: {json.dumps(profile.ch_platform)} }};
+        return {{ brands: _chBrands, mobile: {"true" if is_mobile else "false"}, platform: {json.dumps(profile.ch_platform)} }};
       }},
     }};
     Object.defineProperty(_NavProto, 'userAgentData', {{
@@ -735,7 +736,7 @@ def build_init_script(
     Object.defineProperty(_NavProto, 'vendor',           {{ get: function vendor() {{ return 'Google Inc.'; }},   configurable: false, enumerable: true }});
     Object.defineProperty(_NavProto, 'vendorSub',        {{ get: function vendorSub() {{ return ''; }},          configurable: false }});
     Object.defineProperty(_NavProto, 'productSub',       {{ get: function productSub() {{ return '20030107'; }}, configurable: false }});
-    Object.defineProperty(_NavProto, 'maxTouchPoints',   {{ get: function maxTouchPoints() {{ return {'5' if is_mobile else '0'}; }}, configurable: false, enumerable: true }});
+    Object.defineProperty(_NavProto, 'maxTouchPoints',   {{ get: function maxTouchPoints() {{ return {"5" if is_mobile else "0"}; }}, configurable: false, enumerable: true }});
     Object.defineProperty(_NavProto, 'cookieEnabled',    {{ get: function cookieEnabled() {{ return true; }},    configurable: false, enumerable: true }});
     Object.defineProperty(_NavProto, 'onLine',           {{ get: function onLine() {{ return true; }},           configurable: false }});
     Object.defineProperty(_NavProto, 'doNotTrack',       {{ get: function doNotTrack() {{ return null; }},       configurable: false }});
@@ -801,13 +802,13 @@ def build_init_script(
         Object.defineProperty(self.WorkerNavigator.prototype, 'userAgentData', {{
           get: function() {{ return {{
             brands: {brands_js},
-            mobile: {'true' if is_mobile else 'false'},
+            mobile: {"true" if is_mobile else "false"},
             platform: {json.dumps(profile.ch_platform)},
             getHighEntropyValues: function() {{ return Promise.resolve({{
-              architecture: {json.dumps(getattr(profile, 'ch_arch', 'x86'))},
+              architecture: {json.dumps(getattr(profile, "ch_arch", "x86"))},
               bitness: '64', model: '',
               platform: {json.dumps(profile.ch_platform)},
-              platformVersion: {json.dumps(getattr(profile, 'ch_version', '131'))},
+              platformVersion: {json.dumps(getattr(profile, "ch_version", "131"))},
             }}); }},
           }}; }},
           configurable: true, enumerable: true,
@@ -1109,8 +1110,9 @@ def resolve_fingerprint_profile(
     )
 
     with OrmSession(engine) as sess:
-        row = sess.execute(
-            text("""
+        row = (
+            sess.execute(
+                text("""
                 SELECT fp.*
                 FROM browser_sessions bs
                 JOIN xiogrid_pppoe_exit_nodes en ON en.id = bs.pppoe_exit_node_id
@@ -1118,16 +1120,17 @@ def resolve_fingerprint_profile(
                 WHERE bs.id = :sid
                 LIMIT 1
             """),
-            {"sid": uuid.UUID(session_id)},
-        ).mappings().first()
+                {"sid": uuid.UUID(session_id)},
+            )
+            .mappings()
+            .first()
+        )
 
         if row:
             return sess.get(FingerprintProfile, row["id"])
 
         fp = sess.scalars(
-            select(FingerprintProfile)
-            .where(FingerprintProfile.os == "macos")
-            .limit(1)
+            select(FingerprintProfile).where(FingerprintProfile.os == "macos").limit(1)
         ).first()
         if fp:
             return fp

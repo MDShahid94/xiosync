@@ -18,12 +18,9 @@ Scenarios:
 
 from __future__ import annotations
 
-import json
-import random
-import string
 import uuid
 
-from locust import HttpUser, between, task, tag
+from locust import HttpUser, between, tag, task
 
 
 class HealthUser(HttpUser):

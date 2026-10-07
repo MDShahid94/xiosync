@@ -11,8 +11,8 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
-    Text,
     Integer,
+    Text,
     UniqueConstraint,
     text,
 )
@@ -40,15 +40,23 @@ class BrowserPool(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
     )
     project_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("projects.id"),
+        nullable=True,
+        index=True,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     engine_type: Mapped[str] = mapped_column(Text, nullable=False, server_default="chromium")
     max_instances: Mapped[int] = mapped_column(Integer, nullable=False, server_default="10")
-    stealth_config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    stealth_config: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     state: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
     created_at: Mapped[datetime] = mapped_column(_ts, nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime | None] = mapped_column(_ts)
@@ -73,14 +81,22 @@ class ComputeRuntime(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
     )
     project_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("projects.id"),
+        nullable=True,
+        index=True,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     provider: Mapped[str] = mapped_column(Text, nullable=False)
-    config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    config: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     state: Mapped[str] = mapped_column(Text, nullable=False, server_default="active")
     created_at: Mapped[datetime] = mapped_column(_ts, nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime | None] = mapped_column(_ts)
@@ -111,23 +127,34 @@ class RuntimeNode(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
     )
     project_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("projects.id"),
+        nullable=True,
+        index=True,
     )
     runtime_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False,
+        UUID(as_uuid=True),
+        nullable=False,
     )
     hostname: Mapped[str] = mapped_column(Text, nullable=False)
     ip_address: Mapped[str | None] = mapped_column(Text)
-    node_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    node_metadata: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     state: Mapped[str] = mapped_column(Text, nullable=False, server_default="provisioning")
     created_at: Mapped[datetime] = mapped_column(_ts, nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime | None] = mapped_column(_ts)
 
     runtime: Mapped[ComputeRuntime] = relationship(back_populates="nodes")
-    sessions: Mapped[list[BrowserSession]] = relationship(back_populates="node", overlaps="sessions")
+    sessions: Mapped[list[BrowserSession]] = relationship(
+        back_populates="node", overlaps="sessions"
+    )
 
 
 class BrowserSession(Base):
@@ -165,10 +192,16 @@ class BrowserSession(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
     )
     project_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("projects.id"),
+        nullable=True,
+        index=True,
     )
     pool_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     node_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
@@ -193,7 +226,9 @@ class BrowserSession(Base):
     worker_ts_ip: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     pool: Mapped[BrowserPool] = relationship(back_populates="sessions", overlaps="sessions")
-    node: Mapped[RuntimeNode | None] = relationship(back_populates="sessions", overlaps="pool,sessions")
+    node: Mapped[RuntimeNode | None] = relationship(
+        back_populates="sessions", overlaps="pool,sessions"
+    )
 
 
 class MeshNetwork(Base):
@@ -211,14 +246,22 @@ class MeshNetwork(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
     )
     project_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("projects.id"),
+        nullable=True,
+        index=True,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     network_type: Mapped[str] = mapped_column(Text, nullable=False)
-    config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    config: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
     state: Mapped[str] = mapped_column(Text, nullable=False, server_default="configuring")
     created_at: Mapped[datetime] = mapped_column(_ts, nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime | None] = mapped_column(_ts)
@@ -238,13 +281,20 @@ class MeshNode(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
     )
     project_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("projects.id"), nullable=True, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("projects.id"),
+        nullable=True,
+        index=True,
     )
     network_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False,
+        UUID(as_uuid=True),
+        nullable=False,
     )
     node_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     address: Mapped[str] = mapped_column(Text, nullable=False)

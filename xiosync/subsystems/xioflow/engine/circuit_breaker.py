@@ -8,10 +8,12 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+
 class CircuitState(enum.Enum):
     CLOSED = 1
     OPEN = 2
     HALF_OPEN = 3
+
 
 class CircuitBreaker:
     """A 3-state circuit breaker pattern."""

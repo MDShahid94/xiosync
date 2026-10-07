@@ -9,6 +9,7 @@ Endpoints:
   POST   /xioflow/runs/{id}/cancel         Abort run → CANCELLED
   GET    /xioflow/stats                    Aggregate dashboard stats
 """
+
 from __future__ import annotations
 
 import json
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/xioflow", tags=["XIOFLOW Runs"])
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _session(request: Request) -> OrmSession:
     return cast(OrmSession, request.state.org_session)
@@ -59,22 +61,25 @@ def _assert_run(session: OrmSession, run_id: str, org_id: str) -> Any:
 
 # ── Request / response models ─────────────────────────────────────────────────
 
+
 class DispatchRunRequest(BaseModel):
     """Manually dispatch a workflow run.
 
     Either template_id OR (dag_domain + dag_root_intent) must be provided.
     template_id takes precedence if both are given.
     """
+
     template_id: uuid.UUID | None = None
     dag_domain: str | None = None
     dag_root_intent: str | None = None
     context: dict[str, Any] = {}
     priority: int = 0
-    trace: bool = False    # Enable auto-trace: capture actions → deploy as DAG memory nodes
+    trace: bool = False  # Enable auto-trace: capture actions → deploy as DAG memory nodes
     model_config = ConfigDict(from_attributes=True)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
 
 @router.post("/runs", summary="Dispatch a new workflow run", status_code=201)
 def dispatch_run(request: Request, body: DispatchRunRequest) -> dict[str, Any]:
@@ -116,19 +121,24 @@ def dispatch_run(request: Request, body: DispatchRunRequest) -> dict[str, Any]:
     # Snapshot the template at dispatch time for versioning immutability
     tmpl_snapshot = None
     if template_id:
-        snap_row = session.execute(text("""
+        snap_row = session.execute(
+            text("""
             SELECT slug, dag_domain, dag_root_intent, template_type,
                    COALESCE(config, '{}'::jsonb) as config
             FROM workflow_templates WHERE id = :tid
-        """), {"tid": template_id}).fetchone()
+        """),
+            {"tid": template_id},
+        ).fetchone()
         if snap_row:
-            tmpl_snapshot = json.dumps({
-                "slug": snap_row.slug,
-                "dag_domain": snap_row.dag_domain,
-                "dag_root_intent": snap_row.dag_root_intent,
-                "template_type": snap_row.template_type,
-                "config": snap_row.config if isinstance(snap_row.config, dict) else {},
-            })
+            tmpl_snapshot = json.dumps(
+                {
+                    "slug": snap_row.slug,
+                    "dag_domain": snap_row.dag_domain,
+                    "dag_root_intent": snap_row.dag_root_intent,
+                    "template_type": snap_row.template_type,
+                    "config": snap_row.config if isinstance(snap_row.config, dict) else {},
+                }
+            )
 
     session.execute(
         text("""
@@ -148,7 +158,9 @@ def dispatch_run(request: Request, body: DispatchRunRequest) -> dict[str, Any]:
         },
     )
     session.commit()
-    logger.info("runs_api.dispatched", extra={"run_id": run_id, "org_id": org_id, "trace": body.trace})
+    logger.info(
+        "runs_api.dispatched", extra={"run_id": run_id, "org_id": org_id, "trace": body.trace}
+    )
     return {"id": run_id, "state": "PENDING", "trace": body.trace}
 
 
@@ -337,31 +349,40 @@ def get_stats(request: Request) -> dict[str, Any]:
 
     run_counts = {row.state: row.cnt for row in rows}
 
-    dlq_count = session.execute(
-        text("""
+    dlq_count = (
+        session.execute(
+            text("""
             SELECT count(*) FROM xioflow_dead_letters dl
             JOIN   xioflow_runs r ON r.id = dl.run_id
             WHERE  r.organization_id = :org
               AND  (dl.resolved IS NULL OR dl.resolved = false)
         """),
-        {"org": org_id},
-    ).scalar() or 0
+            {"org": org_id},
+        ).scalar()
+        or 0
+    )
 
-    memory_count = session.execute(
-        text("""
+    memory_count = (
+        session.execute(
+            text("""
             SELECT count(*) FROM xioflow_memory_nodes
             WHERE  organization_id = :org AND status = 'ACTIVE'
         """),
-        {"org": org_id},
-    ).scalar() or 0
+            {"org": org_id},
+        ).scalar()
+        or 0
+    )
 
-    template_count = session.execute(
-        text("""
+    template_count = (
+        session.execute(
+            text("""
             SELECT count(*) FROM workflow_templates
             WHERE  (organization_id = :org OR is_platform_global = true)
         """),
-        {"org": org_id},
-    ).scalar() or 0
+            {"org": org_id},
+        ).scalar()
+        or 0
+    )
 
     return {
         "runs": run_counts,

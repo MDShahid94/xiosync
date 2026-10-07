@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
-import urllib.request
 import urllib.error
-from datetime import datetime, UTC
+import urllib.request
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
@@ -36,6 +36,7 @@ def dispatch_pending_webhooks(session: Session, *, limit: int = 50) -> int:
     rows for that dispatch.
     """
     from sqlalchemy import text as _text  # noqa: PLC0415
+
     # Select dispatch events that have NO delivery outcome yet, OR have failed
     # fewer than MAX_DELIVERY_ATTEMPTS times (exponential backoff is handled by
     # the worker tick interval — no additional sleep logic needed here).
@@ -68,13 +69,17 @@ def dispatch_pending_webhooks(session: Session, *, limit: int = 50) -> int:
 
     delivered = 0
     for row in dispatch_events:
-        event_id     = str(row.id)
-        org_id       = row.organization_id
-        raw_payload  = row.payload
-        payload      = raw_payload if isinstance(raw_payload, dict) else (json.loads(raw_payload) if raw_payload else {})
-        target_url      = payload.get("target_url")
+        event_id = str(row.id)
+        org_id = row.organization_id
+        raw_payload = row.payload
+        payload = (
+            raw_payload
+            if isinstance(raw_payload, dict)
+            else (json.loads(raw_payload) if raw_payload else {})
+        )
+        target_url = payload.get("target_url")
         source_event_id = payload.get("source_event_id")
-        signature       = payload.get("signature")
+        signature = payload.get("signature")
         subscription_id = payload.get("subscription_id")
 
         if not target_url:

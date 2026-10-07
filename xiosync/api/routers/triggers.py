@@ -13,6 +13,7 @@ Endpoints:
     POST   /triggers/{id}/fire              — manual immediate fire → PENDING run
     DELETE /triggers/{id}                   — delete
 """
+
 from __future__ import annotations
 
 import uuid
@@ -26,25 +27,26 @@ router = APIRouter(tags=["triggers"])
 
 # ── Request / Response models ─────────────────────────────────────────────────
 
+
 class _S(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
 class CreateTriggerRequest(_S):
     """Create a cron or event trigger linked to a workflow template."""
+
     template_id: uuid.UUID = Field(description="ID of the WorkflowTemplate to run")
     trigger_type: str = Field(description="'cron' or 'event'")
     cron_schedule: str | None = Field(
         default=None,
-        description="Cron expression (required for trigger_type='cron'). E.g. '0 */6 * * *'"
+        description="Cron expression (required for trigger_type='cron'). E.g. '0 */6 * * *'",
     )
     event_name: str | None = Field(
-        default=None,
-        description="Event topic to react to (required for trigger_type='event')"
+        default=None, description="Event topic to react to (required for trigger_type='event')"
     )
     context_defaults: dict[str, Any] = Field(
         default_factory=dict,
-        description="Default context merged into each run's context at fire time"
+        description="Default context merged into each run's context at fire time",
     )
     enabled: bool = True
 
@@ -52,7 +54,7 @@ class CreateTriggerRequest(_S):
 class FireTriggerRequest(_S):
     extra_context: dict[str, Any] = Field(
         default_factory=dict,
-        description="Extra context merged on top of context_defaults for this one run"
+        description="Extra context merged on top of context_defaults for this one run",
     )
 
 
@@ -88,20 +90,28 @@ def _to_resp(rec: Any) -> TriggerResponse:
 
 def _svc(request: Request):
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.services.triggers import XioflowTriggerService
+
     session = cast(OrmSession, request.state.org_session)
     return XioflowTriggerService(session)
 
 
 def _ctx(request: Request):
     from xiosync.domain.context import OrgContext
+
     return cast(OrgContext, request.state.org_context)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
-@router.post("/triggers", status_code=201, response_model=TriggerResponse,
-             summary="Create a cron or event trigger for a workflow template")
+
+@router.post(
+    "/triggers",
+    status_code=201,
+    response_model=TriggerResponse,
+    summary="Create a cron or event trigger for a workflow template",
+)
 def create_trigger(payload: CreateTriggerRequest, request: Request) -> TriggerResponse:
     svc = _svc(request)
     try:
@@ -119,8 +129,11 @@ def create_trigger(payload: CreateTriggerRequest, request: Request) -> TriggerRe
     return _to_resp(rec)
 
 
-@router.get("/triggers", response_model=list[TriggerResponse],
-            summary="List triggers (optional filter by type / enabled / template)")
+@router.get(
+    "/triggers",
+    response_model=list[TriggerResponse],
+    summary="List triggers (optional filter by type / enabled / template)",
+)
 def list_triggers(
     request: Request,
     trigger_type: str | None = None,
@@ -136,10 +149,12 @@ def list_triggers(
     return [_to_resp(r) for r in recs]
 
 
-@router.get("/triggers/{trigger_id}", response_model=TriggerResponse,
-            summary="Get a single trigger")
+@router.get(
+    "/triggers/{trigger_id}", response_model=TriggerResponse, summary="Get a single trigger"
+)
 def get_trigger(trigger_id: uuid.UUID, request: Request) -> TriggerResponse:
     from xiosync.services.triggers import TriggerNotFoundError
+
     try:
         rec = _svc(request).get_trigger(_ctx(request), trigger_id)
     except TriggerNotFoundError:
@@ -147,34 +162,44 @@ def get_trigger(trigger_id: uuid.UUID, request: Request) -> TriggerResponse:
     return _to_resp(rec)
 
 
-@router.post("/triggers/{trigger_id}/enable", response_model=TriggerResponse,
-             summary="Enable a trigger")
+@router.post(
+    "/triggers/{trigger_id}/enable", response_model=TriggerResponse, summary="Enable a trigger"
+)
 def enable_trigger(trigger_id: uuid.UUID, request: Request) -> TriggerResponse:
     from xiosync.services.triggers import TriggerNotFoundError
+
     try:
         return _to_resp(_svc(request).enable_trigger(_ctx(request), trigger_id))
     except TriggerNotFoundError:
         raise HTTPException(status_code=404, detail="trigger_not_found")
 
 
-@router.post("/triggers/{trigger_id}/disable", response_model=TriggerResponse,
-             summary="Disable a trigger without deleting it")
+@router.post(
+    "/triggers/{trigger_id}/disable",
+    response_model=TriggerResponse,
+    summary="Disable a trigger without deleting it",
+)
 def disable_trigger(trigger_id: uuid.UUID, request: Request) -> TriggerResponse:
     from xiosync.services.triggers import TriggerNotFoundError
+
     try:
         return _to_resp(_svc(request).disable_trigger(_ctx(request), trigger_id))
     except TriggerNotFoundError:
         raise HTTPException(status_code=404, detail="trigger_not_found")
 
 
-@router.post("/triggers/{trigger_id}/fire", status_code=202,
-             summary="Manually fire a trigger — enqueues an immediate PENDING run")
+@router.post(
+    "/triggers/{trigger_id}/fire",
+    status_code=202,
+    summary="Manually fire a trigger — enqueues an immediate PENDING run",
+)
 def fire_trigger(
     trigger_id: uuid.UUID,
     payload: FireTriggerRequest,
     request: Request,
 ) -> dict[str, str]:
     from xiosync.services.triggers import TriggerNotFoundError
+
     try:
         run_id = _svc(request).fire_now(
             _ctx(request), trigger_id, extra_context=payload.extra_context
@@ -184,10 +209,10 @@ def fire_trigger(
     return {"run_id": run_id, "state": "PENDING", "message": "run enqueued"}
 
 
-@router.delete("/triggers/{trigger_id}", status_code=204,
-               summary="Permanently delete a trigger")
+@router.delete("/triggers/{trigger_id}", status_code=204, summary="Permanently delete a trigger")
 def delete_trigger(trigger_id: uuid.UUID, request: Request) -> None:
     from xiosync.services.triggers import TriggerNotFoundError
+
     try:
         _svc(request).delete_trigger(_ctx(request), trigger_id)
     except TriggerNotFoundError:
@@ -196,13 +221,20 @@ def delete_trigger(trigger_id: uuid.UUID, request: Request) -> None:
 
 # ── Legacy pause/resume aliases (map to disable/enable) ──────────────────────
 
-@router.put("/triggers/{trigger_id}/pause", response_model=TriggerResponse,
-            summary="Pause a trigger (alias for disable)")
+
+@router.put(
+    "/triggers/{trigger_id}/pause",
+    response_model=TriggerResponse,
+    summary="Pause a trigger (alias for disable)",
+)
 def pause_trigger(trigger_id: uuid.UUID, request: Request) -> TriggerResponse:
     return disable_trigger(trigger_id, request)
 
 
-@router.put("/triggers/{trigger_id}/resume", response_model=TriggerResponse,
-            summary="Resume a paused trigger (alias for enable)")
+@router.put(
+    "/triggers/{trigger_id}/resume",
+    response_model=TriggerResponse,
+    summary="Resume a paused trigger (alias for enable)",
+)
 def resume_trigger(trigger_id: uuid.UUID, request: Request) -> TriggerResponse:
     return enable_trigger(trigger_id, request)

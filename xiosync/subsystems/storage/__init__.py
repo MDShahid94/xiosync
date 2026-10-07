@@ -1,12 +1,20 @@
 """xiosync.subsystems.storage"""
+
+from xiosync.subsystems.storage.adapters import AccessInfo, make_adapter
 from xiosync.subsystems.storage.service import (
-    StorageService, ProviderRecord, ObjectRecord,
-    StorageNotFoundError, StorageProviderError,
+    ObjectRecord,
+    ProviderRecord,
+    StorageNotFoundError,
+    StorageProviderError,
+    StorageService,
 )
-from xiosync.subsystems.storage.adapters import make_adapter, AccessInfo
 
 __all__ = [
-    "StorageService", "ProviderRecord", "ObjectRecord",
-    "StorageNotFoundError", "StorageProviderError",
-    "make_adapter", "AccessInfo",
+    "StorageService",
+    "ProviderRecord",
+    "ObjectRecord",
+    "StorageNotFoundError",
+    "StorageProviderError",
+    "make_adapter",
+    "AccessInfo",
 ]

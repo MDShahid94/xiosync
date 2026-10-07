@@ -15,17 +15,12 @@ the plain app-role connection via org_scoped_session.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine, text
-
 from xiosync.domain.context import MembershipRole, OrgContext, PlatformRole
 from xiosync.persistence.tenancy import org_scoped_session
 from xiosync.platform.ids import new_id
-from xiosync.services.browser_pools import BrowserPoolService
-from xiosync.services.compute_runtimes import ComputeRuntimeService
-from xiosync.services.mesh_networks import MeshNetworkService
 from xiosync.services.projects import ProjectNotFoundError, ProjectService
 
 pytestmark = pytest.mark.integration
@@ -331,9 +326,7 @@ def test_browser_session_inherits_project_from_pool(migrated_database_url: str) 
                 {"id": sess_id},
             ).fetchone()
             assert row is not None, "BrowserSession row not found"
-            assert row[0] == proj_id, (
-                f"Expected project_id={proj_id}, got {row[0]}"
-            )
+            assert row[0] == proj_id, f"Expected project_id={proj_id}, got {row[0]}"
     finally:
         admin_engine.dispose()
 

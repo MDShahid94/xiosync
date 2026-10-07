@@ -19,8 +19,9 @@ manifest            JSONB schema / input-output declarations
 enabled             bool — whether org can use this node
 created_at, updated_at
 """
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0047"
@@ -32,20 +33,44 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "compute_node_definitions",
-        sa.Column("id",              postgresql.UUID(as_uuid=True), server_default=sa.text("gen_random_uuid()"), primary_key=True),
-        sa.Column("organization_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("organizations.id", ondelete="CASCADE"), nullable=True),
-        sa.Column("name",            sa.Text(), nullable=False),
-        sa.Column("display_name",    sa.Text(), nullable=True),
-        sa.Column("description",     sa.Text(), nullable=True),
-        sa.Column("runtime",         sa.Text(), nullable=False),
-        sa.Column("source_code",     sa.Text(), nullable=False),
-        sa.Column("manifest",        postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")),
-        sa.Column("enabled",         sa.Boolean(), nullable=False, server_default=sa.text("true")),
-        sa.Column("created_at",      sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at",      sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            server_default=sa.text("gen_random_uuid()"),
+            primary_key=True,
+        ),
+        sa.Column(
+            "organization_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("organizations.id", ondelete="CASCADE"),
+            nullable=True,
+        ),
+        sa.Column("name", sa.Text(), nullable=False),
+        sa.Column("display_name", sa.Text(), nullable=True),
+        sa.Column("description", sa.Text(), nullable=True),
+        sa.Column("runtime", sa.Text(), nullable=False),
+        sa.Column("source_code", sa.Text(), nullable=False),
+        sa.Column(
+            "manifest", postgresql.JSONB(), nullable=False, server_default=sa.text("'{}'::jsonb")
+        ),
+        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.UniqueConstraint("organization_id", "name", name="uq_compute_node_org_name"),
     )
-    op.create_index("ix_compute_node_definitions_org", "compute_node_definitions", ["organization_id"])
+    op.create_index(
+        "ix_compute_node_definitions_org", "compute_node_definitions", ["organization_id"]
+    )
 
 
 def downgrade() -> None:

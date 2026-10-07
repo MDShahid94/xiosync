@@ -1,15 +1,20 @@
 """Worker management API (Phase 2 — Gap G-4)."""
+
 from __future__ import annotations
+
 import uuid
 from typing import Any, cast
+
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 router = APIRouter(tags=["workers"])
 
+
 class _S(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
 
 class RegisterWorkerRequest(_S):
     enrollment_token: str
@@ -18,70 +23,101 @@ class RegisterWorkerRequest(_S):
     software_version: str | None = None
     capability_manifest: list[str] | None = None
 
+
 class ApproveWorkerRequest(_S):
     approved_by: uuid.UUID
 
+
 @router.post("/workers/register", status_code=201, summary="Register a worker", response_model=None)
-def register_worker(payload: RegisterWorkerRequest, request: Request) -> dict[str, Any] | JSONResponse:
+def register_worker(
+    payload: RegisterWorkerRequest, request: Request
+) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.domain.context import OrgContext
     from xiosync.services.workers import WorkerService
+
     ctx = cast(OrgContext, request.state.org_context)
     session = cast(OrmSession, request.state.org_session)
     svc = WorkerService(session)
     try:
-        rec = svc.register_worker(ctx, enrollment_token=payload.enrollment_token,
-                                  public_key=payload.public_key, pool_type=payload.pool_type,
-                                  software_version=payload.software_version,
-                                  capability_manifest=payload.capability_manifest)
+        rec = svc.register_worker(
+            ctx,
+            enrollment_token=payload.enrollment_token,
+            public_key=payload.public_key,
+            pool_type=payload.pool_type,
+            software_version=payload.software_version,
+            capability_manifest=payload.capability_manifest,
+        )
     except Exception as exc:
-        return JSONResponse(status_code=422, media_type="application/problem+json", content={
-            "type": "https://xiosync.dev/problems/worker_error", "title": "Registration failed",
-            "status": 422, "detail": str(exc),
-        })
+        return JSONResponse(
+            status_code=422,
+            media_type="application/problem+json",
+            content={
+                "type": "https://xiosync.dev/problems/worker_error",
+                "title": "Registration failed",
+                "status": 422,
+                "detail": str(exc),
+            },
+        )
     return {"id": str(rec.id), "enrollment_state": rec.enrollment_state}
 
+
 @router.post("/workers/{enrollment_id}/approve", summary="Approve a worker", response_model=None)
-def approve_worker(enrollment_id: uuid.UUID, payload: ApproveWorkerRequest, request: Request) -> dict[str, Any] | JSONResponse:
+def approve_worker(
+    enrollment_id: uuid.UUID, payload: ApproveWorkerRequest, request: Request
+) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.domain.context import OrgContext
     from xiosync.services.workers import WorkerService
+
     ctx = cast(OrgContext, request.state.org_context)
     session = cast(OrmSession, request.state.org_session)
     svc = WorkerService(session)
     try:
         rec = svc.approve_worker(ctx, enrollment_id, approved_by=payload.approved_by)
     except Exception as exc:
-        return JSONResponse(status_code=422, media_type="application/problem+json", content={
-            "type": "https://xiosync.dev/problems/worker_error", "title": "Approval failed",
-            "status": 422, "detail": str(exc),
-        })
+        return JSONResponse(
+            status_code=422,
+            media_type="application/problem+json",
+            content={
+                "type": "https://xiosync.dev/problems/worker_error",
+                "title": "Approval failed",
+                "status": 422,
+                "detail": str(exc),
+            },
+        )
     return {"id": str(rec.id), "enrollment_state": rec.enrollment_state}
 
-from xiosync.api.router_registry import register_router
+
 from xiosync.api.middleware.rbac import require_capability
+from xiosync.api.router_registry import register_router
+
 register_router(
     router,
-    prefix='/api/v1',
+    prefix="/api/v1",
     tags=["workers"],
     dependencies=[require_capability("worker.manage")],
 )
 
 # Public worker routes — authenticated by per-request secrets, not Bearer token.
 public_router = APIRouter(tags=["workers"])
-register_router(public_router, prefix='/api/v1', tags=["workers"])
+register_router(public_router, prefix="/api/v1", tags=["workers"])
 
 
 # ── Self-enroll (autonomous Colab / VM workers) ─────────────────────────────
 
+
 class SelfEnrollRequest(_S):
     """A worker runtime enrolling itself using the shared org secret."""
+
     worker_org_secret: str
-    runtime_type: str = "colab"           # colab | vm | mac | docker
+    runtime_type: str = "colab"  # colab | vm | mac | docker
     tailscale_ip: str | None = None
     reported_caps: list[str] = []
     software_version: str | None = None
-    public_key: str = ""                  # optional — can be empty for ephemeral workers
+    public_key: str = ""  # optional — can be empty for ephemeral workers
 
 
 class HeartbeatRequest(_S):
@@ -104,30 +140,40 @@ def self_enroll(payload: SelfEnrollRequest, request: Request) -> dict[str, Any] 
     secret is valid (self-approval mode for trusted runtimes).
     """
     import os
+
     from sqlalchemy import text
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.domain.context import OrgContext
-    from xiosync.services.workers import WorkerService
     from xiosync.platform.ids import new_id
+    from xiosync.services.workers import WorkerService
 
     expected_secret = os.environ.get("XIOSYNC_WORKER_ORG_SECRET", "")
     if not expected_secret or payload.worker_org_secret != expected_secret:
-        return JSONResponse(status_code=401, media_type="application/problem+json", content={
-            "type": "https://xiosync.dev/problems/unauthorized",
-            "title": "Invalid worker org secret",
-            "status": 401,
-        })
+        return JSONResponse(
+            status_code=401,
+            media_type="application/problem+json",
+            content={
+                "type": "https://xiosync.dev/problems/unauthorized",
+                "title": "Invalid worker org secret",
+                "status": 401,
+            },
+        )
 
     # Build a synthetic OrgContext for Org Zero — self-enroll is authenticated
     # by worker_org_secret in the body, not a Bearer token, so request.state
     # has no org_context. We construct one directly.
     import uuid as _uuid  # noqa: PLC0415
-    from xiosync.domain.context import PlatformRole, MembershipRole  # noqa: PLC0415
+
+    from xiosync.domain.context import MembershipRole, PlatformRole  # noqa: PLC0415
     from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
+
     _ORG_ZERO = _uuid.UUID("00000000-0000-7000-8000-000000000000")
     ctx = OrgContext(
-        auth_identity_id=_ORG_ZERO, actor_id=_ORG_ZERO,
-        organization_id=_ORG_ZERO, session_id=_ORG_ZERO,
+        auth_identity_id=_ORG_ZERO,
+        actor_id=_ORG_ZERO,
+        organization_id=_ORG_ZERO,
+        session_id=_ORG_ZERO,
         platform_role=PlatformRole.PLATFORM_ADMIN,
         membership_role=MembershipRole.ORG_OWNER,
     )
@@ -136,6 +182,7 @@ def self_enroll(payload: SelfEnrollRequest, request: Request) -> dict[str, Any] 
 
     # Generate a one-time enrollment token derived from org secret + timestamp
     import secrets
+
     enrollment_token = secrets.token_urlsafe(32)
 
     # Create a system actor for this worker so the FK constraint is satisfied
@@ -161,6 +208,7 @@ def self_enroll(payload: SelfEnrollRequest, request: Request) -> dict[str, Any] 
         session.flush()
     except Exception as _actor_err:
         import logging
+
         logging.getLogger(__name__).warning("actor creation failed: %s", _actor_err)
 
     try:
@@ -174,11 +222,16 @@ def self_enroll(payload: SelfEnrollRequest, request: Request) -> dict[str, Any] 
             capability_manifest=payload.reported_caps or [],
         )
     except Exception as exc:
-        return JSONResponse(status_code=422, media_type="application/problem+json", content={
-            "type": "https://xiosync.dev/problems/worker_error",
-            "title": "Self-enroll failed",
-            "status": 422, "detail": str(exc),
-        })
+        return JSONResponse(
+            status_code=422,
+            media_type="application/problem+json",
+            content={
+                "type": "https://xiosync.dev/problems/worker_error",
+                "title": "Self-enroll failed",
+                "status": 422,
+                "detail": str(exc),
+            },
+        )
 
     # Auto-approve (trusted runtime — secret validated above)
     try:
@@ -226,6 +279,7 @@ def worker_heartbeat(
 ) -> dict[str, Any] | JSONResponse:
     """Called by worker runtimes every N seconds to report liveness."""
     import json
+
     from sqlalchemy import text
     from sqlalchemy.orm import Session as OrmSession
 
@@ -247,11 +301,15 @@ def worker_heartbeat(
     ).fetchone()
 
     if not result:
-        return JSONResponse(status_code=404, media_type="application/problem+json", content={
-            "type": "https://xiosync.dev/problems/not_found",
-            "title": "Worker enrollment not found",
-            "status": 404,
-        })
+        return JSONResponse(
+            status_code=404,
+            media_type="application/problem+json",
+            content={
+                "type": "https://xiosync.dev/problems/not_found",
+                "title": "Worker enrollment not found",
+                "status": 404,
+            },
+        )
 
     session.commit()
     return {"enrollment_id": str(enrollment_id), "last_seen_at": "now", "status": "ok"}

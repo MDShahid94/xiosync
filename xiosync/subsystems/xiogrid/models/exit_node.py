@@ -4,6 +4,7 @@ Multi-host design: each PPPoEHost represents one Mac Mini + Ubuntu VM pair.
 PPPoEExitNode.ppp_slot is unique per host (0-980), not globally unique.
 New hosts are registered at runtime — no code change required.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -11,8 +12,15 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
-    Boolean, DateTime, Float, ForeignKey, Index,
-    Integer, String, Text, UniqueConstraint,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -28,11 +36,10 @@ class PPPoEHost(Base):
     unique public IPs from its Airtel PPPoE line.
     New hosts can be added at any time via the /api/v1/pppoe/hosts endpoint.
     """
+
     __tablename__ = "xiogrid_pppoe_hosts"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=new_id
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     # Human-readable label
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     # e.g. "mac-mini-home", "mac-mini-office-2"
@@ -42,8 +49,9 @@ class PPPoEHost(Base):
     vm_ssh_user: Mapped[str] = mapped_column(String(60), nullable=False, default="karmantu")
     vm_ssh_host: Mapped[str] = mapped_column(String(120), nullable=False)  # 192.168.54.132
     vm_ssh_port: Mapped[int] = mapped_column(Integer, nullable=False, default=22)
-    vm_scripts_dir: Mapped[str] = mapped_column(String(200), nullable=False,
-                                                  default="/usr/local/bin/xiogrid")
+    vm_scripts_dir: Mapped[str] = mapped_column(
+        String(200), nullable=False, default="/usr/local/bin/xiogrid"
+    )
     # PPPoE parent interface on the VM (macvlan parent)
     pppoe_parent_iface: Mapped[str] = mapped_column(String(30), nullable=False, default="enp26s0")
     # PPPoE credentials (stored here; can migrate to secrets table later)
@@ -63,15 +71,11 @@ class PPPoEHost(Base):
     # Lifecycle
     state: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
     # "active" | "offline" | "maintenance"
-    registered_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
+    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Extensible metadata (e.g. ISP name, location, notes)
-    meta: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, server_default="{}"
-    )
+    meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
 
 
 class FingerprintProfile(Base):
@@ -81,11 +85,10 @@ class FingerprintProfile(Base):
     a profile deterministically based on its slot index (see domain/pppoe.py).
     8 profiles cover Mac/Windows/Linux/Android diversity.
     """
+
     __tablename__ = "xiogrid_fingerprint_profiles"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=new_id
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     os: Mapped[str] = mapped_column(String(20), nullable=False)
     # "macos" | "windows" | "linux" | "android"
@@ -113,13 +116,9 @@ class FingerprintProfile(Base):
         String(60), nullable=False, server_default="America/New_York"
     )
     # IANA tz string — must match PPPoE exit-node's geo-IP region for consistency.
-    battery_level: Mapped[float] = mapped_column(
-        Float, nullable=False, server_default="0.72"
-    )
+    battery_level: Mapped[float] = mapped_column(Float, nullable=False, server_default="0.72")
     # Navigator.getBattery() level (0.0–1.0). Default 0.72 = plausible mid-charge.
-    connection_type: Mapped[str] = mapped_column(
-        String(20), nullable=False, server_default="wifi"
-    )
+    connection_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default="wifi")
     # navigator.connection.effectiveType — "wifi" | "4g" | "ethernet"
 
 
@@ -129,6 +128,7 @@ class PPPoEExitNode(Base):
     Uniqueness: (host_id, ppp_slot) — so two hosts can both have a slot 42.
     Global pool = union of all active hosts' slots.
     """
+
     __tablename__ = "xiogrid_pppoe_exit_nodes"
     __table_args__ = (
         UniqueConstraint("host_id", "ppp_slot", name="uq_host_ppp_slot"),
@@ -136,9 +136,7 @@ class PPPoEExitNode(Base):
         Index("ix_pppoe_nodes_host_state", "host_id", "state"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=new_id
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     host_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("xiogrid_pppoe_hosts.id", ondelete="CASCADE"),
@@ -162,14 +160,10 @@ class PPPoEExitNode(Base):
     assigned_worker_ts_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
     # Colab worker's Tailscale IP (used in ip rule on VM)
     assigned_session_id: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    assigned_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Metrics
-    last_seen: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_health_check: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -187,6 +181,4 @@ class PPPoEExitNode(Base):
     # "running" | "stopped" | None
     proxy_state: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
-    meta: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, server_default="{}"
-    )
+    meta: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")

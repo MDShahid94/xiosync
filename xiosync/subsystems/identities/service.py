@@ -20,6 +20,7 @@ Sharing model:
   identities.organization_id = NULL  → platform-global shared identity
   identities.organization_id = <id>  → org-private identity
 """
+
 from __future__ import annotations
 
 import json
@@ -28,24 +29,29 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from xiosync.domain.profile_identity import ProfileIdentity, DomainCookieSet, MaterializationMode, BrowserCookie
-from xiosync.domain.cookie_health import check_cookie_health, CookieHealthReport
-
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from xiosync.domain.context import OrgContext
+from xiosync.domain.cookie_health import CookieHealthReport, check_cookie_health
+from xiosync.domain.profile_identity import (
+    BrowserCookie,
+    DomainCookieSet,
+    MaterializationMode,
+    ProfileIdentity,
+)
 
 __all__ = [
-    "IdentityService", "IdentityRecord", "CredentialRecord",
-    "IdentityNotFoundError", "IdentityConflictError",
+    "IdentityService",
+    "IdentityRecord",
+    "CredentialRecord",
+    "IdentityNotFoundError",
+    "IdentityConflictError",
 ]
 
 # Open state set — validated at service layer only, never in DB schema.
 # Platforms may define their own states via tags or metadata.
-_DEFAULT_STATES = frozenset({
-    "active", "suspended", "banned", "unverified", "expired", "archived"
-})
+_DEFAULT_STATES = frozenset({"active", "suspended", "banned", "unverified", "expired", "archived"})
 
 
 class IdentityNotFoundError(KeyError):
@@ -60,17 +66,17 @@ class IdentityConflictError(ValueError):
 class IdentityRecord:
     id: uuid.UUID
     organization_id: uuid.UUID | None
-    identifier: str               # email, username, account ID, phone, handle, …
-    platform: str                 # google, github, stripe, cloudflare, custom, …
+    identifier: str  # email, username, account ID, phone, handle, …
+    platform: str  # google, github, stripe, cloudflare, custom, …
     display_name: str | None
-    state: str                    # active | suspended | banned | unverified | expired | archived | …
-    metadata: dict[str, Any]      # free-form: xiobr_tier (legacy), credits, plan, quota, …
-    tags: list[str]               # free-form labels: ['pro', 'bot', 'verified', …]
+    state: str  # active | suspended | banned | unverified | expired | archived | …
+    metadata: dict[str, Any]  # free-form: xiobr_tier (legacy), credits, plan, quota, …
+    tags: list[str]  # free-form labels: ['pro', 'bot', 'verified', …]
     last_used_at: datetime | None
     created_at: datetime
     updated_at: datetime
     is_platform_global: bool
-    profile_serial: int = 0       # identities.profile_serial — permanent PRFL-NNN sequence value
+    profile_serial: int = 0  # identities.profile_serial — permanent PRFL-NNN sequence value
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,10 +84,10 @@ class CredentialRecord:
     id: uuid.UUID
     organization_id: uuid.UUID | None
     identity_id: uuid.UUID
-    credential_type: str          # free-form: password, api_key, oauth_token, cookie, totp_secret, …
-    label: str                    # differentiates multiple creds of same type; default='default'
-    vault_key: str | None         # reference into vaulted_secrets
-    storage_object_key: str | None # reference into storage_objects (large blobs)
+    credential_type: str  # free-form: password, api_key, oauth_token, cookie, totp_secret, …
+    label: str  # differentiates multiple creds of same type; default='default'
+    vault_key: str | None  # reference into vaulted_secrets
+    storage_object_key: str | None  # reference into storage_objects (large blobs)
     health_score: float
     last_refreshed_at: datetime | None
     expires_at: datetime | None
@@ -90,7 +96,6 @@ class CredentialRecord:
 
 
 class IdentityService:
-
     def __init__(self, session: Session) -> None:
         self._db = session
 
@@ -124,8 +129,10 @@ class IdentityService:
                 """),
                 {
                     "org": str(org_id) if org_id else None,
-                    "ident": identifier, "plat": platform,
-                    "dname": display_name, "state": state,
+                    "ident": identifier,
+                    "plat": platform,
+                    "dname": display_name,
+                    "state": state,
                     "meta": json.dumps(metadata or {}),
                     "tags": list(tags or []),
                 },
@@ -291,18 +298,19 @@ class IdentityService:
         tags: list[str] | None = None,
     ) -> IdentityRecord:
         sets = ["updated_at = now()"]
-        params: dict[str, Any] = {
-            "id": str(identity_id), "org": str(ctx.organization_id)
-        }
+        params: dict[str, Any] = {"id": str(identity_id), "org": str(ctx.organization_id)}
         if state is not None:
-            sets.append("state = :state"); params["state"] = state
+            sets.append("state = :state")
+            params["state"] = state
         if display_name is not None:
-            sets.append("display_name = :dname"); params["dname"] = display_name
+            sets.append("display_name = :dname")
+            params["dname"] = display_name
         if metadata_patch:
             sets.append("metadata = metadata || cast(:mp as jsonb)")
             params["mp"] = json.dumps(metadata_patch)
         if tags is not None:
-            sets.append("tags = :tags"); params["tags"] = tags
+            sets.append("tags = :tags")
+            params["tags"] = tags
 
         result = self._db.execute(
             text(f"""
@@ -357,6 +365,7 @@ class IdentityService:
         # and raw vaulted_secrets SQL outside the vault subsystem.
         if secret_value is not None and vault_key is None:
             from xiosync.subsystems.vault.service import VaultService  # noqa: PLC0415
+
             _lbl_suffix = f"/{label}" if label != "default" else ""
             vault_key = f"identities/{identity_id}/{credential_type}{_lbl_suffix}"
             secret_type = _CRED_TO_SECRET_TYPE.get(credential_type, "generic")
@@ -390,9 +399,13 @@ class IdentityService:
             """),
             {
                 "org": str(ctx.organization_id),
-                "iid": str(identity_id), "ctype": credential_type, "label": label,
-                "vkey": vault_key, "sokey": storage_object_key,
-                "health": health_score, "exp": expires_at,
+                "iid": str(identity_id),
+                "ctype": credential_type,
+                "label": label,
+                "vkey": vault_key,
+                "sokey": storage_object_key,
+                "health": health_score,
+                "exp": expires_at,
             },
         ).fetchone()
         self._db.commit()
@@ -417,8 +430,7 @@ class IdentityService:
                 WHERE c.identity_id = :iid AND c.credential_type = :ctype
                   AND (i.organization_id = :org OR i.organization_id IS NULL)
             """),
-            {"iid": str(identity_id), "ctype": credential_type,
-             "org": str(ctx.organization_id)},
+            {"iid": str(identity_id), "ctype": credential_type, "org": str(ctx.organization_id)},
         ).fetchone()
         if not row:
             raise IdentityNotFoundError(
@@ -427,13 +439,12 @@ class IdentityService:
         rec = _row_to_credential(row)
         if decrypt and rec.vault_key:
             from xiosync.subsystems.vault.service import VaultService
+
             value = VaultService(self._db).get_secret(ctx, rec.vault_key)
             return rec, value
         return rec
 
-    def list_credentials(
-        self, ctx: OrgContext, identity_id: uuid.UUID
-    ) -> list[CredentialRecord]:
+    def list_credentials(self, ctx: OrgContext, identity_id: uuid.UUID) -> list[CredentialRecord]:
         rows = self._db.execute(
             text("""
                 SELECT c.id, c.organization_id, c.identity_id, c.credential_type, c.label,
@@ -572,9 +583,11 @@ class IdentityService:
             filters.append("worker_id = :wid")
             params["wid"] = str(worker_id)
         rows = self._db.execute(
-            text(f"SELECT id, identity_id, worker_id, acquired_at, expires_at, "
-                 f"released_at, run_context, state FROM identity_leases "
-                 f"WHERE {' AND '.join(filters)} ORDER BY acquired_at DESC"),
+            text(
+                f"SELECT id, identity_id, worker_id, acquired_at, expires_at, "
+                f"released_at, run_context, state FROM identity_leases "
+                f"WHERE {' AND '.join(filters)} ORDER BY acquired_at DESC"
+            ),
             params,
         ).fetchall()
         return [
@@ -585,7 +598,9 @@ class IdentityService:
                 "acquired_at": r.acquired_at.isoformat(),
                 "expires_at": r.expires_at.isoformat(),
                 "released_at": r.released_at.isoformat() if r.released_at else None,
-                "run_context": r.run_context if isinstance(r.run_context, dict) else json.loads(r.run_context or "{}"),
+                "run_context": r.run_context
+                if isinstance(r.run_context, dict)
+                else json.loads(r.run_context or "{}"),
                 "state": r.state,
             }
             for r in rows
@@ -627,6 +642,7 @@ class IdentityService:
         domain_sets: dict[str, DomainCookieSet] = {}
         for r in ds_rows:
             from xiosync.domain.cookie_health import CookieHealthUrgency
+
             domain_sets[r[0]] = DomainCookieSet(
                 domain_pattern=r[0],
                 cookies=(),
@@ -640,7 +656,7 @@ class IdentityService:
 
         return ProfileIdentity(
             identity_id=identity_id,
-            serial=identity.profile_serial,        # fix: was identity.serial (AttributeError → 0)
+            serial=identity.profile_serial,  # fix: was identity.serial (AttributeError → 0)
             organization_id=ctx.organization_id,
             domain_sets=domain_sets,
             materialization=mode,
@@ -720,7 +736,9 @@ class IdentityService:
             identity_id,
             "google.com",
             is_valid=report.ok,
-            health_urgency=report.refresh_urgency.value if hasattr(report.refresh_urgency, 'value') else str(report.refresh_urgency),
+            health_urgency=report.refresh_urgency.value
+            if hasattr(report.refresh_urgency, "value")
+            else str(report.refresh_urgency),
             cookie_count=report.total_cookies,
         )
         return report
@@ -779,15 +797,15 @@ class IdentityService:
 # Maps credential_type strings to vault secret_type values.
 # This is a soft hint — any credential_type NOT listed here defaults to 'generic'.
 _CRED_TO_SECRET_TYPE: dict[str, str] = {
-    "password":      "credential",
-    "oauth_token":   "oauth",
+    "password": "credential",
+    "oauth_token": "oauth",
     "refresh_token": "oauth",
-    "api_key":       "api_key",
-    "ssh_key":       "ssh_key",
-    "totp_secret":   "totp",
-    "cookie":        "credential",
+    "api_key": "api_key",
+    "ssh_key": "ssh_key",
+    "totp_secret": "totp",
+    "cookie": "credential",
     "session_token": "credential",
-    "client_cert":   "ssh_key",
+    "client_cert": "ssh_key",
 }
 
 

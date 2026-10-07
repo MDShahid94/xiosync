@@ -10,6 +10,7 @@ No external KMS dependency — the master secret lives in XIOSYNC_AUTH_SECRET
   - A platform admin can decrypt platform-global secrets; org admins
     can only decrypt their own org's secrets.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -20,6 +21,7 @@ import uuid
 # ── AES-256-GCM via stdlib (Python 3.8+ cryptography or fallback) ─────────────
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
     _HAS_CRYPTOGRAPHY = True
 except ImportError:  # pragma: no cover
     _HAS_CRYPTOGRAPHY = False
@@ -27,9 +29,9 @@ except ImportError:  # pragma: no cover
 __all__ = ["VaultCrypto", "VaultCryptoError"]
 
 _PLATFORM_SCOPE = b"__platform__"
-_KEY_LEN = 32   # AES-256
-_IV_LEN  = 12   # GCM nonce
-_TAG_LEN = 16   # GCM auth tag
+_KEY_LEN = 32  # AES-256
+_IV_LEN = 12  # GCM nonce
+_TAG_LEN = 16  # GCM auth tag
 
 
 class VaultCryptoError(Exception):
@@ -66,16 +68,14 @@ class VaultCrypto:
             (ciphertext, iv, auth_tag) — all bytes, store in DB columns.
         """
         if not _HAS_CRYPTOGRAPHY:
-            raise VaultCryptoError(
-                "cryptography package required: uv add cryptography"
-            )
+            raise VaultCryptoError("cryptography package required: uv add cryptography")
         key = self._derive_key(org_id)
         iv = os.urandom(_IV_LEN)
         aesgcm = AESGCM(key)
         # AESGCM.encrypt returns ciphertext + 16-byte tag concatenated
         ct_and_tag = aesgcm.encrypt(iv, plaintext.encode(), None)
         ciphertext = ct_and_tag[:-_TAG_LEN]
-        auth_tag   = ct_and_tag[-_TAG_LEN:]
+        auth_tag = ct_and_tag[-_TAG_LEN:]
         return ciphertext, iv, auth_tag
 
     def decrypt(
@@ -91,9 +91,7 @@ class VaultCrypto:
             VaultCryptoError: If the key is wrong or data has been tampered with.
         """
         if not _HAS_CRYPTOGRAPHY:
-            raise VaultCryptoError(
-                "cryptography package required: uv add cryptography"
-            )
+            raise VaultCryptoError("cryptography package required: uv add cryptography")
         key = self._derive_key(org_id)
         aesgcm = AESGCM(key)
         try:

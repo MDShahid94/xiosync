@@ -1,11 +1,9 @@
 """Unit tests for xiosync.domain.domain_registry (Universal Domain Registry)."""
-from __future__ import annotations
 
-import pytest
+from __future__ import annotations
 
 from xiosync.domain.domain_registry import (
     DEFAULT_DOMAIN_MAP,
-    DomainRegistration,
     auto_detect_services,
     classify_cookie_domain,
     get_auth_chain,

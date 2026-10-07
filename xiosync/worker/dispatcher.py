@@ -6,7 +6,9 @@ All imports are re-exported from the new canonical location.
 .. deprecated::
     Import from ``xiosync.worker.webhook_dispatcher`` instead.
 """
+
 from __future__ import annotations
+
 import warnings as _warnings
 
 _warnings.warn(
@@ -18,7 +20,7 @@ _warnings.warn(
 
 # Re-export everything so existing code continues to work unchanged.
 from xiosync.worker.webhook_dispatcher import (  # noqa: F401, E402
-    dispatch_pending_webhooks,
-    MAX_DELIVERY_ATTEMPTS,
     DELIVERY_TIMEOUT,
+    MAX_DELIVERY_ATTEMPTS,
+    dispatch_pending_webhooks,
 )

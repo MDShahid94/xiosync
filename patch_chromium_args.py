@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 # 1. Update CHROMIUM_ARGS
@@ -23,25 +23,17 @@ replacement_chromium_args = """CHROMIUM_ARGS = [
     "--exclude-switches=enable-automation",
 ]"""
 
-code = re.sub(
-    r"CHROMIUM_ARGS = \[(.*?)\n\]",
-    replacement_chromium_args,
-    code,
-    flags=re.DOTALL
-)
+code = re.sub(r"CHROMIUM_ARGS = \[(.*?)\n\]", replacement_chromium_args, code, flags=re.DOTALL)
 
 # 2. Update UC opts
 # Remove UserAgentClientHint
 code = code.replace(
     'opts.add_argument("--disable-features=ServiceWorker,UserAgentClientHint")',
-    'opts.add_argument("--disable-features=ServiceWorker")'
+    'opts.add_argument("--disable-features=ServiceWorker")',
 )
 
 # Remove explicit user-agent flag to avoid mismatch - we'll handle this in CDP
-code = code.replace(
-    'opts.add_argument(f"--user-agent={user_agent}")\n',
-    ''
-)
+code = code.replace('opts.add_argument(f"--user-agent={user_agent}")\n', "")
 
 # 3. Add useAutomationExtension=false and excludeSwitches
 replacement_prefs = """      opts.add_experimental_option("excludeSwitches", ["enable-automation"])

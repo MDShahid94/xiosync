@@ -134,9 +134,7 @@ def test_worker_can_promote() -> None:
     assert (
         worker_can_promote("contributor", successful_executions=50, required_executions=20) is True
     )
-    assert (
-        worker_can_promote("trusted", successful_executions=100, required_executions=100) is True
-    )
+    assert worker_can_promote("trusted", successful_executions=100, required_executions=100) is True
     assert worker_can_promote("core", successful_executions=200, required_executions=150) is True
 
 
@@ -194,9 +192,7 @@ def test_credential_is_valid_expired() -> None:
 
 def test_credential_is_valid_revoked() -> None:
     """Revoked credential is invalid even when not yet expired."""
-    assert (
-        credential_is_valid(expires_at=_FUTURE, revoked_at=_PAST, now=_NOW) is False
-    )
+    assert credential_is_valid(expires_at=_FUTURE, revoked_at=_PAST, now=_NOW) is False
 
 
 def test_credential_is_valid_revoked_and_expired() -> None:

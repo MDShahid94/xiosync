@@ -47,17 +47,11 @@ class RegistryCategory(Base):
         ),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=new_id
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    namespace: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'core'")
-    )
+    namespace: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'core'"))
     description: Mapped[str | None] = mapped_column(Text)
-    state: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'active'")
-    )
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
     created_at: Mapped[datetime] = mapped_column(
         _timestamptz, nullable=False, server_default=text("now()")
     )
@@ -81,9 +75,7 @@ class CapabilityGroup(Base):
         ),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=new_id
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organizations.id"), index=True
     )
@@ -92,9 +84,7 @@ class CapabilityGroup(Base):
     operations: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
-    state: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'active'")
-    )
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
     created_at: Mapped[datetime] = mapped_column(
         _timestamptz, nullable=False, server_default=text("now()")
     )

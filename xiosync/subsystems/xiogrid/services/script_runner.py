@@ -12,6 +12,7 @@ Expected stdout contract (last JSON line wins):
 The runner is intentionally synchronous (called from worker thread).
 Node.js subprocesses are bounded by `timeout_seconds`.
 """
+
 from __future__ import annotations
 
 import json
@@ -43,7 +44,7 @@ _DEFAULT_TIMEOUT = 180  # seconds
 @dataclass
 class RunResult:
     success: bool
-    status: str               # "success" | "error" | "timeout" | "launch_error"
+    status: str  # "success" | "error" | "timeout" | "launch_error"
     result: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
     stdout: str = ""
@@ -126,7 +127,9 @@ class ScriptRunner:
             except subprocess.TimeoutExpired:
                 # Kill the whole process group (Node + all children)
                 try:
-                    import os, signal
+                    import os
+                    import signal
+
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                 except ProcessLookupError:
                     pass  # already exited
@@ -208,8 +211,7 @@ class ScriptRunner:
             )
 
         error_msg = (
-            parsed.get("error", parsed.get("detail", "")) if parsed
-            else f"exit_code={exit_code}"
+            parsed.get("error", parsed.get("detail", "")) if parsed else f"exit_code={exit_code}"
         )
         logger.warning(
             "script_runner.failed",

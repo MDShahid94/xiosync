@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Mapping
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,6 +14,8 @@ from sqlalchemy.orm import Session
 from xiosync.domain.context import OrgContext
 from xiosync.persistence.models.browser import (
     ComputeRuntime as RuntimeProvider,
+)
+from xiosync.persistence.models.browser import (
     RuntimeNode,
 )
 from xiosync.platform.ids import new_id
@@ -73,6 +76,7 @@ class ComputeRuntimeService:
         to_state: str | None = None,
     ) -> uuid.UUID:
         from xiosync.persistence.models.operations import Operation
+
         op_id = new_id()
         self._session.add(
             Operation(
@@ -100,7 +104,7 @@ class ComputeRuntimeService:
     ) -> RuntimeProviderRecord:
         runtime_id = new_id()
         now = datetime.now(tz=UTC)
-        
+
         row = RuntimeProvider(
             id=runtime_id,
             organization_id=ctx.organization_id,
@@ -111,8 +115,10 @@ class ComputeRuntimeService:
             created_at=now,
         )
         self._session.add(row)
-        
-        op_id = self._record_op(ctx, "register_provider", actor_id=ctx.actor_id or ctx.organization_id)
+
+        op_id = self._record_op(
+            ctx, "register_provider", actor_id=ctx.actor_id or ctx.organization_id
+        )
         self._event_service.append(
             ctx,
             event_type="compute_runtime.created",
@@ -122,7 +128,7 @@ class ComputeRuntimeService:
             entity_type="runtime_provider",
             entity_id=runtime_id,
         )
-        
+
         self._session.flush()
         return RuntimeProviderRecord(
             id=row.id,
@@ -141,9 +147,7 @@ class ComputeRuntimeService:
         project_id: uuid.UUID | None = None,
     ) -> list[RuntimeProviderRecord]:
         """List all compute runtime providers in this org, optionally filtered by project_id."""
-        stmt = select(RuntimeProvider).where(
-            RuntimeProvider.organization_id == ctx.organization_id
-        )
+        stmt = select(RuntimeProvider).where(RuntimeProvider.organization_id == ctx.organization_id)
         if project_id is not None:
             stmt = stmt.where(RuntimeProvider.project_id == project_id)
         rows = self._session.scalars(stmt).all()
@@ -169,14 +173,15 @@ class ComputeRuntimeService:
     ) -> RuntimeNodeRecord:
         node_id = new_id()
         now = datetime.now(tz=UTC)
-        
+
         runtime = self._session.scalar(
             select(RuntimeProvider).where(
                 RuntimeProvider.id == runtime_id,
-                RuntimeProvider.organization_id == ctx.organization_id
+                RuntimeProvider.organization_id == ctx.organization_id,
             )
         )
-        if not runtime: raise ValueError(f"Runtime {runtime_id} not found")
+        if not runtime:
+            raise ValueError(f"Runtime {runtime_id} not found")
 
         row = RuntimeNode(
             id=node_id,
@@ -184,14 +189,15 @@ class ComputeRuntimeService:
             project_id=runtime.project_id,
             runtime_id=runtime_id,
             state="provisioning",
-            node_metadata=dict(spec), hostname=f"node-{str(node_id)[:8]}",
+            node_metadata=dict(spec),
+            hostname=f"node-{str(node_id)[:8]}",
             created_at=now,
         )
         self._session.add(row)
-        
+
         op_id = self._record_op(
-            ctx, 
-            "provision_node", 
+            ctx,
+            "provision_node",
             actor_id=ctx.actor_id or ctx.organization_id,
             to_state="provisioning",
         )
@@ -204,7 +210,7 @@ class ComputeRuntimeService:
             trigger="api",
             entity_type="runtime_node",
         )
-        
+
         self._session.flush()
         return RuntimeNodeRecord(
             id=row.id,
@@ -232,7 +238,7 @@ class ComputeRuntimeService:
             stmt = stmt.where(RuntimeNode.project_id == project_id)
         if state is not None:
             stmt = stmt.where(RuntimeNode.state == state)
-            
+
         rows = self._session.scalars(stmt).all()
         return [
             RuntimeNodeRecord(
@@ -249,20 +255,22 @@ class ComputeRuntimeService:
 
     def terminate_node(self, ctx: OrgContext, node_id: uuid.UUID) -> None:
         row = self._session.scalar(
-            select(RuntimeNode).where(
+            select(RuntimeNode)
+            .where(
                 RuntimeNode.organization_id == ctx.organization_id,
                 RuntimeNode.id == node_id,
-            ).with_for_update()
+            )
+            .with_for_update()
         )
         if not row:
             raise ValueError(f"Node {node_id} not found")
-            
+
         old_state = row.state
         row.state = "terminated"
-        
+
         op_id = self._record_op(
-            ctx, 
-            "terminate_node", 
+            ctx,
+            "terminate_node",
             actor_id=ctx.actor_id or ctx.organization_id,
             from_state=old_state,
             to_state="terminated",
@@ -287,7 +295,7 @@ class ComputeRuntimeService:
         )
         if not row:
             raise ValueError(f"Node {node_id} not found")
-            
+
         return NodeHealthRecord(
             node_id=row.id,
             status="healthy" if row.state == "running" else "unknown",

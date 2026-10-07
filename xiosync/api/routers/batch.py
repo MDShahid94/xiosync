@@ -14,6 +14,7 @@ POST /api/v1/batch/sessions/purge          — hard-delete session records
 POST /api/v1/batch/runs/cancel             — cancel in-progress workflow runs
 POST /api/v1/batch/runs/retry              — re-queue failed workflow runs
 """
+
 from __future__ import annotations
 
 import json
@@ -21,7 +22,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -38,22 +39,25 @@ _MAX_BATCH = 500  # prevent accidental bulk-deletes of entire org
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
 
+
 class IDListRequest(BaseModel):
     ids: list[uuid.UUID] = Field(..., min_length=1, max_length=_MAX_BATCH)
     model_config = ConfigDict(from_attributes=True)
 
 
 class BatchResult(BaseModel):
-    affected:  int
-    ids:       list[str]
-    message:   str = ""
+    affected: int
+    ids: list[str]
+    message: str = ""
 
 
 def _id_strs(ids: list[uuid.UUID]) -> list[str]:
     return [str(i) for i in ids]
 
 
-def _check_org_owns(db: Session, org_id: uuid.UUID, table: str, col: str, ids: list[uuid.UUID]) -> None:
+def _check_org_owns(
+    db: Session, org_id: uuid.UUID, table: str, col: str, ids: list[uuid.UUID]
+) -> None:
     """Raise 403 if any ID in the list does not belong to this org."""
     rows = db.execute(
         text(f"SELECT id FROM {table} WHERE id = ANY(:ids) AND {col} != :org"),  # noqa: S608
@@ -66,10 +70,11 @@ def _check_org_owns(db: Session, org_id: uuid.UUID, table: str, col: str, ids: l
 
 # ── Identity bulk endpoints ────────────────────────────────────────────────────
 
+
 @router.post("/identities/enable", response_model=BatchResult)
 def bulk_enable_identities(
     req: IDListRequest,
-    db:  Session    = Depends(get_db),
+    db: Session = Depends(get_db),
     ctx: OrgContext = Depends(get_org_context),
 ) -> dict:
     """Enable a list of identities (set status = 'active')."""
@@ -83,14 +88,21 @@ def bulk_enable_identities(
         {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
     )
     db.commit()
-    logger.info("batch.identities.enabled", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
-    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} identity/ies enabled"}
+    logger.info(
+        "batch.identities.enabled",
+        extra={"count": result.rowcount, "org": str(ctx.organization_id)},
+    )
+    return {
+        "affected": result.rowcount,
+        "ids": _id_strs(req.ids),
+        "message": f"{result.rowcount} identity/ies enabled",
+    }
 
 
 @router.post("/identities/disable", response_model=BatchResult)
 def bulk_disable_identities(
     req: IDListRequest,
-    db:  Session    = Depends(get_db),
+    db: Session = Depends(get_db),
     ctx: OrgContext = Depends(get_org_context),
 ) -> dict:
     """Disable a list of identities (set status = 'suspended')."""
@@ -104,13 +116,20 @@ def bulk_disable_identities(
         {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
     )
     db.commit()
-    logger.info("batch.identities.disabled", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
-    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} identity/ies suspended"}
+    logger.info(
+        "batch.identities.disabled",
+        extra={"count": result.rowcount, "org": str(ctx.organization_id)},
+    )
+    return {
+        "affected": result.rowcount,
+        "ids": _id_strs(req.ids),
+        "message": f"{result.rowcount} identity/ies suspended",
+    }
 
 
 class TagRequest(BaseModel):
-    ids: list[uuid.UUID]  = Field(..., min_length=1, max_length=_MAX_BATCH)
-    tag: str              = Field(..., min_length=1, max_length=64)
+    ids: list[uuid.UUID] = Field(..., min_length=1, max_length=_MAX_BATCH)
+    tag: str = Field(..., min_length=1, max_length=64)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -118,7 +137,7 @@ class TagRequest(BaseModel):
 @router.post("/identities/tag", response_model=BatchResult)
 def bulk_tag_identities(
     req: TagRequest,
-    db:  Session    = Depends(get_db),
+    db: Session = Depends(get_db),
     ctx: OrgContext = Depends(get_org_context),
 ) -> dict:
     """Append a tag to the metadata.tags array of multiple identities."""
@@ -135,20 +154,24 @@ def bulk_tag_identities(
             WHERE  id = ANY(:ids) AND organization_id = :org
         """),
         {
-            "ids":      _id_strs(req.ids),
-            "org":      str(ctx.organization_id),
+            "ids": _id_strs(req.ids),
+            "org": str(ctx.organization_id),
             "tag_json": json.dumps([req.tag]),
         },
     )
     db.commit()
     logger.info("batch.identities.tagged", extra={"tag": req.tag, "count": result.rowcount})
-    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"Tag '{req.tag}' applied"}
+    return {
+        "affected": result.rowcount,
+        "ids": _id_strs(req.ids),
+        "message": f"Tag '{req.tag}' applied",
+    }
 
 
 @router.post("/identities/delete", response_model=BatchResult)
 def bulk_delete_identities(
     req: IDListRequest,
-    db:  Session    = Depends(get_db),
+    db: Session = Depends(get_db),
     ctx: OrgContext = Depends(get_org_context),
 ) -> dict:
     """Soft-delete multiple identities (set status = 'deleted', clear credentials)."""
@@ -163,16 +186,24 @@ def bulk_delete_identities(
         {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
     )
     db.commit()
-    logger.info("batch.identities.deleted", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
-    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} identity/ies soft-deleted"}
+    logger.info(
+        "batch.identities.deleted",
+        extra={"count": result.rowcount, "org": str(ctx.organization_id)},
+    )
+    return {
+        "affected": result.rowcount,
+        "ids": _id_strs(req.ids),
+        "message": f"{result.rowcount} identity/ies soft-deleted",
+    }
 
 
 # ── Session bulk endpoints ─────────────────────────────────────────────────────
 
+
 @router.post("/sessions/terminate", response_model=BatchResult)
 def bulk_terminate_sessions(
     req: IDListRequest,
-    db:  Session    = Depends(get_db),
+    db: Session = Depends(get_db),
     ctx: OrgContext = Depends(get_org_context),
 ) -> dict:
     """Mark multiple browser sessions as terminated."""
@@ -188,14 +219,21 @@ def bulk_terminate_sessions(
         {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
     )
     db.commit()
-    logger.info("batch.sessions.terminated", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
-    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} session(s) terminated"}
+    logger.info(
+        "batch.sessions.terminated",
+        extra={"count": result.rowcount, "org": str(ctx.organization_id)},
+    )
+    return {
+        "affected": result.rowcount,
+        "ids": _id_strs(req.ids),
+        "message": f"{result.rowcount} session(s) terminated",
+    }
 
 
 @router.post("/sessions/purge", response_model=BatchResult)
 def bulk_purge_sessions(
     req: IDListRequest,
-    db:  Session    = Depends(get_db),
+    db: Session = Depends(get_db),
     ctx: OrgContext = Depends(get_org_context),
 ) -> dict:
     """Hard-delete terminated/error session records."""
@@ -209,16 +247,23 @@ def bulk_purge_sessions(
         {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
     )
     db.commit()
-    logger.info("batch.sessions.purged", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
-    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} session record(s) purged"}
+    logger.info(
+        "batch.sessions.purged", extra={"count": result.rowcount, "org": str(ctx.organization_id)}
+    )
+    return {
+        "affected": result.rowcount,
+        "ids": _id_strs(req.ids),
+        "message": f"{result.rowcount} session record(s) purged",
+    }
 
 
 # ── Workflow run bulk endpoints ────────────────────────────────────────────────
 
+
 @router.post("/runs/cancel", response_model=BatchResult)
 def bulk_cancel_runs(
     req: IDListRequest,
-    db:  Session    = Depends(get_db),
+    db: Session = Depends(get_db),
     ctx: OrgContext = Depends(get_org_context),
 ) -> dict:
     """Cancel multiple in-progress workflow runs."""
@@ -234,14 +279,20 @@ def bulk_cancel_runs(
         {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
     )
     db.commit()
-    logger.info("batch.runs.cancelled", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
-    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} run(s) cancelled"}
+    logger.info(
+        "batch.runs.cancelled", extra={"count": result.rowcount, "org": str(ctx.organization_id)}
+    )
+    return {
+        "affected": result.rowcount,
+        "ids": _id_strs(req.ids),
+        "message": f"{result.rowcount} run(s) cancelled",
+    }
 
 
 @router.post("/runs/retry", response_model=BatchResult)
 def bulk_retry_runs(
     req: IDListRequest,
-    db:  Session    = Depends(get_db),
+    db: Session = Depends(get_db),
     ctx: OrgContext = Depends(get_org_context),
 ) -> dict:
     """Re-queue failed/cancelled workflow runs by resetting their status to 'pending'."""
@@ -259,12 +310,18 @@ def bulk_retry_runs(
         {"ids": _id_strs(req.ids), "org": str(ctx.organization_id)},
     )
     db.commit()
-    logger.info("batch.runs.retried", extra={"count": result.rowcount, "org": str(ctx.organization_id)})
-    return {"affected": result.rowcount, "ids": _id_strs(req.ids), "message": f"{result.rowcount} run(s) re-queued"}
+    logger.info(
+        "batch.runs.retried", extra={"count": result.rowcount, "org": str(ctx.organization_id)}
+    )
+    return {
+        "affected": result.rowcount,
+        "ids": _id_strs(req.ids),
+        "message": f"{result.rowcount} run(s) re-queued",
+    }
 
 
 # ── Router registration ────────────────────────────────────────────────────────
-from xiosync.api.router_registry import register_router   # noqa: E402
+from xiosync.api.router_registry import register_router  # noqa: E402
 
 register_router(
     router,

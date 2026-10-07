@@ -54,9 +54,7 @@ def upgrade() -> None:
     # SELECT-only policy: tenants can read shares they own (source) or receive (target).
     # Public shares (target_org_id IS NULL) are visible to all authenticated tenants.
     op.execute(
-        f"CREATE POLICY {_POLICY_NAME} ON resource_shares "
-        f"FOR SELECT "
-        f"USING {_POLICY_PREDICATE}"
+        f"CREATE POLICY {_POLICY_NAME} ON resource_shares FOR SELECT USING {_POLICY_PREDICATE}"
     )
 
 

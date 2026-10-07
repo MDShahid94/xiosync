@@ -148,7 +148,7 @@ def export_readme(target_path: Path | None = None) -> None:
     if target_path is None:
         # Default to project root (assuming this script is in xiosync/)
         target_path = Path(__file__).parent.parent / "README.md"
-        
+
     target_path.write_text(README_CONTENT, encoding="utf-8")
     print(f"Successfully exported README to {target_path.resolve()}")
 

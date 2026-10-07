@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import uuid
@@ -7,13 +6,13 @@ from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.orm import Session
-
-from xiosync.domain.context import OrgContext, MembershipRole, PlatformRole
-from xiosync.persistence.models.browser import MeshNetwork, MeshNode
+from xiosync.domain.context import MembershipRole, OrgContext, PlatformRole
+from xiosync.persistence.models.browser import MeshNetwork
 from xiosync.services.mesh_networks import MeshNetworkService
 
 _ORG_ID = uuid.UUID("00000000-0000-7000-8000-000000000000")
 _ACTOR_ID = uuid.UUID("00000000-0000-7000-8000-000000000002")
+
 
 @pytest.fixture
 def org_context() -> OrgContext:
@@ -26,9 +25,11 @@ def org_context() -> OrgContext:
         membership_role=MembershipRole.ORG_ADMIN,
     )
 
+
 @pytest.fixture
 def mock_session() -> MagicMock:
     return MagicMock(spec=Session)
+
 
 def test_create_network_success(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = MeshNetworkService(mock_session)
@@ -43,6 +44,7 @@ def test_create_network_success(org_context: OrgContext, mock_session: MagicMock
     assert record.config == {"key": "val"}
     assert mock_session.flush.call_count >= 1
 
+
 def test_create_network_empty_config(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = MeshNetworkService(mock_session)
     record = svc.create_network(
@@ -53,6 +55,7 @@ def test_create_network_empty_config(org_context: OrgContext, mock_session: Magi
     )
     assert record.config == {}
     assert mock_session.flush.call_count >= 1
+
 
 def test_add_node_success(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = MeshNetworkService(mock_session)
@@ -65,6 +68,7 @@ def test_add_node_success(org_context: OrgContext, mock_session: MagicMock) -> N
     mock_session.add.assert_called()
     assert mock_session.flush.call_count >= 1
 
+
 def test_add_node_empty_address(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = MeshNetworkService(mock_session)
     svc.add_node(
@@ -74,6 +78,7 @@ def test_add_node_empty_address(org_context: OrgContext, mock_session: MagicMock
         address="",
     )
     assert mock_session.flush.call_count >= 1
+
 
 def test_remove_node_success(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = MeshNetworkService(mock_session)
@@ -88,6 +93,7 @@ def test_remove_node_success(org_context: OrgContext, mock_session: MagicMock) -
     mock_session.delete.assert_called_once_with(mock_row)
     assert mock_session.flush.call_count >= 1
 
+
 def test_remove_node_not_found(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = MeshNetworkService(mock_session)
     mock_session.scalar.return_value = None
@@ -99,6 +105,7 @@ def test_remove_node_not_found(org_context: OrgContext, mock_session: MagicMock)
             node_id=uuid.uuid4(),
         )
 
+
 def test_list_networks_empty(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = MeshNetworkService(mock_session)
     mock_result = MagicMock()
@@ -107,6 +114,7 @@ def test_list_networks_empty(org_context: OrgContext, mock_session: MagicMock) -
 
     records = svc.list_networks(org_context)
     assert records == []
+
 
 def test_list_networks_multiple(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = MeshNetworkService(mock_session)
@@ -125,14 +133,16 @@ def test_list_networks_multiple(org_context: OrgContext, mock_session: MagicMock
     records = svc.list_networks(org_context)
     assert len(records) == 2
 
+
 def test_list_networks_filters_org(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = MeshNetworkService(mock_session)
     mock_result = MagicMock()
     mock_result.all.return_value = []
     mock_session.scalars.return_value = mock_result
-    
+
     svc.list_networks(org_context)
     mock_session.scalars.assert_called_once()
+
 
 def test_add_node_multiple(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = MeshNetworkService(mock_session)
@@ -141,6 +151,9 @@ def test_add_node_multiple(org_context: OrgContext, mock_session: MagicMock) -> 
     svc.add_node(org_context, network_id=network_id, node_id=uuid.uuid4(), address="2")
     assert mock_session.add.call_count >= 2
 
+
 @pytest.fixture(autouse=True)
 def mock_quota_service_daily_events(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("xiosync.services.quotas.QuotaService.check_daily_events", lambda self, org_id: None)
+    monkeypatch.setattr(
+        "xiosync.services.quotas.QuotaService.check_daily_events", lambda self, org_id: None
+    )

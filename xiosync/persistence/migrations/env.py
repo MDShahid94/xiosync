@@ -42,9 +42,7 @@ def _on_version_apply(
     direction = "upgrade" if step.is_upgrade else "downgrade"
     source = ",".join(step.source_revision_ids) if step.source_revision_ids else "base"
     destination = (
-        ",".join(step.destination_revision_ids)
-        if step.destination_revision_ids
-        else "base"
+        ",".join(step.destination_revision_ids) if step.destination_revision_ids else "base"
     )
     revision = step.up_revision_id or destination
     logger.info(

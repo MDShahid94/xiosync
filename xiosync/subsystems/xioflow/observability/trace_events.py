@@ -4,6 +4,7 @@ When trace_mode is active, these events are emitted alongside the
 normal workflow execution events so XIOVIEW and the admin dashboard
 can show live trace capture progress.
 """
+
 from __future__ import annotations
 
 from typing import Any

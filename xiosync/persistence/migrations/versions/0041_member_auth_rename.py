@@ -12,8 +12,9 @@ New name: member_auth
 Cascade: Postgres RENAME TABLE automatically preserves FKs from sessions and memberships.
 Constraint names retain their old names (cosmetic, not functional).
 """
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0041"
 down_revision = "0040"
@@ -28,34 +29,40 @@ def upgrade() -> None:
     conn.execute(sa.text("ALTER TABLE auth_identities RENAME TO member_auth"))
 
     # Rename the associated sequences/indexes for clarity
-    conn.execute(sa.text(
-        "ALTER INDEX IF EXISTS auth_identities_pkey RENAME TO member_auth_pkey"
-    ))
+    conn.execute(sa.text("ALTER INDEX IF EXISTS auth_identities_pkey RENAME TO member_auth_pkey"))
 
     # Rename the FK constraint on sessions for clarity
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         ALTER TABLE sessions
         RENAME CONSTRAINT fk_sessions_auth_identity_same_org
         TO fk_sessions_member_auth_same_org
-    """))
+    """)
+    )
 
     # Rename partial index on sessions if it exists
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         ALTER INDEX IF EXISTS ix_sessions_auth_identity_active
         RENAME TO ix_sessions_member_auth_active
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:
     conn = op.get_bind()
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         ALTER TABLE sessions
         RENAME CONSTRAINT fk_sessions_member_auth_same_org
         TO fk_sessions_auth_identity_same_org
-    """))
-    conn.execute(sa.text("""
+    """)
+    )
+    conn.execute(
+        sa.text("""
         ALTER INDEX IF EXISTS ix_sessions_member_auth_active
         RENAME TO ix_sessions_auth_identity_active
-    """))
+    """)
+    )
     conn.execute(sa.text("ALTER INDEX IF EXISTS member_auth_pkey RENAME TO auth_identities_pkey"))
     conn.execute(sa.text("ALTER TABLE member_auth RENAME TO auth_identities"))

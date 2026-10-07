@@ -11,6 +11,7 @@ Endpoints:
     DELETE /vault/secrets/{key}            — delete
     POST   /vault/secrets/{key}/rotate     — re-encrypt with fresh IV
 """
+
 from __future__ import annotations
 
 import uuid
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/vault", tags=["Vault"])
 
 # ── Request / Response models ─────────────────────────────────────────────────
 
+
 class _S(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -34,20 +36,19 @@ class PutSecretRequest(_S):
     value: str = Field(description="Plaintext secret value")
     secret_type: str = Field(
         default="generic",
-        description="'generic' | 'credential' | 'token' | 'totp' | 'api_key' | 'ssh_key' | 'oauth'"
+        description="'generic' | 'credential' | 'token' | 'totp' | 'api_key' | 'ssh_key' | 'oauth'",
     )
     description: str | None = None
     expires_at: datetime | None = None
     platform_global: bool = Field(
-        default=False,
-        description="If true, stores as a platform-level shared secret (admin only)"
+        default=False, description="If true, stores as a platform-level shared secret (admin only)"
     )
 
 
 class SecretMetaResponse(_S):
     model_config = ConfigDict(extra="ignore")
     id: uuid.UUID
-    organization_id: uuid.UUID | None   # None = platform-global
+    organization_id: uuid.UUID | None  # None = platform-global
     key: str
     secret_type: str
     description: str | None = None
@@ -68,12 +69,15 @@ class SecretValueResponse(_S):
 
 def _svc(request: Request):
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.subsystems.vault.service import VaultService
+
     return VaultService(cast(OrmSession, request.state.org_session))
 
 
 def _ctx(request: Request):
     from xiosync.domain.context import OrgContext
+
     return cast(OrgContext, request.state.org_context)
 
 
@@ -94,15 +98,22 @@ def _meta_resp(rec) -> SecretMetaResponse:
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
-@router.post("/secrets", status_code=201, response_model=SecretMetaResponse,
-             summary="Store or rotate a secret (upsert)")
+
+@router.post(
+    "/secrets",
+    status_code=201,
+    response_model=SecretMetaResponse,
+    summary="Store or rotate a secret (upsert)",
+)
 def put_secret(payload: PutSecretRequest, request: Request) -> SecretMetaResponse:
     """Store or rotate a secret. Platform-global secrets require vault.platform capability."""
     svc = _svc(request)
     ctx = _ctx(request)
     try:
         rec = svc.put_secret(
-            ctx, payload.key, payload.value,
+            ctx,
+            payload.key,
+            payload.value,
             secret_type=payload.secret_type,
             description=payload.description,
             expires_at=payload.expires_at,
@@ -113,8 +124,11 @@ def put_secret(payload: PutSecretRequest, request: Request) -> SecretMetaRespons
     return _meta_resp(rec)
 
 
-@router.get("/secrets", response_model=list[SecretMetaResponse],
-            summary="List secret keys (no values, ever)")
+@router.get(
+    "/secrets",
+    response_model=list[SecretMetaResponse],
+    summary="List secret keys (no values, ever)",
+)
 def list_secrets(
     request: Request,
     secret_type: str | None = None,
@@ -126,10 +140,14 @@ def list_secrets(
     return [_meta_resp(r) for r in recs]
 
 
-@router.get("/secrets/{key}/meta", response_model=SecretMetaResponse,
-            summary="Get metadata for a secret (no plaintext)")
+@router.get(
+    "/secrets/{key}/meta",
+    response_model=SecretMetaResponse,
+    summary="Get metadata for a secret (no plaintext)",
+)
 def get_secret_meta(key: str, request: Request) -> SecretMetaResponse:
     from xiosync.subsystems.vault.service import VaultNotFoundError
+
     try:
         rec = _svc(request).get_meta(_ctx(request), key)
     except VaultNotFoundError:
@@ -137,20 +155,24 @@ def get_secret_meta(key: str, request: Request) -> SecretMetaResponse:
     return _meta_resp(rec)
 
 
-@router.get("/secrets/{key}", response_model=SecretValueResponse,
-            summary="Retrieve a decrypted secret value")
+@router.get(
+    "/secrets/{key}",
+    response_model=SecretValueResponse,
+    summary="Retrieve a decrypted secret value",
+)
 def get_secret(
     key: str,
     request: Request,
     allow_platform: bool = Query(default=True),
 ) -> SecretValueResponse:
     """Returns the plaintext secret. Requires vault.read capability."""
-    from xiosync.subsystems.vault.service import VaultNotFoundError, VaultCryptoError
+    from xiosync.subsystems.vault.service import VaultCryptoError, VaultNotFoundError
+
     svc = _svc(request)
     ctx = _ctx(request)
     try:
         value = svc.get_secret(ctx, key, allow_platform=allow_platform)
-        meta  = svc.get_meta(ctx, key)
+        meta = svc.get_meta(ctx, key)
     except VaultNotFoundError:
         raise HTTPException(status_code=404, detail="secret_not_found")
     except VaultCryptoError as exc:
@@ -164,29 +186,35 @@ def get_secret(
     )
 
 
-@router.delete("/secrets/{key}", status_code=204,
-               summary="Permanently delete a secret")
+@router.delete("/secrets/{key}", status_code=204, summary="Permanently delete a secret")
 def delete_secret(key: str, request: Request) -> None:
     from xiosync.subsystems.vault.service import VaultNotFoundError
+
     try:
         _svc(request).delete_secret(_ctx(request), key)
     except VaultNotFoundError:
         raise HTTPException(status_code=404, detail="secret_not_found")
 
 
-@router.post("/secrets/{key}/rotate", response_model=SecretMetaResponse,
-             summary="Re-encrypt a secret with a fresh IV (key rotation)")
+@router.post(
+    "/secrets/{key}/rotate",
+    response_model=SecretMetaResponse,
+    summary="Re-encrypt a secret with a fresh IV (key rotation)",
+)
 def rotate_secret(key: str, request: Request) -> SecretMetaResponse:
     """Re-encrypts with a fresh random IV — useful for periodic rotation policy."""
-    from xiosync.subsystems.vault.service import VaultNotFoundError, VaultCryptoError
+    from xiosync.subsystems.vault.service import VaultCryptoError, VaultNotFoundError
+
     svc = _svc(request)
     ctx = _ctx(request)
     try:
         # Read then re-write — triggers the ON CONFLICT rotated_at = now()
         value = svc.get_secret(ctx, key)
-        meta  = svc.get_meta(ctx, key)
-        rec   = svc.put_secret(
-            ctx, key, value,
+        meta = svc.get_meta(ctx, key)
+        rec = svc.put_secret(
+            ctx,
+            key,
+            value,
             secret_type=meta.secret_type,
             description=meta.description,
             expires_at=meta.expires_at,

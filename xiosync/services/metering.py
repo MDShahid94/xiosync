@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from xiosync.domain.context import OrgContext
@@ -24,13 +24,15 @@ __all__ = [
     "UsageSummary",
 ]
 
-METRIC_TYPES = frozenset({
-    "task_runs",
-    "worker_hours",
-    "event_count",
-    "artifact_bytes",
-    "api_calls",
-})
+METRIC_TYPES = frozenset(
+    {
+        "task_runs",
+        "worker_hours",
+        "event_count",
+        "artifact_bytes",
+        "api_calls",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)

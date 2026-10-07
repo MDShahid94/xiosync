@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
 
 from xiosync.subsystems.xioai.providers.base import GenerationProvider, GenerationResult
 
 logger = logging.getLogger(__name__)
+
 
 class CustomHTTPProvider(GenerationProvider):
     @property
@@ -30,10 +30,13 @@ class CustomHTTPProvider(GenerationProvider):
     ) -> GenerationResult:
         url = os.environ.get("XIOAI_CUSTOM_URL")
         if not url:
-            return GenerationResult(success=False, error="XIOAI_CUSTOM_URL not set", provider=self.name)
-            
+            return GenerationResult(
+                success=False, error="XIOAI_CUSTOM_URL not set", provider=self.name
+            )
+
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.post(
                     url,
@@ -45,11 +48,11 @@ class CustomHTTPProvider(GenerationProvider):
                         "temperature": temperature,
                         "max_tokens": max_tokens,
                         "timeout": timeout,
-                    }
+                    },
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                
+
                 return GenerationResult(
                     text=data.get("text", ""),
                     provider=data.get("provider", self.name),

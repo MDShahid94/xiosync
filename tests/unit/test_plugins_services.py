@@ -431,9 +431,7 @@ def test_execute_refuses_non_active_install_and_never_spawns(
     monkeypatch.setattr(plugins_module, "run_in_sandbox", _boom)
 
     with pytest.raises(PluginNotOperationalError):
-        service.execute_plugin_rpc(
-            _context(), uuid.uuid4(), method="normalize", params={}
-        )
+        service.execute_plugin_rpc(_context(), uuid.uuid4(), method="normalize", params={})
     assert spawned is False
 
 
@@ -456,9 +454,7 @@ def test_execute_active_install_dispatches_declared_method(
 
     monkeypatch.setattr(plugins_module, "run_in_sandbox", _fake_sandbox)
 
-    result = service.execute_plugin_rpc(
-        _context(), active.id, method="normalize", params={"n": 1}
-    )
+    result = service.execute_plugin_rpc(_context(), active.id, method="normalize", params={"n": 1})
 
     assert result.output == {"ok": True}
     # The declared timeout flows into the sandbox call.

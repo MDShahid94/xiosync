@@ -9,6 +9,7 @@ provider (agy, gemini, openai, custom) is automatically used.
 The generated scripts use the standard ``ctx.step()`` / ``ctx.page`` API
 and are fully compatible with PageProxy trace mode.
 """
+
 from __future__ import annotations
 
 import json
@@ -83,18 +84,21 @@ OUTPUT: Return ONLY the .mjs file content. No markdown fences, no explanation.
 
 # ── Data classes ──────────────────────────────────────────────────────────────
 
+
 @dataclass
 class GeneratedWorkflow:
     """Result of AI workflow generation."""
-    script_ref: str                    # e.g. "generated/book-flight.mjs"
-    source_code: str                   # the .mjs content
+
+    script_ref: str  # e.g. "generated/book-flight.mjs"
+    source_code: str  # the .mjs content
     meta: dict[str, Any] = field(default_factory=dict)
-    provider: str = ""                 # which AI provider generated it
+    provider: str = ""  # which AI provider generated it
     model: str = ""
     saved: bool = False
 
 
 # ── WorkflowGenerator ────────────────────────────────────────────────────────
+
 
 class WorkflowGenerator:
     """Generates .mjs workflow scripts from human descriptions.
@@ -221,7 +225,7 @@ class WorkflowGenerator:
     ) -> str:
         """Build the generation prompt with context and examples."""
         parts = [
-            f"TASK: Generate a XIOSYNC workflow script (.mjs) for:\n",
+            "TASK: Generate a XIOSYNC workflow script (.mjs) for:\n",
             f"DESCRIPTION: {description}\n",
         ]
         if target_domain:
@@ -264,10 +268,12 @@ class WorkflowGenerator:
     def _extract_meta(self, source: str) -> dict[str, Any]:
         """Extract the meta object from the generated source code."""
         import re
+
         # Look for: export const meta = { ... };
         match = re.search(
             r"export\s+const\s+meta\s*=\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}",
-            source, re.DOTALL,
+            source,
+            re.DOTALL,
         )
         if not match:
             return {}
@@ -288,6 +294,7 @@ class WorkflowGenerator:
     def _slugify(self, text: str) -> str:
         """Convert description to a kebab-case slug."""
         import re
+
         slug = text.lower().strip()
         slug = re.sub(r"[^a-z0-9\s-]", "", slug)
         slug = re.sub(r"[\s]+", "-", slug)

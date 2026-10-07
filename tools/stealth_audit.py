@@ -17,6 +17,7 @@ Each domain gets a dedicated isolated page (no navigation races).
 Captures full-page screenshots and structured JSON results for each vector.
 Designed to run from the Mac Mini XIOSYNC host over Tailscale.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -116,9 +117,9 @@ async def _audit_ip_reputation(page) -> dict:
             location = f"{data.get('city', '?')}, {data.get('country', '?')}"
 
         is_datacenter = data.get("is_datacenter", False)
-        is_vpn        = data.get("is_vpn", False)
-        is_proxy      = data.get("is_proxy", False)
-        is_tor        = data.get("is_tor", False)
+        is_vpn = data.get("is_vpn", False)
+        is_proxy = data.get("is_proxy", False)
+        is_tor = data.get("is_tor", False)
 
         return {
             "ip": data.get("ip", "Unknown"),
@@ -166,15 +167,15 @@ async def _audit_sannysoft(page) -> dict:
 
     # Also read specific key elements
     checks = [
-        ("webdriver-result",          "webdriver"),
+        ("webdriver-result", "webdriver"),
         ("advanced-webdriver-result", "advanced_webdriver"),
-        ("chrome-result",             "chrome_object"),
-        ("webgl-vendor",              "webgl_vendor"),
-        ("webgl-renderer",            "webgl_renderer"),
-        ("user-agent-result",         "user_agent"),
-        ("permissions-result",        "permissions"),
-        ("plugins-length-result",     "plugins_length"),
-        ("languages-result",          "languages"),
+        ("chrome-result", "chrome_object"),
+        ("webgl-vendor", "webgl_vendor"),
+        ("webgl-renderer", "webgl_renderer"),
+        ("user-agent-result", "user_agent"),
+        ("permissions-result", "permissions"),
+        ("plugins-length-result", "plugins_length"),
+        ("languages-result", "languages"),
     ]
     key_results = {}
     for elem_id, key in checks:
@@ -259,26 +260,30 @@ async def _audit_headless(page) -> dict:
         score = result.get("score", 1.0)
         passed = score < 0.3  # 0.0 = normal browser
         return {
-            "score":            score,
-            "status":           result.get("status_badge") or (
-                                    "✅ Normal Browser" if score < 0.3 else
-                                    "⚠️ Suspicious"   if score < 0.6 else
-                                    "🚫 Headless"),
-            "webdriver":        result.get("webdriver"),
-            "cdp_detected":     result.get("cdp_detected"),
-            "cdc_keys":         result.get("cdc_keys"),
-            "cdp_signals":      result.get("cdp_signals"),
-            "ua_suspicious":    result.get("ua_suspicious"),
-            "webgl_software":   result.get("webgl_software"),
-            "webgl_renderer":   result.get("webgl_renderer"),
-            "platform":         result.get("platform"),
-            "cores":            result.get("cores"),
-            "device_memory":    result.get("device_memory"),
-            "inner_eq_outer":   result.get("inner_equals_outer"),
-            "worker_mismatch":  result.get("worker_mismatch"),
-            "worker_status":    result.get("worker_status"),
-            "playwright":       result.get("playwright_detected"),
-            "pass":             passed,
+            "score": score,
+            "status": result.get("status_badge")
+            or (
+                "✅ Normal Browser"
+                if score < 0.3
+                else "⚠️ Suspicious"
+                if score < 0.6
+                else "🚫 Headless"
+            ),
+            "webdriver": result.get("webdriver"),
+            "cdp_detected": result.get("cdp_detected"),
+            "cdc_keys": result.get("cdc_keys"),
+            "cdp_signals": result.get("cdp_signals"),
+            "ua_suspicious": result.get("ua_suspicious"),
+            "webgl_software": result.get("webgl_software"),
+            "webgl_renderer": result.get("webgl_renderer"),
+            "platform": result.get("platform"),
+            "cores": result.get("cores"),
+            "device_memory": result.get("device_memory"),
+            "inner_eq_outer": result.get("inner_equals_outer"),
+            "worker_mismatch": result.get("worker_mismatch"),
+            "worker_status": result.get("worker_status"),
+            "playwright": result.get("playwright_detected"),
+            "pass": passed,
         }
 
     except Exception as exc:
@@ -301,8 +306,11 @@ async def _audit_creepjs(page) -> dict:
     try:
         # CreepJS dynamically renders — wait for any of several possible selectors
         trust_selectors = [
-            ".trust-score", "[class*=trust-score]", "[class*=trust_score]",
-            ".fingerprint-trust", "[id*=trust]",
+            ".trust-score",
+            "[class*=trust-score]",
+            "[class*=trust_score]",
+            ".fingerprint-trust",
+            "[id*=trust]",
         ]
         found_sel = None
         for sel in trust_selectors:
@@ -317,6 +325,7 @@ async def _audit_creepjs(page) -> dict:
             # Fallback: scrape any percentage text on page
             body = await page.evaluate("document.body.innerText")
             import re
+
             pcts = re.findall(r"(\d+)%", body)
             return {
                 "raw_percentages": pcts[:10],
@@ -338,24 +347,26 @@ async def _audit_creepjs(page) -> dict:
         )
 
         headless_pct = 0
-        stealth_pct  = 0
+        stealth_pct = 0
         import re as _re
+
         m1 = _re.search(r"(\d+)", headless)
         m2 = _re.search(r"(\d+)", stealth)
-        if m1: headless_pct = int(m1.group(1))
-        if m2: stealth_pct  = int(m2.group(1))
+        if m1:
+            headless_pct = int(m1.group(1))
+        if m2:
+            stealth_pct = int(m2.group(1))
 
         return {
             "headless_rating": headless.strip(),
-            "stealth_rating":  stealth.strip(),
-            "trust_score":     trust.strip(),
-            "headless_pct":    headless_pct,
-            "stealth_pct":     stealth_pct,
+            "stealth_rating": stealth.strip(),
+            "trust_score": trust.strip(),
+            "headless_pct": headless_pct,
+            "stealth_pct": stealth_pct,
             "pass": headless_pct <= 10 and stealth_pct <= 10,
         }
     except Exception as exc:
         return {"error": str(exc), "pass": False}
-
 
 
 async def _audit_turnstile(page) -> dict:
@@ -389,10 +400,10 @@ async def _audit_turnstile(page) -> dict:
 
 
 _AUDIT_PARSERS = {
-    "ip_reputation":      _audit_ip_reputation,
-    "sannysoft":          _audit_sannysoft,
-    "headless_detect":    _audit_headless,
-    "creepjs":            _audit_creepjs,
+    "ip_reputation": _audit_ip_reputation,
+    "sannysoft": _audit_sannysoft,
+    "headless_detect": _audit_headless,
+    "creepjs": _audit_creepjs,
     "cloudflare_turnstile": _audit_turnstile,
 }
 
@@ -412,14 +423,16 @@ async def _collect_browser_metadata(context, cdp_ws_url: str) -> dict:
         webgl_vendor = await p.evaluate(
             "(function(){var c=document.createElement('canvas');var g=c.getContext('webgl');return g?g.getParameter(g.VENDOR):'';})()"
         )
-        meta.update({
-            "user_agent": ua,
-            "chrome_version": chrome_ver,
-            "webdriver_flag": webdriver,
-            "plugins_count": plugins,
-            "languages": langs,
-            "webgl_vendor": webgl_vendor,
-        })
+        meta.update(
+            {
+                "user_agent": ua,
+                "chrome_version": chrome_ver,
+                "webdriver_flag": webdriver,
+                "plugins_count": plugins,
+                "languages": langs,
+                "webgl_vendor": webgl_vendor,
+            }
+        )
     except Exception as exc:
         meta["metadata_error"] = str(exc)
     return meta
@@ -436,6 +449,7 @@ async def _get_stealth_js(worker_ip: str | None = None) -> str | None:
     if worker_ip:
         try:
             import urllib.request as _ur
+
             resp = _ur.urlopen(f"http://{worker_ip}:9300/debug/stealth-js", timeout=5)
             js = resp.read().decode("utf-8")
             if len(js) > 200:
@@ -500,10 +514,10 @@ async def run_audit(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     summary: dict = {
-        "timestamp":   datetime.now(UTC).isoformat(),
-        "cdp_ws_url":  cdp_ws_url,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "cdp_ws_url": cdp_ws_url,
         "browser_meta": {},
-        "vectors":     {},
+        "vectors": {},
     }
 
     async with async_playwright() as p:
@@ -522,12 +536,16 @@ async def run_audit(
             for _tgt in _targets_resp.get("targetInfos", []):
                 if _tgt.get("type") == "page":
                     try:
-                        _att = await _bcdp.send("Target.attachToTarget",
-                                                {"targetId": _tgt["targetId"], "flatten": True})
+                        _att = await _bcdp.send(
+                            "Target.attachToTarget", {"targetId": _tgt["targetId"], "flatten": True}
+                        )
                         _sid = _att.get("sessionId")
                         if _sid:
-                            await _bcdp.send("Emulation.setAutomationOverride",
-                                             {"enabled": False}, session_id=_sid)
+                            await _bcdp.send(
+                                "Emulation.setAutomationOverride",
+                                {"enabled": False},
+                                session_id=_sid,
+                            )
                     except Exception:
                         pass
             await _bcdp.detach()
@@ -543,11 +561,11 @@ async def run_audit(
         # Collect browser metadata before navigating anything
         summary["browser_meta"] = await _collect_browser_metadata(context, cdp_ws_url)
         summary["browser_meta"]["stealth_js_injected"] = stealth_js_ok
-        print(f"\n📋 Browser: Chrome {summary['browser_meta'].get('chrome_version','?')}")
-        print(f"   UA: {summary['browser_meta'].get('user_agent','?')[:80]}")
-        print(f"   webdriver flag: {summary['browser_meta'].get('webdriver_flag','?')}")
-        print(f"   plugins: {summary['browser_meta'].get('plugins_count','?')}")
-        print(f"   languages: {summary['browser_meta'].get('languages','?')}")
+        print(f"\n📋 Browser: Chrome {summary['browser_meta'].get('chrome_version', '?')}")
+        print(f"   UA: {summary['browser_meta'].get('user_agent', '?')[:80]}")
+        print(f"   webdriver flag: {summary['browser_meta'].get('webdriver_flag', '?')}")
+        print(f"   plugins: {summary['browser_meta'].get('plugins_count', '?')}")
+        print(f"   languages: {summary['browser_meta'].get('languages', '?')}")
         print(f"   stealth_js: {'✅ CDP per-page (Main World)' if stealth_js_ok else '⚠️ missing'}")
 
         for idx, domain in enumerate(AUDIT_DOMAINS, 1):
@@ -591,7 +609,7 @@ async def run_audit(
 
                 # Capture evidence
                 await _capture_screenshot(page, output_dir / f"{name}_screenshot.png")
-                await _save_html(page,         output_dir / f"{name}_source.html")
+                await _save_html(page, output_dir / f"{name}_source.html")
 
                 # Parse results
                 parser = _AUDIT_PARSERS.get(name)
@@ -633,10 +651,10 @@ async def run_audit(
     # Print overall score
     vectors = summary["vectors"]
     passed = sum(1 for v in vectors.values() if v.get("pass"))
-    total  = len(vectors)
-    print(f"\n{'='*50}")
+    total = len(vectors)
+    print(f"\n{'=' * 50}")
     print(f"🏆 STEALTH AUDIT SCORE: {passed}/{total} vectors passed")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
 
     return summary
 
@@ -646,9 +664,9 @@ async def run_audit_via_api(
     output_dir: Path | None = None,
 ) -> dict:
     """Run audit by looking up a session from the XIOSYNC database."""
-    from xiosync.persistence.database import create_database_engine
-    from sqlalchemy.orm import Session as OrmSession
     from sqlalchemy import text
+    from sqlalchemy.orm import Session as OrmSession
+    from xiosync.persistence.database import create_database_engine
 
     db_url = os.environ.get(
         "XIOSYNC_DATABASE_URL",
@@ -659,25 +677,34 @@ async def run_audit_via_api(
     with OrmSession(engine) as sess:
         if session_id:
             import uuid
-            row = sess.execute(
-                text("""
+
+            row = (
+                sess.execute(
+                    text("""
                     SELECT id, worker_ts_ip
                     FROM browser_sessions
                     WHERE id = :sid AND state = 'active'
                     LIMIT 1
                 """),
-                {"sid": uuid.UUID(session_id)},
-            ).mappings().first()
+                    {"sid": uuid.UUID(session_id)},
+                )
+                .mappings()
+                .first()
+            )
         else:
-            row = sess.execute(
-                text("""
+            row = (
+                sess.execute(
+                    text("""
                     SELECT id, worker_ts_ip
                     FROM browser_sessions
                     WHERE state = 'active'
                     ORDER BY updated_at DESC
                     LIMIT 1
                 """),
-            ).mappings().first()
+                )
+                .mappings()
+                .first()
+            )
 
     if not row:
         print("❌ No active browser session found.")
@@ -689,6 +716,7 @@ async def run_audit_via_api(
 
     # Get CDP URL from the xiorun-agent /health
     import httpx
+
     async with httpx.AsyncClient(timeout=5.0) as client:
         resp = await client.get(f"http://{worker_ip}:9300/health")
         resp.raise_for_status()
@@ -696,9 +724,8 @@ async def run_audit_via_api(
 
     # Get the browser WS URL
     import urllib.request
-    ver = json.loads(urllib.request.urlopen(
-        f"http://{worker_ip}:9300/sessions", timeout=5
-    ).read())
+
+    ver = json.loads(urllib.request.urlopen(f"http://{worker_ip}:9300/sessions", timeout=5).read())
     cdp_ws_url = None
     for s in ver.get("sessions", []):
         if s.get("session_id") == sid:
@@ -720,8 +747,8 @@ async def run_audit_via_api(
 
 def main():
     parser = argparse.ArgumentParser(description="XIOSYNC 5-Vector Stealth Audit")
-    parser.add_argument("--session-id",  help="UUID of the browser session to audit")
-    parser.add_argument("--cdp-ws-url",  help="Direct CDP WebSocket URL (bypasses DB lookup)")
+    parser.add_argument("--session-id", help="UUID of the browser session to audit")
+    parser.add_argument("--cdp-ws-url", help="Direct CDP WebSocket URL (bypasses DB lookup)")
     parser.add_argument(
         "--output-dir",
         default=None,
@@ -734,6 +761,7 @@ def main():
         out = Path(args.output_dir or f"xiosync/audit_results/{ts}")
         # Extract worker IP from WS URL: ws://100.111.130.118:52611/devtools/...
         import re as _re
+
         _m = _re.search(r"ws://([^:/]+)", args.cdp_ws_url)
         worker_ip = _m.group(1) if _m else None
         asyncio.run(run_audit(args.cdp_ws_url, out, worker_ip=worker_ip))

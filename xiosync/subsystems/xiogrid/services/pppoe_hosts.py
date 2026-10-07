@@ -3,6 +3,7 @@
 Manages PPPoEHost records — create, list, update, ping.
 Any new Mac Mini + VM pair is registered here before slots can be provisioned.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -49,15 +50,22 @@ class PPPoEHostNotFoundError(ValueError):
 
 def _record(row: PPPoEHost) -> PPPoEHostRecord:
     return PPPoEHostRecord(
-        id=row.id, name=row.name, description=row.description,
-        vm_ssh_user=row.vm_ssh_user, vm_ssh_host=row.vm_ssh_host,
-        vm_ssh_port=row.vm_ssh_port, vm_scripts_dir=row.vm_scripts_dir,
+        id=row.id,
+        name=row.name,
+        description=row.description,
+        vm_ssh_user=row.vm_ssh_user,
+        vm_ssh_host=row.vm_ssh_host,
+        vm_ssh_port=row.vm_ssh_port,
+        vm_scripts_dir=row.vm_scripts_dir,
         pppoe_parent_iface=row.pppoe_parent_iface,
         pppoe_username=row.pppoe_username,
         tailscale_vm_ts_ip=row.tailscale_vm_ts_ip,
-        max_slots=row.max_slots, warm_pool_target=row.warm_pool_target,
-        state=row.state, registered_at=row.registered_at,
-        last_seen=row.last_seen, meta=dict(row.meta),
+        max_slots=row.max_slots,
+        warm_pool_target=row.warm_pool_target,
+        state=row.state,
+        registered_at=row.registered_at,
+        last_seen=row.last_seen,
+        meta=dict(row.meta),
     )
 
 
@@ -108,13 +116,20 @@ class PPPoEHostService:
             meta=meta or {},
         )
         self._db.add(row)
-        self._db.add(Operation(
-            id=new_id(), organization_id=ctx.organization_id,
-            actor_id=ctx.actor_id, operation="pppoe.host.register",
-            trigger="api", initiated_by=ctx.actor_id,
-            outcome="success", started_at=now, completed_at=now,
-            rationale=f"Registered PPPoE host: {name} ({vm_ssh_host})",
-        ))
+        self._db.add(
+            Operation(
+                id=new_id(),
+                organization_id=ctx.organization_id,
+                actor_id=ctx.actor_id,
+                operation="pppoe.host.register",
+                trigger="api",
+                initiated_by=ctx.actor_id,
+                outcome="success",
+                started_at=now,
+                completed_at=now,
+                rationale=f"Registered PPPoE host: {name} ({vm_ssh_host})",
+            )
+        )
         self._db.flush()
         return _record(row)
 

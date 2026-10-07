@@ -48,33 +48,53 @@ def get_supported_constraints() -> frozenset[str]:
 
 
 def _eval_operations(
-    value: Any, grant: "Grant", actor: "Actor", resource: "Resource",
-    operation: str, arguments: Mapping[str, Any], now: datetime,
-    rate_checker: "RateChecker | None",
+    value: Any,
+    grant: Grant,
+    actor: Actor,
+    resource: Resource,
+    operation: str,
+    arguments: Mapping[str, Any],
+    now: datetime,
+    rate_checker: RateChecker | None,
 ) -> bool:
     return isinstance(value, list) and operation in value
 
 
 def _eval_resource_types(
-    value: Any, grant: "Grant", actor: "Actor", resource: "Resource",
-    operation: str, arguments: Mapping[str, Any], now: datetime,
-    rate_checker: "RateChecker | None",
+    value: Any,
+    grant: Grant,
+    actor: Actor,
+    resource: Resource,
+    operation: str,
+    arguments: Mapping[str, Any],
+    now: datetime,
+    rate_checker: RateChecker | None,
 ) -> bool:
     return isinstance(value, list) and resource.type in value
 
 
 def _eval_resource_ids(
-    value: Any, grant: "Grant", actor: "Actor", resource: "Resource",
-    operation: str, arguments: Mapping[str, Any], now: datetime,
-    rate_checker: "RateChecker | None",
+    value: Any,
+    grant: Grant,
+    actor: Actor,
+    resource: Resource,
+    operation: str,
+    arguments: Mapping[str, Any],
+    now: datetime,
+    rate_checker: RateChecker | None,
 ) -> bool:
     return isinstance(value, list) and str(resource.id) in value
 
 
 def _eval_minimum_trust_tier(
-    value: Any, grant: "Grant", actor: "Actor", resource: "Resource",
-    operation: str, arguments: Mapping[str, Any], now: datetime,
-    rate_checker: "RateChecker | None",
+    value: Any,
+    grant: Grant,
+    actor: Actor,
+    resource: Resource,
+    operation: str,
+    arguments: Mapping[str, Any],
+    now: datetime,
+    rate_checker: RateChecker | None,
 ) -> bool:
     if value not in TRUST_ORDER or actor.trust_tier not in TRUST_ORDER:
         return False
@@ -82,9 +102,14 @@ def _eval_minimum_trust_tier(
 
 
 def _eval_not_before(
-    value: Any, grant: "Grant", actor: "Actor", resource: "Resource",
-    operation: str, arguments: Mapping[str, Any], now: datetime,
-    rate_checker: "RateChecker | None",
+    value: Any,
+    grant: Grant,
+    actor: Actor,
+    resource: Resource,
+    operation: str,
+    arguments: Mapping[str, Any],
+    now: datetime,
+    rate_checker: RateChecker | None,
 ) -> bool:
     try:
         return now >= datetime.fromisoformat(value)
@@ -93,9 +118,14 @@ def _eval_not_before(
 
 
 def _eval_not_after(
-    value: Any, grant: "Grant", actor: "Actor", resource: "Resource",
-    operation: str, arguments: Mapping[str, Any], now: datetime,
-    rate_checker: "RateChecker | None",
+    value: Any,
+    grant: Grant,
+    actor: Actor,
+    resource: Resource,
+    operation: str,
+    arguments: Mapping[str, Any],
+    now: datetime,
+    rate_checker: RateChecker | None,
 ) -> bool:
     try:
         return now < datetime.fromisoformat(value)
@@ -104,9 +134,14 @@ def _eval_not_after(
 
 
 def _eval_arguments(
-    value: Any, grant: "Grant", actor: "Actor", resource: "Resource",
-    operation: str, arguments: Mapping[str, Any], now: datetime,
-    rate_checker: "RateChecker | None",
+    value: Any,
+    grant: Grant,
+    actor: Actor,
+    resource: Resource,
+    operation: str,
+    arguments: Mapping[str, Any],
+    now: datetime,
+    rate_checker: RateChecker | None,
 ) -> bool:
     if not isinstance(value, Mapping):
         return False
@@ -117,9 +152,14 @@ def _eval_arguments(
 
 
 def _eval_rate(
-    value: Any, grant: "Grant", actor: "Actor", resource: "Resource",
-    operation: str, arguments: Mapping[str, Any], now: datetime,
-    rate_checker: "RateChecker | None",
+    value: Any,
+    grant: Grant,
+    actor: Actor,
+    resource: Resource,
+    operation: str,
+    arguments: Mapping[str, Any],
+    now: datetime,
+    rate_checker: RateChecker | None,
 ) -> bool:
     if not isinstance(value, Mapping) or rate_checker is None:
         return False

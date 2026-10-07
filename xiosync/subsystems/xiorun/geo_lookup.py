@@ -10,6 +10,7 @@ The geo data is injected into build_init_script() for:
   - Date.prototype.getTimezoneOffset()
   - Intl.DateTimeFormat timezone consistency
 """
+
 from __future__ import annotations
 
 import logging
@@ -28,6 +29,7 @@ _GEO_TIMEOUT = 3.0  # seconds
 @dataclass(frozen=True)
 class GeoResult:
     """Resolved geolocation for a public IP."""
+
     lat: float
     lon: float
     timezone: str
@@ -39,10 +41,12 @@ class GeoResult:
     def fallback(timezone: str = "America/New_York") -> GeoResult:
         """Default fallback when lookup fails."""
         return GeoResult(
-            lat=40.7128, lon=-74.0060,
+            lat=40.7128,
+            lon=-74.0060,
             timezone=timezone,
             tz_offset_min=_compute_tz_offset(timezone),
-            city="New York", country="US",
+            city="New York",
+            country="US",
         )
 
 
@@ -146,9 +150,13 @@ def _read_geo_cache(exit_node_id: str, engine: object) -> GeoResult | None:
             country=geo.get("country", "Unknown"),
         )
     except Exception as exc:
-        logger.debug("geo_lookup.cache_miss", extra={
-            "exit_node_id": exit_node_id, "error": str(exc),
-        })
+        logger.debug(
+            "geo_lookup.cache_miss",
+            extra={
+                "exit_node_id": exit_node_id,
+                "error": str(exc),
+            },
+        )
         return None
 
 
@@ -178,20 +186,25 @@ def _write_geo_cache(exit_node_id: str, result: GeoResult, engine: object) -> No
                 """),
                 {
                     "nid": (
-                        uuid.UUID(exit_node_id)
-                        if isinstance(exit_node_id, str)
-                        else exit_node_id
+                        uuid.UUID(exit_node_id) if isinstance(exit_node_id, str) else exit_node_id
                     ),
                     "geo_json": _json.dumps(geo_data),
                 },
             )
             sess.commit()
-        logger.info("geo_lookup.cached", extra={
-            "exit_node_id": exit_node_id,
-            "city": result.city,
-            "tz": result.timezone,
-        })
+        logger.info(
+            "geo_lookup.cached",
+            extra={
+                "exit_node_id": exit_node_id,
+                "city": result.city,
+                "tz": result.timezone,
+            },
+        )
     except Exception as exc:
-        logger.warning("geo_lookup.cache_write_failed", extra={
-            "exit_node_id": exit_node_id, "error": str(exc),
-        })
+        logger.warning(
+            "geo_lookup.cache_write_failed",
+            extra={
+                "exit_node_id": exit_node_id,
+                "error": str(exc),
+            },
+        )

@@ -5,12 +5,12 @@ import os
 import pathlib
 from typing import Any
 
-from xiosync.subsystems.xioai.providers.base import GenerationProvider, GenerationResult
 from xiosync.subsystems.xioai.providers.agy_local import AGYLocalProvider
 from xiosync.subsystems.xioai.providers.agy_remote import AGYRemoteProvider
+from xiosync.subsystems.xioai.providers.base import GenerationProvider, GenerationResult
+from xiosync.subsystems.xioai.providers.custom_http import CustomHTTPProvider
 from xiosync.subsystems.xioai.providers.gemini import GeminiProvider
 from xiosync.subsystems.xioai.providers.openai_provider import OpenAIProvider
-from xiosync.subsystems.xioai.providers.custom_http import CustomHTTPProvider
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +53,11 @@ _PROVIDER_REGISTRY: dict[str, type[GenerationProvider]] = {
     "custom": CustomHTTPProvider,
 }
 
+
 def register_provider(name: str, cls: type[GenerationProvider]) -> None:
     _PROVIDER_REGISTRY[name] = cls
     logger.info("xioai.gateway: provider registered: %s", name)
+
 
 class AIGateway:
     def __init__(self, provider: str | None = None) -> None:
@@ -77,7 +79,7 @@ class AIGateway:
             return OpenAIProvider()
         if CustomHTTPProvider.is_available():
             return CustomHTTPProvider()
-            
+
         logger.warning("xioai.gateway.no_provider_available")
         return AGYLocalProvider()
 
@@ -88,8 +90,7 @@ class AIGateway:
     @classmethod
     def available_providers(cls) -> dict[str, bool]:
         return {
-            name: provider_cls.is_available() 
-            for name, provider_cls in _PROVIDER_REGISTRY.items()
+            name: provider_cls.is_available() for name, provider_cls in _PROVIDER_REGISTRY.items()
         }
 
     async def generate(
@@ -102,7 +103,7 @@ class AIGateway:
         temperature: float = 0.2,
         max_tokens: int = 8192,
         timeout: int = 120,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> GenerationResult:
         try:
             return await self._provider.generate(
@@ -115,12 +116,15 @@ class AIGateway:
                 timeout=timeout,
             )
         except Exception as exc:
-            logger.error("ai_gateway.generate_error", extra={
-                "provider": self.provider_name, "error": str(exc),
-            })
+            logger.error(
+                "ai_gateway.generate_error",
+                extra={
+                    "provider": self.provider_name,
+                    "error": str(exc),
+                },
+            )
             return GenerationResult(
                 success=False,
                 error=str(exc),
                 provider=self.provider_name,
             )
-

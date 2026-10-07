@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement_taw = """                        if _taw_btn and _taw_btn.is_displayed():
@@ -34,7 +34,7 @@ code = re.sub(
     r"                        if _taw_btn and _taw_btn\.is_displayed\(\):\n                            _taw_btn\.click\(\)\n                            _taw_result = True\n                            logger\.info\(f\"uc-login: 'Try another way' clicked natively \(attempt \{_taw_i\+1\}\)\"\)\n                            break",
     replacement_taw,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 replacement_sel = """            _sel_js = \"\"\"
@@ -87,7 +87,7 @@ code = re.sub(
     r"            _sel_js = \"\"\"\n\(function\(\)\{\n  var dispatch=function\(el\)\{\n    el\.scrollIntoView\(\{block:'center'\}\);\n    \['pointerdown','mousedown','pointerup','mouseup','click'\]\.forEach\(function\(ev\)\{\n      el\.dispatchEvent\(new MouseEvent\(ev,\{bubbles:true,cancelable:true,view:window\}\)\);\n    \}\);\n  \};\n\n  // Try known challengetype values for authenticator app(.*?)logger\.warning\(\"uc-login: authenticator not found after 8s\"\)",
     replacement_sel,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

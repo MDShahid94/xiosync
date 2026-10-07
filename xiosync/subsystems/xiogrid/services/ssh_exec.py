@@ -4,6 +4,7 @@ Uses subprocess.run — synchronous and thread-safe.
 All calls complete in < 45s (script execution bound).
 Parameterized by PPPoEHost so any registered host works identically.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -14,11 +15,16 @@ if TYPE_CHECKING:
     from xiosync.subsystems.xiogrid.models.exit_node import PPPoEHost
 
 _SSH_BASE_OPTS = [
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "BatchMode=yes",           # never prompt for password
-    "-o", "ConnectTimeout=8",
-    "-o", "ServerAliveInterval=10",
-    "-o", "ServerAliveCountMax=3",
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "BatchMode=yes",  # never prompt for password
+    "-o",
+    "ConnectTimeout=8",
+    "-o",
+    "ServerAliveInterval=10",
+    "-o",
+    "ServerAliveCountMax=3",
 ]
 
 
@@ -32,7 +38,7 @@ class SSHResult:
     def ok(self) -> bool:
         return self.returncode == 0
 
-    def require_ok(self) -> "SSHResult":
+    def require_ok(self) -> SSHResult:
         if not self.ok:
             raise RuntimeError(
                 f"SSH command failed (rc={self.returncode}): {self.stderr or self.stdout}"
@@ -61,7 +67,7 @@ def ssh_run(
 
 
 def vm_script(
-    host: "PPPoEHost",
+    host: PPPoEHost,
     script: str,
     *args: str | int,
     timeout: int = 45,
@@ -81,7 +87,7 @@ def vm_script(
     )
 
 
-def vm_ping(host: "PPPoEHost") -> bool:
+def vm_ping(host: PPPoEHost) -> bool:
     """Quick liveness check — succeeds if SSH is reachable."""
     result = ssh_run(
         f"{host.vm_ssh_user}@{host.vm_ssh_host}",

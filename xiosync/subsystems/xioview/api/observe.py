@@ -8,6 +8,7 @@ The actual implementation has been decomposed into:
   - viewer.py          — HTML viewer rendering
   - protocol.py        — shared types and constants
 """
+
 from xiosync.subsystems.xioview.api.routes import public_router, router
 
 __all__ = ["router", "public_router"]

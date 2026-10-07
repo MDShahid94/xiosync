@@ -5,15 +5,17 @@ Bug 2: ai_healer.py called DOMInspector() — not callable
 Bug 3: memory_graph.py set last_used_at (column is last_used)
 Bug 4: dag_executor.py passed int to ARRAY(Integer) locator_priority
 """
+
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 # ── Bug 1: ContextHashRouter SQL column names ─────────────────────────────────
+
 
 class TestContextHashRouterColumns:
     """Verify SQL uses correct column names from XioflowMemoryNode model."""
@@ -26,30 +28,38 @@ class TestContextHashRouterColumns:
         # We can't easily execute the SQL, but we can inspect the query construction
         # by examining the source. Import and check the method exists.
         import inspect
+
         source = inspect.getsource(router.query_by_viewport_tier)
-        assert "organization_id = :org_id" in source, \
+        assert "organization_id = :org_id" in source, (
             "WHERE clause should use 'organization_id' column (not 'org_id')"
-        assert '"org_id = :org_id"' not in source, \
+        )
+        assert '"org_id = :org_id"' not in source, (
             "Must NOT use bare 'org_id' — actual column is 'organization_id'"
+        )
 
     def test_query_uses_viewport_width_not_viewport_w(self):
         """SQL must reference 'viewport_width', not 'viewport_w'."""
+        import inspect
+
         from xiosync.subsystems.xioflow.engine.context_hash_router import ContextHashRouter
 
-        import inspect
         source = inspect.getsource(ContextHashRouter.query_by_viewport_tier)
         # Should contain viewport_width in WHERE clauses
-        assert "viewport_width" in source, \
+        assert "viewport_width" in source, (
             "WHERE clause should use 'viewport_width' (not 'viewport_w')"
+        )
         # viewport_w should only appear as context dict key, not in SQL
         # Check that viewport_w doesn't appear in SQL string literals
-        assert '"viewport_w = :vw"' not in source, \
+        assert '"viewport_w = :vw"' not in source, (
             "SQL must NOT use 'viewport_w' — actual column is 'viewport_width'"
-        assert '"viewport_w >=' not in source, \
+        )
+        assert '"viewport_w >=' not in source, (
             "SQL must NOT use 'viewport_w' — actual column is 'viewport_width'"
+        )
 
 
 # ── Bug 2: AIHealer DOMInspector usage ────────────────────────────────────────
+
 
 class TestAIHealerDOMInspector:
     """Verify AIHealer correctly calls DOMInspector.get_interactive_elements()."""
@@ -61,7 +71,7 @@ class TestAIHealerDOMInspector:
 
         mock_dom_inspector = MagicMock()
         mock_dom_inspector.get_interactive_elements = AsyncMock(
-            return_value=("[0] <button> \"Login\"", {0: {"tag": "button"}})
+            return_value=('[0] <button> "Login"', {0: {"tag": "button"}})
         )
 
         healer = AIHealer()
@@ -72,7 +82,9 @@ class TestAIHealerDOMInspector:
         healer.gateway = MagicMock()
         healer.gateway.generate = AsyncMock(return_value=mock_result)
 
-        result = await healer.heal(page=MagicMock(), intent="click login", dom_inspector=mock_dom_inspector)
+        result = await healer.heal(
+            page=MagicMock(), intent="click login", dom_inspector=mock_dom_inspector
+        )
 
         # Must have called get_interactive_elements, not __call__
         mock_dom_inspector.get_interactive_elements.assert_awaited_once()
@@ -85,7 +97,7 @@ class TestAIHealerDOMInspector:
         from xiosync.subsystems.xioflow.engine.ai_healer import AIHealer
 
         async def _fake_dom():
-            return "[0] <button> \"Submit\""
+            return '[0] <button> "Submit"'
 
         healer = AIHealer()
         mock_result = MagicMock()
@@ -101,19 +113,19 @@ class TestAIHealerDOMInspector:
 
 # ── Bug 3: MemoryGraph last_used column name ─────────────────────────────────
 
+
 class TestMemoryGraphLastUsed:
     """Verify update_last_used uses 'last_used', not 'last_used_at'."""
 
     def test_update_last_used_uses_correct_column(self):
         """update_last_used must pass last_used= to update_node, not last_used_at=."""
+        import inspect
+
         from xiosync.subsystems.xioflow.memory.memory_graph import MemoryGraph
 
-        import inspect
         source = inspect.getsource(MemoryGraph.update_last_used)
-        assert "last_used=" in source, \
-            "Must use 'last_used' kwarg (matches actual DB column)"
-        assert "last_used_at=" not in source, \
-            "Must NOT use 'last_used_at' — column is 'last_used'"
+        assert "last_used=" in source, "Must use 'last_used' kwarg (matches actual DB column)"
+        assert "last_used_at=" not in source, "Must NOT use 'last_used_at' — column is 'last_used'"
 
     def test_update_last_used_calls_update_node(self):
         """update_last_used should delegate to update_node with correct column."""
@@ -134,6 +146,7 @@ class TestMemoryGraphLastUsed:
 
 
 # ── Bug 4: DAG executor locator_priority list type ────────────────────────────
+
 
 class TestLocatorPriorityListType:
     """Verify locator_priority is updated with a list, not a bare int."""

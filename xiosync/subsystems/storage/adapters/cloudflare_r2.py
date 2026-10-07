@@ -8,6 +8,7 @@ Config keys:
 Credential (vault):
     'ACCESS_KEY_ID:SECRET_ACCESS_KEY' colon-separated (R2 API token pair).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -16,11 +17,10 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
-from xiosync.subsystems.storage.adapters.base import StorageAdapter, AccessInfo
+from xiosync.subsystems.storage.adapters.base import AccessInfo, StorageAdapter
 
 
 class CloudflareR2Adapter(StorageAdapter):
-
     def validate_config(self) -> None:
         for key in ("account_id", "bucket"):
             if key not in self.config:
@@ -28,8 +28,7 @@ class CloudflareR2Adapter(StorageAdapter):
 
     def _endpoint(self) -> str:
         return self.config.get(
-            "endpoint",
-            f"https://{self.config['account_id']}.r2.cloudflarestorage.com"
+            "endpoint", f"https://{self.config['account_id']}.r2.cloudflarestorage.com"
         )
 
     def _presign(self, object_key: str, method: str, expires: int = 3600) -> str:
@@ -51,11 +50,11 @@ class CloudflareR2Adapter(StorageAdapter):
         endpoint = self._endpoint()
 
         now = datetime.now(UTC)
-        date_str  = now.strftime("%Y%m%d")
-        time_str  = now.strftime("%Y%m%dT%H%M%SZ")
+        date_str = now.strftime("%Y%m%d")
+        time_str = now.strftime("%Y%m%dT%H%M%SZ")
 
         credential_scope = f"{date_str}/{region}/{service}/aws4_request"
-        credential_str   = f"{access_key}/{credential_scope}"
+        credential_str = f"{access_key}/{credential_scope}"
 
         host = endpoint.replace("https://", "").replace("http://", "")
         canonical_uri = f"/{bucket}/{quote(object_key, safe='/')}"
@@ -68,8 +67,7 @@ class CloudflareR2Adapter(StorageAdapter):
             f"&X-Amz-SignedHeaders=host"
         )
         canonical_request = (
-            f"{method}\n{canonical_uri}\n{query}\n"
-            f"host:{host}\n\nhost\nUNSIGNED-PAYLOAD"
+            f"{method}\n{canonical_uri}\n{query}\nhost:{host}\n\nhost\nUNSIGNED-PAYLOAD"
         )
         string_to_sign = (
             f"AWS4-HMAC-SHA256\n{time_str}\n{credential_scope}\n"

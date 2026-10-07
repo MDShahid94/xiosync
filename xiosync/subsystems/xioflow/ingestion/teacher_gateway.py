@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
+
 class TeacherGateway:
     """Chrome extension POST handler."""
 
@@ -23,7 +24,7 @@ class TeacherGateway:
         action_params: dict,
         previous_node_id: str | None = None,
         recorded_by: str | None = None,
-        project_id: str | None = None
+        project_id: str | None = None,
     ) -> str:
         """Record an action from the teacher extension."""
         parsed_url = urlparse(url)
@@ -38,8 +39,8 @@ class TeacherGateway:
             action_type=action_type,
             action_params=action_params,
             previous_intent=previous_node_id,
-            recorded_by='teacher_extension',
+            recorded_by="teacher_extension",
             project_id=project_id,
-            recording_method='teacher_extension'
+            recording_method="teacher_extension",
         )
         return str(node_id)

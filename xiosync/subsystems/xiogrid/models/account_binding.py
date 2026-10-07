@@ -1,4 +1,5 @@
 """SQLAlchemy model: AccountIpBinding — per-Google-account sticky PPPoE slot."""
+
 from __future__ import annotations
 
 import uuid
@@ -22,22 +23,23 @@ class AccountIpBinding(Base):
     Uniqueness: one binding per (organization_id, google_account) — an account
     always has exactly one bound slot within an org.
     """
+
     __tablename__ = "xiogrid_account_ip_bindings"
     __table_args__ = (
-        UniqueConstraint("organization_id", "google_account",
-                         name="uq_account_ip_binding_per_org"),
+        UniqueConstraint("organization_id", "google_account", name="uq_account_ip_binding_per_org"),
         Index("ix_account_ip_bindings_lookup", "organization_id", "google_account"),
-        Index("ix_account_ip_bindings_slot",   "host_id", "ppp_slot"),
+        Index("ix_account_ip_bindings_slot", "host_id", "ppp_slot"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=new_id,
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=new_id,
         name="id",
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("organizations.id", ondelete="CASCADE",
-                   name="fk_account_ip_bindings_org"),
+        ForeignKey("organizations.id", ondelete="CASCADE", name="fk_account_ip_bindings_org"),
         nullable=False,
     )
     # Full email address: "etathyaghar@gmail.com"
@@ -45,18 +47,21 @@ class AccountIpBinding(Base):
 
     host_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("xiogrid_pppoe_hosts.id", ondelete="CASCADE",
-                   name="fk_account_ip_bindings_host"),
+        ForeignKey(
+            "xiogrid_pppoe_hosts.id", ondelete="CASCADE", name="fk_account_ip_bindings_host"
+        ),
         nullable=False,
     )
     ppp_slot: Mapped[int] = mapped_column(Integer, nullable=False)
 
     bound_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False,
+        DateTime(timezone=True),
+        nullable=False,
         server_default="now()",
     )
     last_used_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True,
+        DateTime(timezone=True),
+        nullable=True,
     )
     total_sessions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 

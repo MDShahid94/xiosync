@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement_func = """    def cdp_click_element(selectors, max_wait=5):
@@ -42,10 +42,10 @@ replacement_func = """    def cdp_click_element(selectors, max_wait=5):
         raise RuntimeError(f"Element not found for CDP click: {selectors}")"""
 
 code = re.sub(
-    r'    def cdp_click_element\(selectors, max_wait=5\):\n.*?(?=    def cdp_type_text)',
+    r"    def cdp_click_element\(selectors, max_wait=5\):\n.*?(?=    def cdp_type_text)",
     replacement_func + "\n\n",
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

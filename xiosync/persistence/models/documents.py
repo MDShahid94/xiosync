@@ -1,4 +1,5 @@
 """Document collection and page ORM models (improvement #2)."""
+
 from __future__ import annotations
 
 import uuid
@@ -33,14 +34,19 @@ class DocumentCollection(Base):
             name="ck_doc_collections_state",
         ),
         UniqueConstraint(
-            "organization_id", "slug", "version",
+            "organization_id",
+            "slug",
+            "version",
             name="uq_doc_collections_org_slug_version",
         ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     slug: Mapped[str] = mapped_column(Text, nullable=False)
@@ -53,11 +59,15 @@ class DocumentCollection(Base):
     created_at: Mapped[datetime] = mapped_column(_ts, nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime | None] = mapped_column(_ts)
     extra_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb"),
+        "metadata",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
     )
 
     pages: Mapped[list[DocumentPage]] = relationship(
-        back_populates="collection", cascade="all, delete-orphan",
+        back_populates="collection",
+        cascade="all, delete-orphan",
         order_by="DocumentPage.page_order",
     )
 
@@ -74,13 +84,19 @@ class DocumentPage(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     collection_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("document_collections.id", ondelete="CASCADE"), nullable=False,
+        UUID(as_uuid=True),
+        ForeignKey("document_collections.id", ondelete="CASCADE"),
+        nullable=False,
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
     )
     artifact_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("artifacts.id"),
+        UUID(as_uuid=True),
+        ForeignKey("artifacts.id"),
     )
     title: Mapped[str] = mapped_column(Text, nullable=False)
     slug: Mapped[str] = mapped_column(Text, nullable=False)
@@ -88,11 +104,15 @@ class DocumentPage(Base):
     inline_content: Mapped[str | None] = mapped_column(Text)
     page_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     parent_page_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("document_pages.id"),
+        UUID(as_uuid=True),
+        ForeignKey("document_pages.id"),
     )
     depth: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     extra_metadata: Mapped[dict[str, Any]] = mapped_column(
-        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb"),
+        "metadata",
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
     )
     created_at: Mapped[datetime] = mapped_column(_ts, nullable=False, server_default=text("now()"))
     updated_at: Mapped[datetime | None] = mapped_column(_ts)

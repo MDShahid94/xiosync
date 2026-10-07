@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 helpers = """    # ── CDP Native Behavioral Interactions ──────────────────────────────────
@@ -86,7 +86,7 @@ code = re.sub(
     r"    def type_human\(el, text\):(.*?)(?=    try:\n        # ── CDP helper)",
     helpers + "\n\n",
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

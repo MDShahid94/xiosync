@@ -15,26 +15,25 @@ Usage:
     python3 xio_slot_watchdog.py
     # Or via launchd (see com.xiogrid.slot-watchdog.plist)
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import os
 import sys
-import time
 import urllib.error
 import urllib.request
-from datetime import datetime
 
-LOG_FILE   = "/tmp/xio_slot_watchdog.log"
-XIOSYNC    = os.environ.get("XIOSYNC_URL",        "http://localhost:8000")
+LOG_FILE = "/tmp/xio_slot_watchdog.log"
+XIOSYNC = os.environ.get("XIOSYNC_URL", "http://localhost:8000")
 ADMIN_PASS = os.environ.get("XIOSYNC_ADMIN_PASS", "Xiogrid2026!Admin")
-ADMIN_USER = os.environ.get("XIOSYNC_ADMIN_EMAIL","admin@xiogrid.dev")
-ORG_ID     = os.environ.get("XIOSYNC_ORG_ID",     "00000000-0000-7000-8000-000000000000")
+ADMIN_USER = os.environ.get("XIOSYNC_ADMIN_EMAIL", "admin@xiogrid.dev")
+ORG_ID = os.environ.get("XIOSYNC_ORG_ID", "00000000-0000-7000-8000-000000000000")
 
 logging.basicConfig(
-    level   = logging.INFO,
-    format  = "%(asctime)s  %(levelname)-7s %(message)s",
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-7s %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
         logging.FileHandler(LOG_FILE, mode="a"),
@@ -45,10 +44,12 @@ log = logging.getLogger("watchdog")
 
 # ── XIOSYNC API helpers ──────────────────────────────────────────────────────
 
-def _post(path: str, body: dict | None = None, token: str | None = None,
-          method: str = "POST") -> dict:
-    url   = f"{XIOSYNC}{path}"
-    data  = json.dumps(body or {}).encode() if body is not None else b""
+
+def _post(
+    path: str, body: dict | None = None, token: str | None = None, method: str = "POST"
+) -> dict:
+    url = f"{XIOSYNC}{path}"
+    data = json.dumps(body or {}).encode() if body is not None else b""
     hdrs: dict[str, str] = {"Content-Type": "application/json"}
     if token:
         hdrs["Authorization"] = f"Bearer {token}"
@@ -67,15 +68,19 @@ def _get(path: str, token: str) -> dict:
 
 
 def get_token() -> str:
-    resp = _post("/api/v1/auth/login", {
-        "organization_id": ORG_ID,
-        "email": ADMIN_USER,
-        "password": ADMIN_PASS,
-    })
+    resp = _post(
+        "/api/v1/auth/login",
+        {
+            "organization_id": ORG_ID,
+            "email": ADMIN_USER,
+            "password": ADMIN_PASS,
+        },
+    )
     return resp["access_token"]
 
 
 # ── Watchdog logic ───────────────────────────────────────────────────────────
+
 
 def run_watchdog() -> None:
     log.info("=== Slot watchdog cycle started ===")
@@ -87,7 +92,7 @@ def run_watchdog() -> None:
 
     # Fetch current slot inventory
     try:
-        data  = _get("/api/v1/pppoe/nodes", token)
+        data = _get("/api/v1/pppoe/nodes", token)
         nodes = data.get("nodes", data if isinstance(data, list) else [])
     except Exception as e:
         log.error("Failed to fetch slot inventory: %s", e)
@@ -102,9 +107,9 @@ def run_watchdog() -> None:
     reconnected = []
     for node in nodes:
         host_id = node["host_id"]
-        slot    = node["slot"]
-        state   = node.get("state", "?")
-        pub_ip  = node.get("public_ip", "?")
+        slot = node["slot"]
+        state = node.get("state", "?")
+        pub_ip = node.get("public_ip", "?")
 
         # ── Health check ──
         try:
@@ -115,7 +120,7 @@ def run_watchdog() -> None:
             )
             # Response is {slot_num: {state, public_ip, ...}}
             slot_result = result.get(str(slot), result.get(slot, {}))
-            new_state  = slot_result.get("state", state)
+            new_state = slot_result.get("state", state)
             new_pub_ip = slot_result.get("public_ip", pub_ip)
 
             if new_state == "up":
@@ -132,14 +137,15 @@ def run_watchdog() -> None:
                         f"/api/v1/pppoe/nodes/{host_id}/{slot}/rotate",
                         token=token,
                     )
-                    rot_ip    = rot.get("public_ip", "?")
+                    rot_ip = rot.get("public_ip", "?")
                     rot_state = rot.get("state", "?")
                     if rot_state == "idle" and rot_ip and rot_ip != "?":
                         log.info("  slot %d: RECONNECTED → new ip=%s ✅", slot, rot_ip)
                         reconnected.append({"slot": slot, "new_ip": rot_ip})
                     else:
-                        log.error("  slot %d: Rotate failed (state=%s ip=%s) ❌",
-                                  slot, rot_state, rot_ip)
+                        log.error(
+                            "  slot %d: Rotate failed (state=%s ip=%s) ❌", slot, rot_state, rot_ip
+                        )
                 except Exception as re:
                     log.error("  slot %d: Rotate error: %s ❌", slot, re)
 

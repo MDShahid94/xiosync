@@ -1,4 +1,5 @@
 """XIOFLOW Memory API — Teacher Extension action recording + graph inspection."""
+
 from __future__ import annotations
 
 import logging
@@ -27,6 +28,7 @@ def _ctx(request: Request) -> OrgContext:
 
 # ── Request models ────────────────────────────────────────────────────────────
 
+
 class RecordRequest(BaseModel):
     url: str
     intent: str
@@ -54,6 +56,7 @@ class VoteRequest(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+
 @router.post("/record", summary="Record a Teacher Extension action as a memory node")
 def record_action(req: RecordRequest, request: Request) -> dict[str, Any]:
     """Inserts a new XioflowMemoryNode row.
@@ -65,6 +68,7 @@ def record_action(req: RecordRequest, request: Request) -> dict[str, Any]:
     ctx = _ctx(request)
 
     from urllib.parse import urlparse
+
     domain = urlparse(req.url).netloc or req.url
 
     node_id = new_id()
@@ -157,7 +161,9 @@ def promote_node(node_id: str, request: Request) -> dict[str, Any]:
     session = _session(request)
     ctx = _ctx(request)
     session.execute(
-        text("UPDATE xioflow_memory_nodes SET tier='platform_global' WHERE id=cast(:id as uuid) AND organization_id=:org"),
+        text(
+            "UPDATE xioflow_memory_nodes SET tier='platform_global' WHERE id=cast(:id as uuid) AND organization_id=:org"
+        ),
         {"id": node_id, "org": str(ctx.organization_id)},
     )
     session.commit()
@@ -169,7 +175,9 @@ def demote_node(node_id: str, request: Request) -> dict[str, Any]:
     session = _session(request)
     ctx = _ctx(request)
     session.execute(
-        text("UPDATE xioflow_memory_nodes SET tier='project_experimental' WHERE id=cast(:id as uuid) AND organization_id=:org"),
+        text(
+            "UPDATE xioflow_memory_nodes SET tier='project_experimental' WHERE id=cast(:id as uuid) AND organization_id=:org"
+        ),
         {"id": node_id, "org": str(ctx.organization_id)},
     )
     session.commit()
@@ -192,8 +200,14 @@ def search_intents(request: Request, q: str, limit: int = 10) -> list[dict[str, 
         {"org": str(ctx.organization_id), "q": f"%{q}%", "lim": limit},
     ).fetchall()
     return [
-        {"id": str(r.id), "domain": r.domain, "intent": r.intent,
-         "action_type": r.action_type, "tier": r.tier, "status": r.status}
+        {
+            "id": str(r.id),
+            "domain": r.domain,
+            "intent": r.intent,
+            "action_type": r.action_type,
+            "tier": r.tier,
+            "status": r.status,
+        }
         for r in rows
     ]
 
@@ -203,6 +217,7 @@ def get_graph(request: Request, domain: str, intent: str) -> dict[str, Any]:
     session = _session(request)
     ctx = _ctx(request)
     from xiosync.subsystems.xioflow.memory.memory_graph import MemoryGraph
+
     graph = MemoryGraph(session, org_id=ctx.organization_id)
     try:
         return graph.get_workflow_graph(domain, intent)

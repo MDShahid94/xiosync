@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement = """    _fp = req.fingerprint or {}
@@ -60,7 +60,7 @@ code = re.sub(
     r"    _canvas_seed = req\.fingerprint\.get\(\"canvas_seed\", 0x1A2B\)\n    _audio_seed  = req\.fingerprint\.get\(\"audio_seed\",  0x3C4D\)\n    # Compute TZ offset: minutes west of UTC \(e\.g\. IST UTC\+5:30 → -330\)\n    import datetime as _dt\n    try:\n        import zoneinfo as _zi\n        _tz_obj    = _zi\.ZoneInfo\(_timezone\)\n        _tz_offset = -int\(_dt\.datetime\.now\(_tz_obj\)\.utcoffset\(\)\.total_seconds\(\) // 60\)\n    except Exception:\n        _tz_offset = 0\n    _ua_for_js = _STEALTH_UA_CHROME  # Chrome 131 UA matching our binary\n    _session_stealth_js = \(\n        _STEALTH_JS(.*?)\)\n",
     replacement + "\n",
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

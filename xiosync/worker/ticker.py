@@ -9,6 +9,7 @@ Idempotency: last_fired_at is updated atomically in the same transaction
 as the run INSERT. Concurrent workers won't double-fire because the UPDATE
 uses a WHERE last_fired_at condition that only matches once.
 """
+
 from __future__ import annotations
 
 import json
@@ -34,6 +35,7 @@ def _is_due(cron_schedule: str | None, last_fired_at: datetime | None, now: date
         return False
     try:
         from croniter import croniter
+
         if not croniter.is_valid(cron_schedule):
             logger.warning("invalid_cron_schedule", extra={"schedule": cron_schedule})
             return False
@@ -113,18 +115,24 @@ def tick_cron_triggers(session: Session) -> int:
         # Snapshot template at dispatch for versioning
         tmpl_snap = None
         if template_id:
-            snap = session.execute(text("""
+            snap = session.execute(
+                text("""
                 SELECT slug, dag_domain, dag_root_intent, template_type,
                        COALESCE(config, '{}'::jsonb) as config
                 FROM workflow_templates WHERE id = :tid
-            """), {"tid": template_id}).fetchone()
+            """),
+                {"tid": template_id},
+            ).fetchone()
             if snap:
-                tmpl_snap = json.dumps({
-                    "slug": snap.slug, "dag_domain": snap.dag_domain,
-                    "dag_root_intent": snap.dag_root_intent,
-                    "template_type": snap.template_type,
-                    "config": snap.config if isinstance(snap.config, dict) else {},
-                })
+                tmpl_snap = json.dumps(
+                    {
+                        "slug": snap.slug,
+                        "dag_domain": snap.dag_domain,
+                        "dag_root_intent": snap.dag_root_intent,
+                        "template_type": snap.template_type,
+                        "config": snap.config if isinstance(snap.config, dict) else {},
+                    }
+                )
         session.execute(
             text("""
                 INSERT INTO xioflow_runs

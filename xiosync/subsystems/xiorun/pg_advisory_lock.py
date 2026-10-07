@@ -14,6 +14,7 @@ PostgreSQL Advisory Lock Guarantees:
     - Non-blocking acquisition via pg_try_advisory_lock avoids connection pool starvation.
     - Visibility across all backends via the pg_locks system view.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -68,7 +69,9 @@ def try_acquire_lock(engine: Any, resource_key: str, node_name: str) -> bool:
         if key in _ACTIVE_LOCK_SESSIONS:
             logger.debug(
                 "pg_advisory_lock.already_held_locally key=%d resource=%r by=%r",
-                key, resource_key, _ACTIVE_LOCK_METADATA.get(key, {}).get("node_name"),
+                key,
+                resource_key,
+                _ACTIVE_LOCK_METADATA.get(key, {}).get("node_name"),
             )
             return False
 
@@ -90,14 +93,18 @@ def try_acquire_lock(engine: Any, resource_key: str, node_name: str) -> bool:
                 }
             logger.info(
                 "pg_advisory_lock.acquired resource=%r node=%r key=%d",
-                resource_key, node_name, key,
+                resource_key,
+                node_name,
+                key,
             )
             return True
         else:
             session.close()
             logger.debug(
                 "pg_advisory_lock.denied resource=%r node=%r key=%d",
-                resource_key, node_name, key,
+                resource_key,
+                node_name,
+                key,
             )
             return False
     except Exception:
@@ -180,8 +187,9 @@ def get_lock_holder(engine: Any, resource_key: str) -> str | None:
             return str(meta["node_name"])
 
     with OrmSession(engine) as session:
-        row = session.execute(
-            text("""
+        row = (
+            session.execute(
+                text("""
                 SELECT
                     l.pid,
                     a.application_name
@@ -192,8 +200,11 @@ def get_lock_holder(engine: Any, resource_key: str) -> str | None:
                   AND ((l.classid::bigint << 32) | l.objid::bigint) = :key
                 LIMIT 1
             """),
-            {"key": key},
-        ).mappings().first()
+                {"key": key},
+            )
+            .mappings()
+            .first()
+        )
 
         if row:
             app_name = row.get("application_name")
@@ -216,8 +227,9 @@ def get_lock_info(engine: Any, resource_key: str) -> dict[str, Any] | None:
             }
 
     with OrmSession(engine) as session:
-        row = session.execute(
-            text("""
+        row = (
+            session.execute(
+                text("""
                 SELECT
                     l.pid,
                     a.application_name,
@@ -229,8 +241,11 @@ def get_lock_info(engine: Any, resource_key: str) -> dict[str, Any] | None:
                   AND ((l.classid::bigint << 32) | l.objid::bigint) = :key
                 LIMIT 1
             """),
-            {"key": key},
-        ).mappings().first()
+                {"key": key},
+            )
+            .mappings()
+            .first()
+        )
 
         if row:
             app_name = row.get("application_name")

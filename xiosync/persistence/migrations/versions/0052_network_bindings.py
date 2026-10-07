@@ -7,6 +7,7 @@ Create Date: 2026-09-21
 Domain-specific proxy rules (Layer 3) and workflow network scopes (Layer 4)
 for the hierarchical network binding system.
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -15,6 +16,7 @@ revision = "0052"
 down_revision = "0051"
 branch_labels = None
 depends_on = None
+
 
 def upgrade():
     op.execute("""
@@ -52,6 +54,7 @@ def upgrade():
     CREATE POLICY rls_workflow_network_scopes ON workflow_network_scopes
         USING (organization_id = current_setting('app.current_org_id')::UUID);
     """)
+
 
 def downgrade():
     op.execute("""

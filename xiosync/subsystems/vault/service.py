@@ -8,6 +8,7 @@ Any secret can reference another org's platform-global secret by key — this
 is how shared infra credentials (e.g. a shared CF API token) work without
 duplicating the ciphertext.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -23,16 +24,17 @@ from xiosync.subsystems.vault.crypto import VaultCrypto, VaultCryptoError
 
 __all__ = ["VaultService", "VaultRecord", "VaultNotFoundError", "VaultCryptoError"]
 
-_ALLOWED_TYPES = frozenset({
-    "generic", "credential", "token", "totp", "api_key", "ssh_key", "oauth"
-})
+_ALLOWED_TYPES = frozenset(
+    {"generic", "credential", "token", "totp", "api_key", "ssh_key", "oauth"}
+)
 
 
 @dataclass(frozen=True, slots=True)
 class VaultRecord:
     """Public (non-sensitive) metadata about a vaulted secret."""
+
     id: uuid.UUID
-    organization_id: uuid.UUID | None   # None = platform-global
+    organization_id: uuid.UUID | None  # None = platform-global
     key: str
     secret_type: str
     description: str | None
@@ -48,6 +50,7 @@ class VaultNotFoundError(KeyError):
 
 def _crypto() -> VaultCrypto:
     import os
+
     return VaultCrypto(os.environ["XIOSYNC_AUTH_SECRET"])
 
 
@@ -115,8 +118,8 @@ class VaultService:
             {
                 "org": str(org_id) if org_id else None,
                 "key": key,
-                "ct":  ciphertext,
-                "iv":  iv,
+                "ct": ciphertext,
+                "iv": iv,
                 "tag": auth_tag,
                 "stype": secret_type,
                 "desc": description,
@@ -158,16 +161,14 @@ class VaultService:
                     CASE WHEN organization_id IS NOT NULL THEN 0 ELSE 1 END
                 LIMIT 1
             """),
-            {"org": str(ctx.organization_id), "key": key,
-             "allow_platform": allow_platform},
+            {"org": str(ctx.organization_id), "key": key, "allow_platform": allow_platform},
         ).fetchone()
 
         if not row:
             raise VaultNotFoundError(f"Secret '{key}' not found")
 
         org_id = uuid.UUID(str(row.organization_id)) if row.organization_id else None
-        return _crypto().decrypt(bytes(row.ciphertext), bytes(row.iv),
-                                 bytes(row.auth_tag), org_id)
+        return _crypto().decrypt(bytes(row.ciphertext), bytes(row.iv), bytes(row.auth_tag), org_id)
 
     def get_meta(self, ctx: OrgContext, key: str) -> VaultRecord:
         """Return metadata (no plaintext) for a secret."""
@@ -181,9 +182,7 @@ class VaultService:
         include_platform: bool = True,
     ) -> list[VaultRecord]:
         """List secret metadata (keys only, no plaintext)."""
-        where = [
-            "(organization_id = :org OR (:incl_platform AND organization_id IS NULL))"
-        ]
+        where = ["(organization_id = :org OR (:incl_platform AND organization_id IS NULL))"]
         params: dict[str, Any] = {
             "org": str(ctx.organization_id),
             "incl_platform": include_platform,
@@ -221,11 +220,8 @@ class VaultService:
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
-    def _meta(
-        self, ctx: OrgContext, key: str, *, platform_global: bool = False
-    ) -> VaultRecord:
-        org_clause = "organization_id IS NULL" if platform_global \
-                     else "organization_id = :org"
+    def _meta(self, ctx: OrgContext, key: str, *, platform_global: bool = False) -> VaultRecord:
+        org_clause = "organization_id IS NULL" if platform_global else "organization_id = :org"
         row = self._db.execute(
             text(f"""
                 SELECT id, organization_id, key, secret_type,

@@ -54,16 +54,23 @@ class SecretRef(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
     )  # IMM
     name: Mapped[str] = mapped_column(Text, nullable=False)
     provider: Mapped[str] = mapped_column(Text, nullable=False)
     ref_config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     state: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'active'"),
+        Text,
+        nullable=False,
+        server_default=text("'active'"),
     )
     created_at: Mapped[datetime] = mapped_column(
-        _ts, nullable=False, server_default=text("now()"),
+        _ts,
+        nullable=False,
+        server_default=text("now()"),
     )  # IMM
     rotated_at: Mapped[datetime | None] = mapped_column(_ts)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)

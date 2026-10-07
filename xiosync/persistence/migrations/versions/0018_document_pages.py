@@ -6,8 +6,8 @@ Revises: 0017
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 
 revision = "0018"
@@ -21,8 +21,16 @@ _ts = TIMESTAMP(timezone=True)
 def upgrade() -> None:
     op.create_table(
         "document_collections",
-        sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
-        sa.Column("organization_id", UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=False, index=True),
+        sa.Column(
+            "id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
+        ),
+        sa.Column(
+            "organization_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey("organizations.id"),
+            nullable=False,
+            index=True,
+        ),
         sa.Column("name", sa.Text, nullable=False),
         sa.Column("slug", sa.Text, nullable=False),
         sa.Column("doc_type", sa.Text, nullable=False, server_default="custom"),
@@ -34,15 +42,33 @@ def upgrade() -> None:
         sa.Column("created_at", _ts, nullable=False, server_default=sa.text("now()")),
         sa.Column("updated_at", _ts),
         sa.Column("metadata", JSONB, nullable=False, server_default=sa.text("'{}'::jsonb")),
-        sa.CheckConstraint("state IN ('draft','published','archived','deprecated')", name="ck_doc_collections_state"),
-        sa.UniqueConstraint("organization_id", "slug", "version", name="uq_doc_collections_org_slug_version"),
+        sa.CheckConstraint(
+            "state IN ('draft','published','archived','deprecated')",
+            name="ck_doc_collections_state",
+        ),
+        sa.UniqueConstraint(
+            "organization_id", "slug", "version", name="uq_doc_collections_org_slug_version"
+        ),
     )
 
     op.create_table(
         "document_pages",
-        sa.Column("id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
-        sa.Column("collection_id", UUID(as_uuid=True), sa.ForeignKey("document_collections.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("organization_id", UUID(as_uuid=True), sa.ForeignKey("organizations.id"), nullable=False, index=True),
+        sa.Column(
+            "id", UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
+        ),
+        sa.Column(
+            "collection_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey("document_collections.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "organization_id",
+            UUID(as_uuid=True),
+            sa.ForeignKey("organizations.id"),
+            nullable=False,
+            index=True,
+        ),
         sa.Column("artifact_id", UUID(as_uuid=True), sa.ForeignKey("artifacts.id")),
         sa.Column("title", sa.Text, nullable=False),
         sa.Column("slug", sa.Text, nullable=False),

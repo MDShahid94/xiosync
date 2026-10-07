@@ -1,11 +1,11 @@
-import urllib.request
 import json
 import urllib.error
 import urllib.parse
+import urllib.request
 
 WORKER_TS_IP = "100.111.130.118"
 WORKER_AGENT = f"http://{WORKER_TS_IP}:9300"
-TOKEN        = "xiosync-internal-2026-karma"
+TOKEN = "xiosync-internal-2026-karma"
 
 body = {
     "identity_id": "karmareturnsfromallsides",
@@ -16,11 +16,8 @@ body = {
 req = urllib.request.Request(
     f"{WORKER_AGENT}/push-profile",
     data=json.dumps(body).encode(),
-    headers={
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {TOKEN}"
-    },
-    method="POST"
+    headers={"Content-Type": "application/json", "Authorization": f"Bearer {TOKEN}"},
+    method="POST",
 )
 
 try:

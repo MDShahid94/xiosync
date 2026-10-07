@@ -94,12 +94,18 @@ def _generate_python() -> None:
 
     subprocess.run(
         [
-            gen, "generate",
-            "-i", str(OPENAPI_SPEC),
-            "-g", "python",
-            "-o", str(out_dir),
-            "--package-name", "xiosync_client",
-            "--additional-properties", "projectName=xiosync-client,packageVersion=0.1.0",
+            gen,
+            "generate",
+            "-i",
+            str(OPENAPI_SPEC),
+            "-g",
+            "python",
+            "-o",
+            str(out_dir),
+            "--package-name",
+            "xiosync_client",
+            "--additional-properties",
+            "projectName=xiosync-client,packageVersion=0.1.0",
         ],
         check=True,
     )
@@ -117,12 +123,18 @@ def _generate_go() -> None:
 
     subprocess.run(
         [
-            gen, "generate",
-            "-i", str(OPENAPI_SPEC),
-            "-g", "go",
-            "-o", str(out_dir),
-            "--package-name", "xiosync",
-            "--additional-properties", "packageVersion=0.1.0",
+            gen,
+            "generate",
+            "-i",
+            str(OPENAPI_SPEC),
+            "-g",
+            "go",
+            "-o",
+            str(out_dir),
+            "--package-name",
+            "xiosync",
+            "--additional-properties",
+            "packageVersion=0.1.0",
         ],
         check=True,
     )

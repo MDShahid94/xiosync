@@ -1,22 +1,19 @@
 """Unit tests for PAC generator, HITL, domain eviction, ontology, and TOTP."""
+
 from __future__ import annotations
 
 import asyncio
 import os
-import time
 import uuid
 
-import pytest
-
 # ── PAC Generator ────────────────────────────────────────────────────
-
 from xiosync.subsystems.xiogrid.pac_generator import (
     DomainProxyRule,
     PACConfig,
+    build_chrome_proxy_args,
+    cleanup_pac_file,
     generate_pac_file,
     write_pac_for_session,
-    cleanup_pac_file,
-    build_chrome_proxy_args,
 )
 
 
@@ -32,7 +29,9 @@ class TestPACGenerator:
             profile_default_proxy="SOCKS5 vm:10017",
             domain_rules=[
                 DomainProxyRule(domain_pattern="v0.dev", proxy_url="SOCKS5 vm:10042", priority=10),
-                DomainProxyRule(domain_pattern="github.com", proxy_url="SOCKS5 vm:10099", priority=5),
+                DomainProxyRule(
+                    domain_pattern="github.com", proxy_url="SOCKS5 vm:10099", priority=5
+                ),
             ],
         )
         pac = generate_pac_file(config)
@@ -109,19 +108,27 @@ class TestHITLNoticeStore:
         store = HITLNoticeStore()
         org = uuid.uuid4()
         for i in range(3):
-            store.create(HITLNotice(
-                organization_id=org, session_id=f"sess-{i}",
-                challenge_type="captcha", message=f"Captcha {i}",
-            ))
+            store.create(
+                HITLNotice(
+                    organization_id=org,
+                    session_id=f"sess-{i}",
+                    challenge_type="captcha",
+                    message=f"Captcha {i}",
+                )
+            )
         pending = store.list_pending(org)
         assert len(pending) == 3
 
     def test_resume_changes_state(self):
         store = HITLNoticeStore()
-        notice = store.create(HITLNotice(
-            organization_id=uuid.uuid4(), session_id="s1",
-            challenge_type="2fa", message="Need 2FA",
-        ))
+        notice = store.create(
+            HITLNotice(
+                organization_id=uuid.uuid4(),
+                session_id="s1",
+                challenge_type="2fa",
+                message="Need 2FA",
+            )
+        )
         resumed = store.resume(notice.id, HITLResumedBy.AI_AGENT)
         assert resumed.state == HITLState.RESUMED
         assert resumed.resumed_by == HITLResumedBy.AI_AGENT
@@ -129,19 +136,27 @@ class TestHITLNoticeStore:
 
     def test_cancel_changes_state(self):
         store = HITLNoticeStore()
-        notice = store.create(HITLNotice(
-            organization_id=uuid.uuid4(), session_id="s1",
-            challenge_type="2fa", message="Need 2FA",
-        ))
+        notice = store.create(
+            HITLNotice(
+                organization_id=uuid.uuid4(),
+                session_id="s1",
+                challenge_type="2fa",
+                message="Need 2FA",
+            )
+        )
         cancelled = store.cancel(notice.id)
         assert cancelled.state == HITLState.CANCELLED
 
     def test_wait_for_resume_unblocks(self):
         store = HITLNoticeStore()
-        notice = store.create(HITLNotice(
-            organization_id=uuid.uuid4(), session_id="s1",
-            challenge_type="2fa", message="test",
-        ))
+        notice = store.create(
+            HITLNotice(
+                organization_id=uuid.uuid4(),
+                session_id="s1",
+                challenge_type="2fa",
+                message="test",
+            )
+        )
 
         async def _test():
             async def _resume_after_delay():
@@ -211,9 +226,8 @@ from xiosync.domain.ontology import (
     EDGE_TYPE_MATERIALIZES_TO,
     EDGE_TYPE_ROUTES_THROUGH,
     EDGE_TYPE_RUNS_ON,
-    WELL_KNOWN_EDGE_TYPES,
     GRAPH_CLASSES,
-    validate_graph_class,
+    WELL_KNOWN_EDGE_TYPES,
     would_create_cycle,
 )
 
@@ -255,7 +269,7 @@ class TestSessionVerifier:
 
 # ── Google Token Verify ──────────────────────────────────────────────
 
-from xiosync.subsystems.xiorun.google_token_verify import detect_runtime_type, RuntimeIdentity
+from xiosync.subsystems.xiorun.google_token_verify import RuntimeIdentity, detect_runtime_type
 
 
 class TestGoogleTokenVerify:

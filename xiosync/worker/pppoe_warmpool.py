@@ -7,6 +7,7 @@ warm_pool_target is reached (or max_slots is hit).
 Provisions at most BATCH_SIZE slots per tick to avoid saturating the VM
 SSH connection and pppd subsystem.
 """
+
 from __future__ import annotations
 
 import logging
@@ -22,8 +23,8 @@ from xiosync.subsystems.xiogrid.services.pppoe_nodes import PPPoENodeService
 logger = logging.getLogger(__name__)
 
 _LAST_RUN: datetime | None = None
-_INTERVAL_S: float = 120.0   # run at most once per 2 minutes
-BATCH_SIZE: int = 3          # max slots to provision per tick per host
+_INTERVAL_S: float = 120.0  # run at most once per 2 minutes
+BATCH_SIZE: int = 3  # max slots to provision per tick per host
 
 
 def tick_pppoe_warmpool(session: Session) -> int:
@@ -36,21 +37,22 @@ def tick_pppoe_warmpool(session: Session) -> int:
 
     _LAST_RUN = now
 
-    hosts = session.scalars(
-        select(PPPoEHost).where(PPPoEHost.state == "active")
-    ).all()
+    hosts = session.scalars(select(PPPoEHost).where(PPPoEHost.state == "active")).all()
 
     total_provisioned = 0
     svc = PPPoENodeService(session)
 
     for host in hosts:
         try:
-            idle_count = session.scalar(
-                select(func.count(PPPoEExitNode.id)).where(
-                    PPPoEExitNode.host_id == host.id,
-                    PPPoEExitNode.state == PPPoESlotState.IDLE,
+            idle_count = (
+                session.scalar(
+                    select(func.count(PPPoEExitNode.id)).where(
+                        PPPoEExitNode.host_id == host.id,
+                        PPPoEExitNode.state == PPPoESlotState.IDLE,
+                    )
                 )
-            ) or 0
+                or 0
+            )
 
             deficit = host.warm_pool_target - idle_count
             if deficit <= 0:

@@ -31,9 +31,7 @@ branch_labels = None
 depends_on = None
 
 # Standard tenant isolation GUC check (mirrors revisions 0004–0008).
-_ORG_ISOLATION = (
-    "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
-)
+_ORG_ISOLATION = "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
 
 
 def upgrade() -> None:
@@ -48,9 +46,7 @@ def upgrade() -> None:
         sa.Column("version", sa.Text(), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("entrypoint", sa.Text(), nullable=False),
-        sa.Column(
-            "required_capability_id", postgresql.UUID(as_uuid=True), nullable=False
-        ),
+        sa.Column("required_capability_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("cpu_millis", sa.Integer(), nullable=False),
         sa.Column("memory_mb", sa.Integer(), nullable=False),
         sa.Column("timeout_seconds", sa.Integer(), nullable=False),
@@ -68,9 +64,7 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("now()"),
         ),
-        sa.Column(
-            "updated_at", postgresql.TIMESTAMP(timezone=True), nullable=True
-        ),
+        sa.Column("updated_at", postgresql.TIMESTAMP(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_plugins")),
         sa.ForeignKeyConstraint(
             ["organization_id"],
@@ -213,18 +207,14 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("now()"),
         ),
-        sa.Column(
-            "approved_at", postgresql.TIMESTAMP(timezone=True), nullable=True
-        ),
+        sa.Column("approved_at", postgresql.TIMESTAMP(timezone=True), nullable=True),
         sa.Column(
             "created_at",
             postgresql.TIMESTAMP(timezone=True),
             nullable=False,
             server_default=sa.text("now()"),
         ),
-        sa.Column(
-            "updated_at", postgresql.TIMESTAMP(timezone=True), nullable=True
-        ),
+        sa.Column("updated_at", postgresql.TIMESTAMP(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_plugin_installations")),
         sa.ForeignKeyConstraint(
             ["organization_id"],
@@ -368,24 +358,16 @@ def downgrade() -> None:
     )
     op.drop_table("plugin_network_allow_rules")
 
-    op.execute(
-        "DROP POLICY IF EXISTS plugin_installations_org_isolation ON plugin_installations"
-    )
-    op.drop_index(
-        "ix_plugin_installations_org_state", table_name="plugin_installations"
-    )
+    op.execute("DROP POLICY IF EXISTS plugin_installations_org_isolation ON plugin_installations")
+    op.drop_index("ix_plugin_installations_org_state", table_name="plugin_installations")
     op.drop_index(
         op.f("ix_plugin_installations_organization_id"),
         table_name="plugin_installations",
     )
     op.drop_table("plugin_installations")
 
-    op.execute(
-        "DROP POLICY IF EXISTS plugin_rpc_methods_org_isolation ON plugin_rpc_methods"
-    )
-    op.drop_index(
-        "ix_plugin_rpc_methods_org_plugin", table_name="plugin_rpc_methods"
-    )
+    op.execute("DROP POLICY IF EXISTS plugin_rpc_methods_org_isolation ON plugin_rpc_methods")
+    op.drop_index("ix_plugin_rpc_methods_org_plugin", table_name="plugin_rpc_methods")
     op.drop_index(
         op.f("ix_plugin_rpc_methods_organization_id"),
         table_name="plugin_rpc_methods",

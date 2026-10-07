@@ -96,38 +96,32 @@ _NEW_CAPABILITY_GROUPS = [
     {
         "name": "browser_pool.manage",
         "description": "Browser pool management",
-        "operations": [
-            "browser_pool.*"
-        ],
+        "operations": ["browser_pool.*"],
     },
     {
         "name": "browser_session.manage",
         "description": "Browser session management",
-        "operations": [
-            "browser_session.*"
-        ],
+        "operations": ["browser_session.*"],
     },
     {
         "name": "compute_runtime.manage",
         "description": "Compute runtime management",
-        "operations": [
-            "compute_runtime.*", "runtime_node.*"
-        ],
+        "operations": ["compute_runtime.*", "runtime_node.*"],
     },
     {
         "name": "mesh_network.manage",
         "description": "Mesh network management",
-        "operations": [
-            "mesh.network.*"
-        ],
+        "operations": ["mesh.network.*"],
     },
 ]
 
 
-def register_platform_types(session: Session, context: OrgContext, now: datetime | None = None) -> None:
+def register_platform_types(
+    session: Session, context: OrgContext, now: datetime | None = None
+) -> None:
     """Register XIOGRID-decoupled types into the TypeRegistry and create capability groups."""
     from datetime import UTC
-    
+
     if now is None:
         now = datetime.now(UTC)
 
@@ -182,6 +176,7 @@ def register_platform_types(session: Session, context: OrgContext, now: datetime
 
     # Populate the in-process event type cache with XIOGRID-specific event types.
     from xiosync.domain.event_registry import event_registry
+
     event_registry.register([value for value, _ in _EVENT_TYPES])
 
     project_svc = ProjectService(session)

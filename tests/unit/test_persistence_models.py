@@ -14,9 +14,8 @@ from __future__ import annotations
 import uuid
 
 import xiosync.persistence.models.plugins  # noqa: F401 — registers Phase 5 tables
-import xiosync.persistence.models.workers  # noqa: F401 — registers Phase 4 tables
 import xiosync.persistence.models.projects  # noqa: F401
-
+import xiosync.persistence.models.workers  # noqa: F401 — registers Phase 4 tables
 from sqlalchemy import Table, UniqueConstraint
 from sqlalchemy.dialects import postgresql
 from xiosync.persistence.models import Base
@@ -88,31 +87,31 @@ EXPECTED_TABLES = {
 # checks for them (they exist in the DB but are managed via raw SQL or
 # migrations only).  These will still be counted in the full table set test.
 _SKIP_UUID_PK_CHECK = {
-    "organization_branding",   # uses organization_id as PK (1:1 with org)
-    "mesh_node_bindings",      # composite PK
-    "worker_credentials",      # uses issued_at not created_at
-    "registry_categories",     # system table, no org_id
-    "capability_groups",       # nullable org_id (global defaults)
-    "type_registry",           # nullable org_id
-    "type_registry_aliases",   # nullable org_id
-    "resource_shares",         # source/target pattern
+    "organization_branding",  # uses organization_id as PK (1:1 with org)
+    "mesh_node_bindings",  # composite PK
+    "worker_credentials",  # uses issued_at not created_at
+    "registry_categories",  # system table, no org_id
+    "capability_groups",  # nullable org_id (global defaults)
+    "type_registry",  # nullable org_id
+    "type_registry_aliases",  # nullable org_id
+    "resource_shares",  # source/target pattern
 }
 
 _SKIP_ORG_FK_CHECK = {
-    "organizations",           # IS the tenant root
-    "type_registry",           # nullable org for core types
-    "type_registry_aliases",   # nullable org for core aliases
-    "resource_shares",         # source_org/target_org pattern
-    "registry_categories",     # global lookup
-    "capability_groups",       # nullable org (global defaults)
-    "organization_branding",   # uses organization_id as PK — IS the FK
-    "mesh_node_bindings",      # composite PK table
+    "organizations",  # IS the tenant root
+    "type_registry",  # nullable org for core types
+    "type_registry_aliases",  # nullable org for core aliases
+    "resource_shares",  # source_org/target_org pattern
+    "registry_categories",  # global lookup
+    "capability_groups",  # nullable org (global defaults)
+    "organization_branding",  # uses organization_id as PK — IS the FK
+    "mesh_node_bindings",  # composite PK table
 }
 
 _SKIP_CREATED_AT_CHECK = {
-    "worker_credentials",      # uses issued_at by design (doc 07 §2)
-    "organization_branding",   # no created_at (PK = organization_id)
-    "mesh_node_bindings",      # composite PK, no created_at
+    "worker_credentials",  # uses issued_at by design (doc 07 §2)
+    "organization_branding",  # no created_at (PK = organization_id)
+    "mesh_node_bindings",  # composite PK, no created_at
 }
 
 
@@ -209,8 +208,7 @@ def test_auth_identity_uniqueness_rules() -> None:
     # There should be at least one unique constraint involving organization_id
     org_unique = [s for s in unique_sets if "organization_id" in s]
     assert org_unique, (
-        f"member_auth has no unique constraint involving organization_id. "
-        f"Got: {unique_sets}"
+        f"member_auth has no unique constraint involving organization_id. Got: {unique_sets}"
     )
 
 

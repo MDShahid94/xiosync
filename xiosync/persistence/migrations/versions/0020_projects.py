@@ -16,8 +16,8 @@ data migration (they simply belong to no project yet).
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 
 revision = "0020"
@@ -58,20 +58,12 @@ def upgrade() -> None:
         sa.Column("description", sa.Text),
         sa.Column("config", JSONB),
         sa.Column("state", sa.Text, nullable=False, server_default="active"),
-        sa.Column(
-            "created_at", _ts, nullable=False, server_default=sa.text("now()")
-        ),
+        sa.Column("created_at", _ts, nullable=False, server_default=sa.text("now()")),
         sa.Column("updated_at", _ts),
-        sa.CheckConstraint(
-            "state IN ('active', 'archived')", name="ck_projects_state"
-        ),
+        sa.CheckConstraint("state IN ('active', 'archived')", name="ck_projects_state"),
         sa.UniqueConstraint("organization_id", "id", name="uq_projects_org_id"),
-        sa.UniqueConstraint(
-            "organization_id", "slug", name="uq_projects_org_slug"
-        ),
-        sa.UniqueConstraint(
-            "organization_id", "name", name="uq_projects_org_name"
-        ),
+        sa.UniqueConstraint("organization_id", "slug", name="uq_projects_org_slug"),
+        sa.UniqueConstraint("organization_id", "name", name="uq_projects_org_name"),
     )
 
     # Enable RLS on projects
@@ -90,9 +82,7 @@ def upgrade() -> None:
             f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS "
             f"project_id UUID REFERENCES projects(id) ON DELETE SET NULL"
         )
-        op.execute(
-            f"CREATE INDEX IF NOT EXISTS ix_{table}_project_id ON {table}(project_id)"
-        )
+        op.execute(f"CREATE INDEX IF NOT EXISTS ix_{table}_project_id ON {table}(project_id)")
 
 
 def downgrade() -> None:

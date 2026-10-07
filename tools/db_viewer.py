@@ -14,6 +14,7 @@ Usage:
 
 Requires: psycopg2 or psycopg (whichever is installed)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -21,7 +22,6 @@ import html
 import json
 import os
 import re
-import sys
 import tempfile
 import webbrowser
 from datetime import datetime
@@ -36,42 +36,42 @@ EXCLUDE_TABLES = {"alembic_version"}
 MAX_ROWS = 500
 
 PALETTE = {
-    "identit":    "#6366f1",
+    "identit": "#6366f1",
     "credential": "#8b5cf6",
-    "vault":      "#a855f7",
-    "mesh":       "#0ea5e9",
-    "xioflow":    "#f59e0b",
-    "xiogrid":    "#ef4444",
-    "storage":    "#10b981",
-    "session":    "#14b8a6",
-    "actor":      "#f97316",
-    "org":        "#ec4899",
-    "member":     "#ec4899",
-    "plugin":     "#84cc16",
-    "domain":     "#06b6d4",
-    "workflow":   "#f59e0b",
-    "worker":     "#6b7280",
-    "event":      "#d946ef",
-    "profile":    "#6366f1",
-    "browser":    "#3b82f6",
-    "project":    "#22c55e",
-    "runtime":    "#64748b",
-    "compute":    "#64748b",
-    "type":       "#a16207",
-    "registry":   "#a16207",
-    "memory":     "#f43f5e",
-    "document":   "#0284c7",
-    "artifact":   "#7c3aed",
-    "grant":      "#15803d",
-    "edge":       "#6d28d9",
-    "operation":  "#b45309",
-    "usage":      "#0891b2",
-    "webhook":    "#be185d",
-    "secret":     "#9f1239",
-    "integration":"#0d9488",
+    "vault": "#a855f7",
+    "mesh": "#0ea5e9",
+    "xioflow": "#f59e0b",
+    "xiogrid": "#ef4444",
+    "storage": "#10b981",
+    "session": "#14b8a6",
+    "actor": "#f97316",
+    "org": "#ec4899",
+    "member": "#ec4899",
+    "plugin": "#84cc16",
+    "domain": "#06b6d4",
+    "workflow": "#f59e0b",
+    "worker": "#6b7280",
+    "event": "#d946ef",
+    "profile": "#6366f1",
+    "browser": "#3b82f6",
+    "project": "#22c55e",
+    "runtime": "#64748b",
+    "compute": "#64748b",
+    "type": "#a16207",
+    "registry": "#a16207",
+    "memory": "#f43f5e",
+    "document": "#0284c7",
+    "artifact": "#7c3aed",
+    "grant": "#15803d",
+    "edge": "#6d28d9",
+    "operation": "#b45309",
+    "usage": "#0891b2",
+    "webhook": "#be185d",
+    "secret": "#9f1239",
+    "integration": "#0d9488",
     "capability": "#1d4ed8",
-    "resource":   "#065f46",
-    "default":    "#64748b",
+    "resource": "#065f46",
+    "default": "#64748b",
 }
 
 
@@ -84,14 +84,17 @@ def badge_colour(name: str) -> str:
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
+
 def connect(url: str):
     try:
         import psycopg
+
         return psycopg.connect(url.replace("postgresql+psycopg://", "postgresql://"))
     except ImportError:
         pass
     try:
         import psycopg2
+
         return psycopg2.connect(url.replace("postgresql+psycopg://", "postgresql://"))
     except ImportError:
         pass
@@ -111,11 +114,14 @@ def get_tables(cur, only: list[str] | None) -> list[str]:
 
 
 def get_columns(cur, table: str) -> list[tuple[str, str]]:
-    cur.execute("""
+    cur.execute(
+        """
         SELECT column_name, udt_name FROM information_schema.columns
         WHERE table_schema='public' AND table_name=%s
         ORDER BY ordinal_position
-    """, [table])
+    """,
+        [table],
+    )
     return [(r[0], r[1]) for r in cur.fetchall()]
 
 
@@ -131,6 +137,7 @@ def get_rows(cur, table: str, limit: int) -> tuple[int, list]:
 
 # ── HTML rendering ─────────────────────────────────────────────────────────────
 
+
 def cell_html(val) -> str:
     if val is None:
         return '<span class="null">NULL</span>'
@@ -138,8 +145,10 @@ def cell_html(val) -> str:
     if s.startswith(("{", "[")):
         try:
             pretty = json.dumps(json.loads(s), indent=2, ensure_ascii=False)
-            return (f'<span class="json" title="{html.escape(pretty)}">'
-                    f'{html.escape(s[:100])}{"…" if len(s) > 100 else ""}</span>')
+            return (
+                f'<span class="json" title="{html.escape(pretty)}">'
+                f"{html.escape(s[:100])}{'…' if len(s) > 100 else ''}</span>"
+            )
         except Exception:
             pass
     if re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", s, re.I):
@@ -152,10 +161,20 @@ def cell_html(val) -> str:
 
 
 TYPE_CLS = {
-    "uuid": "b-uuid", "text": "b-text", "varchar": "b-text", "bpchar": "b-text",
-    "int4": "b-int",  "int8": "b-int",  "bool": "b-bool", "jsonb": "b-json",
-    "json": "b-json", "timestamptz": "b-ts", "timestamp": "b-ts",
-    "float8": "b-float", "numeric": "b-float", "bytea": "b-bytes",
+    "uuid": "b-uuid",
+    "text": "b-text",
+    "varchar": "b-text",
+    "bpchar": "b-text",
+    "int4": "b-int",
+    "int8": "b-int",
+    "bool": "b-bool",
+    "jsonb": "b-json",
+    "json": "b-json",
+    "timestamptz": "b-ts",
+    "timestamp": "b-ts",
+    "float8": "b-float",
+    "numeric": "b-float",
+    "bytea": "b-bytes",
 }
 
 
@@ -166,13 +185,15 @@ def type_badge(udt: str) -> str:
 
 def render_table_section(table: str, columns: list, total: int, rows: list) -> str:
     colour = badge_colour(table)
-    headers = "".join(f'<th>{html.escape(c)}{type_badge(t)}</th>' for c, t in columns)
+    headers = "".join(f"<th>{html.escape(c)}{type_badge(t)}</th>" for c, t in columns)
     body = "".join(
-        "<tr>" + "".join(f"<td>{cell_html(v)}</td>" for v in row) + "</tr>\n"
-        for row in rows
+        "<tr>" + "".join(f"<td>{cell_html(v)}</td>" for v in row) + "</tr>\n" for row in rows
     )
-    trunc = (f'<div class="trunc">Showing first {MAX_ROWS:,} of {total:,} rows</div>'
-             if total > MAX_ROWS else "")
+    trunc = (
+        f'<div class="trunc">Showing first {MAX_ROWS:,} of {total:,} rows</div>'
+        if total > MAX_ROWS
+        else ""
+    )
     return f"""
 <section class="ts" id="tbl-{table}">
   <div class="th" style="border-left:4px solid {colour}">
@@ -198,10 +219,12 @@ def render_table_section(table: str, columns: list, total: int, rows: list) -> s
 
 def render_nav(table: str, total: int) -> str:
     c = badge_colour(table)
-    return (f'<li class="ni" onclick="go(\'{table}\')">'
-            f'<span class="nd" style="background:{c}"></span>'
-            f'<span class="nn">{html.escape(table)}</span>'
-            f'<span class="nc">{total:,}</span></li>')
+    return (
+        f'<li class="ni" onclick="go(\'{table}\')">'
+        f'<span class="nd" style="background:{c}"></span>'
+        f'<span class="nn">{html.escape(table)}</span>'
+        f'<span class="nc">{total:,}</span></li>'
+    )
 
 
 # ── CSS + JS (minified inline) ─────────────────────────────────────────────────
@@ -346,22 +369,27 @@ def build_html(sections, nav_items, n_tables, total_rows, ts) -> str:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     p = argparse.ArgumentParser(description="XIOSYNC DB Viewer")
-    p.add_argument("--db",      default=DB_URL)
-    p.add_argument("--table",   nargs="*", help="Specific tables only")
+    p.add_argument("--db", default=DB_URL)
+    p.add_argument("--table", nargs="*", help="Specific tables only")
     p.add_argument("--no-open", action="store_true")
-    p.add_argument("--out",     help="Output HTML path")
-    p.add_argument("--limit",   type=int, default=MAX_ROWS)
+    p.add_argument("--out", help="Output HTML path")
+    p.add_argument("--limit", type=int, default=MAX_ROWS)
     args = p.parse_args()
 
     print(f"🔌 Connecting to {args.db.split('@')[-1]} …")
     conn = connect(args.db)
-    cur  = conn.cursor()
+    cur = conn.cursor()
 
     try:
-        cur.execute("SELECT set_config('app.current_org_id','00000000-0000-7000-8000-000000000000',true)")
-        cur.execute("SELECT set_config('app.current_org',   '00000000-0000-7000-8000-000000000000',true)")
+        cur.execute(
+            "SELECT set_config('app.current_org_id','00000000-0000-7000-8000-000000000000',true)"
+        )
+        cur.execute(
+            "SELECT set_config('app.current_org',   '00000000-0000-7000-8000-000000000000',true)"
+        )
     except Exception:
         pass
 
@@ -371,10 +399,10 @@ def main() -> None:
     sections, nav_items, total_rows = [], [], 0
 
     for i, tbl in enumerate(tables):
-        print(f"  {i+1:02d}/{len(tables)}  {tbl:<45}", end="", flush=True)
-        cols          = get_columns(cur, tbl)
-        total, rows   = get_rows(cur, tbl, args.limit)
-        total_rows   += total
+        print(f"  {i + 1:02d}/{len(tables)}  {tbl:<45}", end="", flush=True)
+        cols = get_columns(cur, tbl)
+        total, rows = get_rows(cur, tbl, args.limit)
+        total_rows += total
         print(f"{total:>8,} rows")
         sections.append(render_table_section(tbl, cols, total, rows))
         nav_items.append(render_nav(tbl, total))
@@ -382,7 +410,7 @@ def main() -> None:
     cur.close()
     conn.close()
 
-    ts      = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     content = build_html(sections, nav_items, len(tables), total_rows, ts)
 
     if args.out:

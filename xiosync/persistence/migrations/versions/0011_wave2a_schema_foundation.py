@@ -27,9 +27,7 @@ branch_labels = None
 depends_on = None
 
 # Standard tenant isolation predicate.
-_ORG_ISOLATION = (
-    "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
-)
+_ORG_ISOLATION = "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
 
 
 def upgrade() -> None:
@@ -215,9 +213,7 @@ def upgrade() -> None:
     # RLS on artifacts
     op.execute("ALTER TABLE artifacts ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE artifacts FORCE ROW LEVEL SECURITY")
-    op.execute(
-        f"CREATE POLICY org_isolation ON artifacts USING ({_ORG_ISOLATION})"
-    )
+    op.execute(f"CREATE POLICY org_isolation ON artifacts USING ({_ORG_ISOLATION})")
 
 
 def downgrade() -> None:

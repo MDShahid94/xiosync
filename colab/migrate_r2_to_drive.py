@@ -17,8 +17,13 @@ Safe to re-run — XIODriveFS.put() skips identical content (SHA-256 dedup).
 Usage (on Colab master after Drive FUSE mounted):
     python3 migrate_r2_to_drive.py [--dry-run] [--prefix chrome_profiles/]
 """
+
 from __future__ import annotations
-import argparse, os, sys, time
+
+import argparse
+import os
+import sys
+import time
 from pathlib import Path
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
@@ -29,15 +34,18 @@ parser.add_argument("--drive-root", default="")
 args = parser.parse_args()
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-R2_ENDPOINT   = "https://e63a13ef226ce4708d121b8d27fdc8a5.r2.cloudflarestorage.com"
-R2_BUCKET     = "xio-mesh"
+R2_ENDPOINT = "https://e63a13ef226ce4708d121b8d27fdc8a5.r2.cloudflarestorage.com"
+R2_BUCKET = "xio-mesh"
 R2_ACCESS_KEY = os.environ.get("XIORUN_R2_ACCESS_KEY", "f1cdad9be4d1a529fd94ee358bbc40ff")
-R2_SECRET_KEY = os.environ.get("XIORUN_R2_SECRET_KEY",
-                               "859458c2da81e9167e0e03d5e040438b1766f582d097a391a3b3b8a89fdf41e6")
+R2_SECRET_KEY = os.environ.get(
+    "XIORUN_R2_SECRET_KEY", "859458c2da81e9167e0e03d5e040438b1766f582d097a391a3b3b8a89fdf41e6"
+)
 
-DRIVE_ROOT = (args.drive_root
-              or os.environ.get("XIO_DRIVE_ROOT", "")
-              or "/content/drive/MyDrive/XIOSYNC-Shared")
+DRIVE_ROOT = (
+    args.drive_root
+    or os.environ.get("XIO_DRIVE_ROOT", "")
+    or "/content/drive/MyDrive/XIOSYNC-Shared"
+)
 
 INCLUDE_PREFIXES = [
     "chrome_profiles/",
@@ -62,9 +70,12 @@ def _p(msg: str, end: str = "\n") -> None:
 
 
 def _human(b: int) -> str:
-    if b >= 1024**3: return f"{b/1024**3:.1f} GB"
-    if b >= 1024**2: return f"{b/1024**2:.1f} MB"
-    if b >= 1024:    return f"{b/1024:.1f} KB"
+    if b >= 1024**3:
+        return f"{b / 1024**3:.1f} GB"
+    if b >= 1024**2:
+        return f"{b / 1024**2:.1f} MB"
+    if b >= 1024:
+        return f"{b / 1024:.1f} KB"
     return f"{b} B"
 
 
@@ -87,16 +98,16 @@ _p(f"✅ Drive FUSE root: {DRIVE_ROOT}")
 _XIO_FS = None
 # XIODriveFS needs xiosync_base, worker_secret, node_name — read from env
 # (boot.py exports these as env vars on the Colab runtime)
-_xiosync_base   = os.environ.get("XIOSYNC_BASE", "")
-_worker_secret  = os.environ.get("WORKER_SECRET", "")
-_node_name      = os.environ.get("NODE_NAME", "xiogrid--default--master")
+_xiosync_base = os.environ.get("XIOSYNC_BASE", "")
+_worker_secret = os.environ.get("WORKER_SECRET", "")
+_node_name = os.environ.get("NODE_NAME", "xiogrid--default--master")
 
-for _candidate in ["/tmp/xio_drive_fs.py",
-                   "/content/xiosync-worker/colab/xio_drive_fs.py"]:
+for _candidate in ["/tmp/xio_drive_fs.py", "/content/xiosync-worker/colab/xio_drive_fs.py"]:
     if os.path.exists(_candidate):
         import importlib.util as _ilu
+
         _spec = _ilu.spec_from_file_location("xio_drive_fs", _candidate)
-        _mod  = _ilu.module_from_spec(_spec)
+        _mod = _ilu.module_from_spec(_spec)
         _spec.loader.exec_module(_mod)
         try:
             _XIO_FS = _mod.XIODriveFS(
@@ -105,7 +116,7 @@ for _candidate in ["/tmp/xio_drive_fs.py",
                 node_name=_node_name,
                 drive_fs_root=DRIVE_ROOT,
             )
-            _p(f"✅ XIODriveFS loaded (dedup enabled)")
+            _p("✅ XIODriveFS loaded (dedup enabled)")
         except Exception as _e:
             _p(f"ℹ️  XIODriveFS init skipped ({_e}) — using direct FUSE writes")
         break
@@ -132,12 +143,18 @@ try:
     import boto3
     from botocore.config import Config as _BC
 except ImportError:
-    os.system("pip install -q boto3"); import boto3; from botocore.config import Config as _BC
+    os.system("pip install -q boto3")
+    import boto3
+    from botocore.config import Config as _BC
 
-r2 = boto3.client("s3", endpoint_url=R2_ENDPOINT,
-                  aws_access_key_id=R2_ACCESS_KEY,
-                  aws_secret_access_key=R2_SECRET_KEY,
-                  config=_BC(signature_version="s3v4"), region_name="auto")
+r2 = boto3.client(
+    "s3",
+    endpoint_url=R2_ENDPOINT,
+    aws_access_key_id=R2_ACCESS_KEY,
+    aws_secret_access_key=R2_SECRET_KEY,
+    config=_BC(signature_version="s3v4"),
+    region_name="auto",
+)
 
 # ── List & filter ──────────────────────────────────────────────────────────────
 _p(f"Listing R2 bucket '{R2_BUCKET}'…")
@@ -146,21 +163,25 @@ for page in r2.get_paginator("list_objects_v2").paginate(Bucket=R2_BUCKET):
     all_objs.extend(page.get("Contents", []))
 
 to_migrate = [o for o in all_objs if _should_migrate(o["Key"])]
-excluded   = len(all_objs) - len(to_migrate)
+excluded = len(all_objs) - len(to_migrate)
 total_size = sum(o.get("Size", 0) for o in to_migrate)
 
-_p(f"  {len(all_objs)} total objects, {len(to_migrate)} to migrate "
-   f"({_human(total_size)}), {excluded} excluded")
+_p(
+    f"  {len(all_objs)} total objects, {len(to_migrate)} to migrate "
+    f"({_human(total_size)}), {excluded} excluded"
+)
 
 if not to_migrate:
-    _p("ℹ️  Nothing to migrate."); sys.exit(0)
+    _p("ℹ️  Nothing to migrate.")
+    sys.exit(0)
 
 _p("\nMigration plan:")
 for o in to_migrate:
-    _p(f"  {_human(o.get('Size',0)):>9}  {o['Key']}")
+    _p(f"  {_human(o.get('Size', 0)):>9}  {o['Key']}")
 
 if args.dry_run:
-    _p("\n[DRY RUN] No files written."); sys.exit(0)
+    _p("\n[DRY RUN] No files written.")
+    sys.exit(0)
 
 # ── Run migration ──────────────────────────────────────────────────────────────
 _p(f"\n{'=' * 60}\nMigrating {len(to_migrate)} objects…\n{'=' * 60}")
@@ -169,17 +190,17 @@ migrated = skipped = errors = 0
 t_start = time.time()
 
 for idx, obj in enumerate(to_migrate, 1):
-    key   = obj["Key"]
-    size  = obj.get("Size", 0)
+    key = obj["Key"]
+    size = obj.get("Size", 0)
     _p(f"[{idx:03d}/{len(to_migrate):03d}] {key}  ({_human(size)})", end=" … ")
     try:
-        t0   = time.time()
+        t0 = time.time()
         data = r2.get_object(Bucket=R2_BUCKET, Key=key)["Body"].read()
         dl_t = time.time() - t0
 
-        t1      = time.time()
+        t1 = time.time()
         written = _write(key, data)
-        wr_t    = time.time() - t1
+        wr_t = time.time() - t1
 
         if written:
             _p(f"✅  dl={dl_t:.1f}s wr={wr_t:.1f}s")

@@ -13,6 +13,7 @@ analysis, structured data extraction, or as a foundation for future DOM proxy mo
 Security: No foreign JavaScript is injected into the target page (unlike rrweb).
 This preserves stealth/anti-fingerprinting properties.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -52,25 +53,39 @@ async def cdp_dom_snapshot_loop(
     try:
         while True:
             try:
-                snapshot = await cdp.send("DOMSnapshot.captureSnapshot", {
-                    "computedStyles": [
-                        "display", "visibility", "opacity", "position",
-                        "width", "height", "top", "left",
-                        "color", "background-color", "font-size",
-                        "cursor", "pointer-events",
-                    ],
-                })
+                snapshot = await cdp.send(
+                    "DOMSnapshot.captureSnapshot",
+                    {
+                        "computedStyles": [
+                            "display",
+                            "visibility",
+                            "opacity",
+                            "position",
+                            "width",
+                            "height",
+                            "top",
+                            "left",
+                            "color",
+                            "background-color",
+                            "font-size",
+                            "cursor",
+                            "pointer-events",
+                        ],
+                    },
+                )
 
                 # Optionally strip script content to prevent any leakage
                 if strip_scripts and "documents" in snapshot:
                     _strip_script_nodes(snapshot)
 
-                msg = json.dumps({
-                    "type": "dom_snapshot",
-                    "snapshot": snapshot,
-                    "timestamp": time.time(),
-                    "session_id": session_id,
-                })
+                msg = json.dumps(
+                    {
+                        "type": "dom_snapshot",
+                        "snapshot": snapshot,
+                        "timestamp": time.time(),
+                        "session_id": session_id,
+                    }
+                )
 
                 try:
                     queue.put_nowait(msg)
@@ -85,9 +100,13 @@ async def cdp_dom_snapshot_loop(
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning("xioview.dom_snapshot.capture_error", extra={
-                    "session_id": session_id, "error": str(exc),
-                })
+                logger.warning(
+                    "xioview.dom_snapshot.capture_error",
+                    extra={
+                        "session_id": session_id,
+                        "error": str(exc),
+                    },
+                )
 
             await asyncio.sleep(interval_sec)
 

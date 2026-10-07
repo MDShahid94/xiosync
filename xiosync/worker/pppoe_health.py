@@ -5,6 +5,7 @@ Checks all ASSIGNED and IDLE nodes across all active hosts.
 Moves DOWN nodes to RECONNECTING.
 Updates public IPs if they changed (pppd reconnected).
 """
+
 from __future__ import annotations
 
 import logging
@@ -17,7 +18,6 @@ from sqlalchemy.orm import Session
 from xiosync.subsystems.xiogrid.domain.pppoe import PPPoESlotState
 from xiosync.subsystems.xiogrid.models.exit_node import PPPoEExitNode, PPPoEHost
 from xiosync.subsystems.xiogrid.services.ssh_exec import vm_script
-
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +66,12 @@ def tick_pppoe_health(session: Session) -> int:
                     node.reconnect_count += 1
                     logger.info(
                         "pppoe_slot_ip_changed",
-                        extra={"host": host.name, "slot": node.ppp_slot,
-                               "old_ip": node.public_ip, "new_ip": pub_ip},
+                        extra={
+                            "host": host.name,
+                            "slot": node.ppp_slot,
+                            "old_ip": node.public_ip,
+                            "new_ip": pub_ip,
+                        },
                     )
                 node.public_ip = pub_ip
                 node.last_seen = now
@@ -88,8 +92,11 @@ def tick_pppoe_health(session: Session) -> int:
         except Exception as exc:
             logger.warning(
                 "pppoe_health_check_error",
-                extra={"host": host.name if host else "?",
-                       "slot": node.ppp_slot, "error": str(exc)},
+                extra={
+                    "host": host.name if host else "?",
+                    "slot": node.ppp_slot,
+                    "error": str(exc),
+                },
             )
 
     if checked:
@@ -118,13 +125,16 @@ def reconcile_pool_capacity(session: Any) -> int:
     from sqlalchemy import text
 
     # Count total idle PPPoE proxy slots (globally, not per-org)
-    idle_slots = session.execute(
-        text("""
+    idle_slots = (
+        session.execute(
+            text("""
             SELECT COUNT(*) AS idle_slots
             FROM   xiogrid_pppoe_exit_nodes
             WHERE  state = 'idle'
         """)
-    ).scalar() or 0
+        ).scalar()
+        or 0
+    )
 
     updated = session.execute(
         text("""
@@ -140,4 +150,3 @@ def reconcile_pool_capacity(session: Any) -> int:
     if updated:
         session.commit()
     return updated
-

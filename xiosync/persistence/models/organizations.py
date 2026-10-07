@@ -11,6 +11,7 @@ from xiosync.persistence.models.base import Base
 
 _timestamptz = TIMESTAMP(timezone=True)
 
+
 class OrganizationBranding(Base):
     """Platform Branding Configuration for an organization."""
 

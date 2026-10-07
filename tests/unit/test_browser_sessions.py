@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.orm import Session
-
-from xiosync.domain.context import OrgContext, MembershipRole, PlatformRole
+from xiosync.domain.context import MembershipRole, OrgContext, PlatformRole
 from xiosync.persistence.models.browser import BrowserSession
 from xiosync.services.browser_sessions import (
     BrowserSessionNotFoundError,
@@ -19,6 +17,7 @@ from xiosync.services.browser_sessions import (
 
 _ORG_ID = uuid.UUID("00000000-0000-7000-8000-000000000000")
 _ACTOR_ID = uuid.UUID("00000000-0000-7000-8000-000000000002")
+
 
 @pytest.fixture
 def org_context() -> OrgContext:
@@ -31,9 +30,11 @@ def org_context() -> OrgContext:
         membership_role=MembershipRole.ORG_ADMIN,
     )
 
+
 @pytest.fixture
 def mock_session() -> MagicMock:
     return MagicMock(spec=Session)
+
 
 def test_create_session_success(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserSessionService(mock_session)
@@ -50,6 +51,7 @@ def test_create_session_success(org_context: OrgContext, mock_session: MagicMock
     assert mock_session.add.call_count >= 3
     mock_session.flush.assert_called_once()
 
+
 def test_create_session_empty_config(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserSessionService(mock_session)
     pool_id = uuid.uuid4()
@@ -59,6 +61,7 @@ def test_create_session_empty_config(org_context: OrgContext, mock_session: Magi
         config=None,
     )
     assert record.session_data == {}
+
 
 def test_verify_session_success_active(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserSessionService(mock_session)
@@ -77,6 +80,7 @@ def test_verify_session_success_active(org_context: OrgContext, mock_session: Ma
     assert record.session_id == session_id
     assert record.status == "healthy"
 
+
 def test_verify_session_success_failed(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserSessionService(mock_session)
     session_id = uuid.uuid4()
@@ -92,6 +96,7 @@ def test_verify_session_success_failed(org_context: OrgContext, mock_session: Ma
 
     record = svc.verify_session(org_context, session_id)
     assert record.status == "dead"  # terminal state 'failed' maps to 'dead'
+
 
 def test_verify_session_success_suspended(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserSessionService(mock_session)
@@ -109,11 +114,13 @@ def test_verify_session_success_suspended(org_context: OrgContext, mock_session:
     record = svc.verify_session(org_context, session_id)
     assert record.status == "soon"
 
+
 def test_verify_session_not_found(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserSessionService(mock_session)
     mock_session.scalar.return_value = None
     with pytest.raises(BrowserSessionNotFoundError):
         svc.verify_session(org_context, uuid.uuid4())
+
 
 def test_terminate_session_success(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserSessionService(mock_session)
@@ -132,11 +139,13 @@ def test_terminate_session_success(org_context: OrgContext, mock_session: MagicM
     mock_session.execute.assert_called_once()
     mock_session.flush.assert_called_once()
 
+
 def test_terminate_session_not_found(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserSessionService(mock_session)
     mock_session.scalar.return_value = None
     with pytest.raises(BrowserSessionNotFoundError):
         svc.terminate_session(org_context, uuid.uuid4())
+
 
 def test_list_sessions_all(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserSessionService(mock_session)
@@ -155,6 +164,7 @@ def test_list_sessions_all(org_context: OrgContext, mock_session: MagicMock) -> 
     records = svc.list_sessions(org_context)
     assert len(records) == 1
 
+
 def test_list_sessions_filtered(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserSessionService(mock_session)
     mock_result = MagicMock()
@@ -164,6 +174,9 @@ def test_list_sessions_filtered(org_context: OrgContext, mock_session: MagicMock
     records = svc.list_sessions(org_context, pool_id=uuid.uuid4(), state="active")
     assert records == []
 
+
 @pytest.fixture(autouse=True)
 def mock_quota_service_daily_events(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("xiosync.services.quotas.QuotaService.check_daily_events", lambda self, org_id: None)
+    monkeypatch.setattr(
+        "xiosync.services.quotas.QuotaService.check_daily_events", lambda self, org_id: None
+    )

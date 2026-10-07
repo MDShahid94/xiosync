@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement_func = """    def cdp_clear_input():
@@ -31,10 +31,10 @@ replacement_func = """    def cdp_clear_input():
 
 # Regex replacing exactly the body of cdp_clear_input()
 code = re.sub(
-    r'    def cdp_clear_input\(\):\n        driver.*?time\.sleep\(0\.05\)',
+    r"    def cdp_clear_input\(\):\n        driver.*?time\.sleep\(0\.05\)",
     replacement_func,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

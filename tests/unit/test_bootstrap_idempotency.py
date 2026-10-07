@@ -13,9 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
 from sqlalchemy.orm import Session
-
 from xiosync.persistence.models.authorization import Event
 from xiosync.persistence.models.identity import (
     Actor,
@@ -164,7 +162,13 @@ def test_genesis_first_run_creates_all_expected_entities_without_password() -> N
     )
     assert len(type_entries) == expected_type_count
     categories = {t.category for t in type_entries}
-    assert categories == {"actor_type", "event_type", "lifecycle_state", "operation_type", "trigger_type"}
+    assert categories == {
+        "actor_type",
+        "event_type",
+        "lifecycle_state",
+        "operation_type",
+        "trigger_type",
+    }
     for entry in type_entries:
         assert entry.organization_id is None  # Global namespace
         assert entry.namespace == "core"

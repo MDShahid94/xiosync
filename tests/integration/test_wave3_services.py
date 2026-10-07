@@ -11,8 +11,6 @@ import uuid
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
-
 from xiosync.domain.context import MembershipRole, OrgContext, PlatformRole
 from xiosync.persistence.tenancy import org_scoped_session
 from xiosync.platform.ids import new_id
@@ -21,6 +19,7 @@ pytestmark = pytest.mark.integration
 
 
 # ── Shared Helpers ───────────────────────────────────────────────────────────
+
 
 def _seed_org_actor(admin_url: str) -> tuple[uuid.UUID, uuid.UUID]:
     """Seed one active org + actor; return (org_id, actor_id)."""
@@ -64,7 +63,7 @@ def _ctx(org_id: uuid.UUID, actor_id: uuid.UUID) -> OrgContext:
 # QuotaService
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from xiosync.services.quotas import QuotaExceededError, QuotaService
+from xiosync.services.quotas import QuotaService
 
 
 class TestQuotaServiceIntegration:
@@ -92,7 +91,7 @@ class TestQuotaServiceIntegration:
                 conn.execute(
                     text(
                         "UPDATE organizations SET resource_quotas = "
-                        "'{\"max_workers\": 100, \"max_queued_tasks\": 1000}' "
+                        '\'{"max_workers": 100, "max_queued_tasks": 1000}\' '
                         "WHERE id = :id"
                     ),
                     {"id": org_id},
@@ -110,7 +109,7 @@ class TestQuotaServiceIntegration:
 # TriggerService
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from xiosync.services.triggers import TriggerNotFoundError, TriggerService
+from xiosync.services.triggers import TriggerService
 
 
 class TestTriggerServiceIntegration:
@@ -187,10 +186,20 @@ class TestTriggerServiceIntegration:
         try:
             with org_scoped_session(engine, ctx) as session:
                 svc = TriggerService(session)
-                svc.create_trigger(ctx, workflow_id=wf_id, trigger_type="cron",
-                                   config={"cron": "0 * * * *"}, created_by=actor_id)
-                svc.create_trigger(ctx, workflow_id=wf_id, trigger_type="event",
-                                   config={"event_type": "task.completed"}, created_by=actor_id)
+                svc.create_trigger(
+                    ctx,
+                    workflow_id=wf_id,
+                    trigger_type="cron",
+                    config={"cron": "0 * * * *"},
+                    created_by=actor_id,
+                )
+                svc.create_trigger(
+                    ctx,
+                    workflow_id=wf_id,
+                    trigger_type="event",
+                    config={"event_type": "task.completed"},
+                    created_by=actor_id,
+                )
                 items = svc.list_triggers(ctx)
                 assert len(items) >= 2
         finally:
@@ -236,10 +245,12 @@ class TestWebhookServiceIntegration:
         try:
             with org_scoped_session(engine, ctx) as session:
                 svc = WebhookService(session)
-                svc.create_subscription(ctx, url="https://a.com/hook",
-                                        event_types=["task.completed"])
-                svc.create_subscription(ctx, url="https://b.com/hook",
-                                        event_types=["workflow.completed"])
+                svc.create_subscription(
+                    ctx, url="https://a.com/hook", event_types=["task.completed"]
+                )
+                svc.create_subscription(
+                    ctx, url="https://b.com/hook", event_types=["workflow.completed"]
+                )
                 matches = svc.get_matching_subscriptions(ctx, "task.completed")
                 assert len(matches) == 1
                 assert matches[0].url == "https://a.com/hook"
@@ -296,7 +307,7 @@ class TestMeteringServiceIntegration:
 # SecretRefService
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from xiosync.services.secrets import SecretNotFoundError, SecretRefService
+from xiosync.services.secrets import SecretRefService
 
 
 class TestSecretRefServiceIntegration:
@@ -332,8 +343,13 @@ class TestSecretRefServiceIntegration:
         try:
             with org_scoped_session(engine, ctx) as session:
                 svc = SecretRefService(session)
-                svc.create_secret(ctx, name="db-password", provider="env",
-                                  ref_config={"key": "DB_PASS"}, created_by=actor_id)
+                svc.create_secret(
+                    ctx,
+                    name="db-password",
+                    provider="env",
+                    ref_config={"key": "DB_PASS"},
+                    created_by=actor_id,
+                )
                 found = svc.get_secret_by_name(ctx, "db-password")
                 assert found is not None
                 assert found.name == "db-password"
@@ -349,8 +365,13 @@ class TestSecretRefServiceIntegration:
         try:
             with org_scoped_session(engine, ctx) as session:
                 svc = SecretRefService(session)
-                rec = svc.create_secret(ctx, name="temp-key", provider="env",
-                                        ref_config={"key": "TMP"}, created_by=actor_id)
+                rec = svc.create_secret(
+                    ctx,
+                    name="temp-key",
+                    provider="env",
+                    ref_config={"key": "TMP"},
+                    created_by=actor_id,
+                )
                 revoked = svc.revoke_secret(ctx, rec.id)
                 assert revoked.state == "revoked"
         finally:
@@ -361,7 +382,7 @@ class TestSecretRefServiceIntegration:
 # CapabilityService
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from xiosync.services.capabilities import CapabilityNotFoundError, CapabilityService
+from xiosync.services.capabilities import CapabilityService
 
 
 class TestCapabilityServiceIntegration:
@@ -409,7 +430,7 @@ class TestCapabilityServiceIntegration:
 # ArtifactService
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from xiosync.services.artifacts import ArtifactNotFoundError, ArtifactService
+from xiosync.services.artifacts import ArtifactService
 
 
 class TestArtifactServiceIntegration:
@@ -448,7 +469,9 @@ class TestArtifactServiceIntegration:
             with org_scoped_session(engine, ctx) as session:
                 svc = ArtifactService(session)
                 rec = svc.create_artifact(
-                    ctx, provider_type="gcs", uri="gs://bucket/file",
+                    ctx,
+                    provider_type="gcs",
+                    uri="gs://bucket/file",
                     created_by=actor_id,
                 )
 

@@ -178,9 +178,7 @@ def execution_client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, Magic
         "xiosync.api.routers.execution.WorkflowService", lambda _session: mock_service
     )
     # dlq.py now imports WorkflowService for task dead-letter endpoints
-    monkeypatch.setattr(
-        "xiosync.api.routers.dlq.WorkflowService", lambda _session: mock_service
-    )
+    monkeypatch.setattr("xiosync.api.routers.dlq.WorkflowService", lambda _session: mock_service)
     # INV-TASK-SEC-1/2: the lease endpoint mints a task credential and needs the
     # worker-credential signing key (distinct from the user JWT secret — H7).
     monkeypatch.setenv("WORKER_CREDENTIAL_KEY", _TASK_CREDENTIAL_KEY)
@@ -557,9 +555,7 @@ def test_resolve_dead_letter_not_investigating_returns_409(
 ) -> None:
     """INV-DLQ-3: resolving a record not in 'investigating' state returns 409."""
     http, svc = execution_client
-    svc.resolve_dead_letter.side_effect = ValueError(
-        "dead_letter cannot be resolved: state='open'"
-    )
+    svc.resolve_dead_letter.side_effect = ValueError("dead_letter cannot be resolved: state='open'")
 
     resp = http.post(
         f"/api/v1/dlq/{_DL_ID}/resolve",

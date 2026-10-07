@@ -3,34 +3,38 @@ XIOSYNC Profile Migration: Drive files → identities + credentials + storage_ob
 - Deletes 3 flagged (banned) profiles from Drive and skips them
 - Seeds 58 identities from AllMailsInfo.csv mapped to Drive PRFL filenames
 """
-import csv, json, os, subprocess, sys, uuid
-from datetime import datetime, timezone
-from pathlib import Path
+
+import csv
+import json
+import subprocess
+import sys
+import uuid
+from datetime import UTC, datetime
 
 # ── Config ────────────────────────────────────────────────────────────────────
-ORG_ZERO        = "00000000-0000-7000-8000-000000000000"
-DRIVE_PROVIDER  = "d3520dbc-d4ae-4cd2-bdf8-cc6c10ab23ed"
-PLATFORM        = "google"
-CRED_TYPE       = "cookie_state"
-XIOSYNC_BASE    = "http://localhost:8000"
-ADMIN_EMAIL     = "admin@xiogrid.dev"
-ADMIN_PASSWORD  = "Xiogrid2026!Admin"
-CSV_PATH        = "/Users/karmareturns/Desktop/XIOBR.archived.20260912/colab/AllMailsInfo.csv"
+ORG_ZERO = "00000000-0000-7000-8000-000000000000"
+DRIVE_PROVIDER = "d3520dbc-d4ae-4cd2-bdf8-cc6c10ab23ed"
+PLATFORM = "google"
+CRED_TYPE = "cookie_state"
+XIOSYNC_BASE = "http://localhost:8000"
+ADMIN_EMAIL = "admin@xiogrid.dev"
+ADMIN_PASSWORD = "Xiogrid2026!Admin"
+CSV_PATH = "/Users/karmareturns/Desktop/XIOBR.archived.20260912/colab/AllMailsInfo.csv"
 
 # ── Banned accounts (flagged by Google — delete entirely) ─────────────────────
 BANNED_SLUGS = {"haldarshorana", "ranashohana9", "shohanarana7"}
 
 # ── PRFL file → slug mapping (from Drive ls output, ordered 001→061) ──────────
 DRIVE_PROFILES = [
-    (1,  "1x2xx3xxx4xxxx5xxxxx6xxxxxx789"),
-    (2,  "karmareturnsfromallsides"),
-    (3,  "shahid_raiganj"),
-    (4,  "sarvamekam1"),
-    (5,  "xiosyncnetwork"),
-    (6,  "samnurnihartalukdar"),
-    (7,  "thewitnessone"),
-    (8,  "shahid_workload"),
-    (9,  "lailakhatun78693"),
+    (1, "1x2xx3xxx4xxxx5xxxxx6xxxxxx789"),
+    (2, "karmareturnsfromallsides"),
+    (3, "shahid_raiganj"),
+    (4, "sarvamekam1"),
+    (5, "xiosyncnetwork"),
+    (6, "samnurnihartalukdar"),
+    (7, "thewitnessone"),
+    (8, "shahid_workload"),
+    (9, "lailakhatun78693"),
     (10, "lailakhatun733156"),
     (11, "sk150728951"),
     (12, "lifelonglearnersgroup"),
@@ -79,15 +83,17 @@ DRIVE_PROFILES = [
     (55, "samsialhai"),
     (56, "alisahed925"),
     (57, "ihdinassiratalmustakim786"),
-    (58, "haldarshorana"),        # BANNED
-    (59, "ranashohana9"),         # BANNED
-    (60, "shohanarana7"),         # BANNED
+    (58, "haldarshorana"),  # BANNED
+    (59, "ranashohana9"),  # BANNED
+    (60, "shohanarana7"),  # BANNED
     (61, "kakunasim97"),
 ]
+
 
 def slug_to_email(slug: str) -> str:
     """slug → Gmail: underscores become dots."""
     return slug.replace("_", ".") + "@gmail.com"
+
 
 # ── Load AllMailsInfo.csv ──────────────────────────────────────────────────────
 csv_data = {}  # email → {tier, password, totp_secret}
@@ -95,14 +101,16 @@ with open(CSV_PATH, newline="", encoding="utf-8-sig") as f:
     for row in csv.DictReader(f):
         email = row["email"].strip().lower()
         csv_data[email] = {
-            "tier":        row.get("tier", "Starter").strip(),
-            "password":    row.get("password", "").strip(),
+            "tier": row.get("tier", "Starter").strip(),
+            "password": row.get("password", "").strip(),
             "totp_secret": row.get("totp_secret", "").strip(),
         }
 print(f"Loaded {len(csv_data)} accounts from CSV")
 
 # ── Get XIOSYNC admin token ────────────────────────────────────────────────────
 import urllib.request
+
+
 def _api(method, path, body=None, token=None):
     url = f"{XIOSYNC_BASE}{path}"
     data = json.dumps(body).encode() if body else None
@@ -116,11 +124,16 @@ def _api(method, path, body=None, token=None):
     except urllib.error.HTTPError as e:
         return {"_error": e.code, "_body": e.read().decode()[:200]}
 
-auth = _api("POST", "/api/v1/auth/login", {
-    "organization_id": ORG_ZERO,
-    "email": ADMIN_EMAIL,
-    "password": ADMIN_PASSWORD,
-})
+
+auth = _api(
+    "POST",
+    "/api/v1/auth/login",
+    {
+        "organization_id": ORG_ZERO,
+        "email": ADMIN_EMAIL,
+        "password": ADMIN_PASSWORD,
+    },
+)
 TOKEN = auth.get("access_token", "")
 if not TOKEN:
     print(f"❌ Login failed: {auth}")
@@ -129,9 +142,10 @@ print(f"✅ Logged in as {ADMIN_EMAIL}")
 
 # ── Connect to DB ──────────────────────────────────────────────────────────────
 import sqlalchemy as sa
+
 engine = sa.create_engine("postgresql+psycopg://karmareturns@localhost:5432/xiosync")
 
-now = datetime.now(timezone.utc)
+now = datetime.now(UTC)
 
 # ── Step 1: Delete banned profiles from Drive ──────────────────────────────────
 print("\n=== Step 1: Delete banned profiles from Drive ===")
@@ -141,9 +155,16 @@ for serial, slug in DRIVE_PROFILES:
         key = f"PRFL-{serial:03d}_{slug}.tar.gz"
         drive_path = f"/content/drive/MyDrive/XIOSYNC-Shared/chrome_profiles/{key}"
         r = subprocess.run(
-            ["ssh", "-o", "StrictHostKeyChecking=no", f"root@{COLAB_IP}",
-             f"rm -f '{drive_path}' && echo 'deleted' || echo 'not found'"],
-            capture_output=True, text=True, timeout=15
+            [
+                "ssh",
+                "-o",
+                "StrictHostKeyChecking=no",
+                f"root@{COLAB_IP}",
+                f"rm -f '{drive_path}' && echo 'deleted' || echo 'not found'",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         status = r.stdout.strip()
         print(f"  🗑️  {key} → {status}")
@@ -161,24 +182,25 @@ with engine.begin() as conn:
             skipped_banned += 1
             continue
 
-        email     = slug_to_email(slug)
-        obj_key   = f"chrome_profiles/PRFL-{serial:03d}_{slug}.tar.gz"
-        acct      = csv_data.get(email, {})
-        tier      = acct.get("tier", "Starter")
-        password  = acct.get("password", "")
-        totp      = acct.get("totp_secret", "")
-        display   = email.split("@")[0].replace(".", " ").replace("_", " ").title()
+        email = slug_to_email(slug)
+        obj_key = f"chrome_profiles/PRFL-{serial:03d}_{slug}.tar.gz"
+        acct = csv_data.get(email, {})
+        tier = acct.get("tier", "Starter")
+        password = acct.get("password", "")
+        totp = acct.get("totp_secret", "")
+        display = email.split("@")[0].replace(".", " ").replace("_", " ").title()
 
         if not acct:
             skipped_no_csv += 1
             print(f"  ⚠️  {email} not in CSV — inserting with empty auth")
 
-        identity_id  = str(uuid.uuid4())
+        identity_id = str(uuid.uuid4())
         credential_id = str(uuid.uuid4())
-        storage_id   = str(uuid.uuid4())
+        storage_id = str(uuid.uuid4())
 
         # ── identities ─────────────────────────────────────────────────────────
-        conn.execute(sa.text("""
+        conn.execute(
+            sa.text("""
             INSERT INTO identities
                 (id, organization_id, identifier, platform, display_name,
                  state, metadata, tags, created_at, updated_at)
@@ -189,31 +211,43 @@ with engine.begin() as conn:
                 state      = 'active',
                 metadata   = EXCLUDED.metadata,
                 updated_at = EXCLUDED.updated_at
-        """), {
-            "id":           identity_id,
-            "org":          ORG_ZERO,
-            "identifier":   email,
-            "platform":     PLATFORM,
-            "display_name": display,
-            "metadata":     json.dumps({
-                "tier":        tier,
-                "prfl_serial": serial,
-                "prfl_slug":   slug,
-                "source":      "xiobr_migration_v1",
-            }),
-            "tags": [f"tier:{tier.lower()}", "source:xiobr"],
-            "now": now,
-        })
+        """),
+            {
+                "id": identity_id,
+                "org": ORG_ZERO,
+                "identifier": email,
+                "platform": PLATFORM,
+                "display_name": display,
+                "metadata": json.dumps(
+                    {
+                        "tier": tier,
+                        "prfl_serial": serial,
+                        "prfl_slug": slug,
+                        "source": "xiobr_migration_v1",
+                    }
+                ),
+                "tags": [f"tier:{tier.lower()}", "source:xiobr"],
+                "now": now,
+            },
+        )
 
         # Fetch actual id (in case of ON CONFLICT DO UPDATE)
-        row = conn.execute(sa.text("""
+        row = (
+            conn.execute(
+                sa.text("""
             SELECT id FROM identities
             WHERE organization_id = :org AND identifier = :email AND platform = :platform
-        """), {"org": ORG_ZERO, "email": email, "platform": PLATFORM}).mappings().first()
+        """),
+                {"org": ORG_ZERO, "email": email, "platform": PLATFORM},
+            )
+            .mappings()
+            .first()
+        )
         real_identity_id = str(row["id"])
 
         # ── credentials (cookie_state = chrome profile tarball) ────────────────
-        conn.execute(sa.text("""
+        conn.execute(
+            sa.text("""
             INSERT INTO credentials
                 (id, organization_id, identity_id, credential_type,
                  storage_object_key, health_score, label, created_at, updated_at)
@@ -222,17 +256,20 @@ with engine.begin() as conn:
             ON CONFLICT (identity_id, credential_type, label) DO UPDATE SET
                 storage_object_key = EXCLUDED.storage_object_key,
                 updated_at         = EXCLUDED.updated_at
-        """), {
-            "id":      credential_id,
-            "org":     ORG_ZERO,
-            "iid":     real_identity_id,
-            "ctype":   CRED_TYPE,
-            "obj_key": obj_key,
-            "now":     now,
-        })
+        """),
+            {
+                "id": credential_id,
+                "org": ORG_ZERO,
+                "iid": real_identity_id,
+                "ctype": CRED_TYPE,
+                "obj_key": obj_key,
+                "now": now,
+            },
+        )
 
         # ── storage_objects (tracking row for Drive provider) ──────────────────
-        conn.execute(sa.text("""
+        conn.execute(
+            sa.text("""
             INSERT INTO storage_objects
                 (id, organization_id, provider_id, object_key, object_type,
                  content_type, identity_id, created_at, updated_at)
@@ -240,23 +277,30 @@ with engine.begin() as conn:
                 (:id, :org, :pid, :key, 'chrome_profile',
                  'application/gzip', :iid, :now, :now)
             ON CONFLICT DO NOTHING
-        """), {
-            "id":  storage_id,
-            "org": ORG_ZERO,
-            "pid": DRIVE_PROVIDER,
-            "key": obj_key,
-            "iid": real_identity_id,
-            "now": now,
-        })
+        """),
+            {
+                "id": storage_id,
+                "org": ORG_ZERO,
+                "pid": DRIVE_PROVIDER,
+                "key": obj_key,
+                "iid": real_identity_id,
+                "now": now,
+            },
+        )
 
         # ── vault: store google_auth secret ────────────────────────────────────
         vault_key = f"identities/{real_identity_id}/google_auth"
-        vault_result = _api("POST", "/api/v1/vault/secrets", {
-            "key":           vault_key,
-            "value":         json.dumps({"password": password, "totp_secret": totp}),
-            "secret_type":   "credential",
-            "platform_global": False,
-        }, token=TOKEN)
+        vault_result = _api(
+            "POST",
+            "/api/v1/vault/secrets",
+            {
+                "key": vault_key,
+                "value": json.dumps({"password": password, "totp_secret": totp}),
+                "secret_type": "credential",
+                "platform_global": False,
+            },
+            token=TOKEN,
+        )
         # Ignore 409 conflict (already exists)
 
         print(f"  ✅ PRFL-{serial:03d} {email} [{tier}]")
@@ -271,14 +315,20 @@ print(f"""
 
 # ── Step 3: Verify ─────────────────────────────────────────────────────────────
 with engine.connect() as conn:
-    counts = conn.execute(sa.text("""
+    counts = (
+        conn.execute(
+            sa.text("""
         SELECT
           (SELECT COUNT(*) FROM identities WHERE organization_id=:org) AS identities,
           (SELECT COUNT(*) FROM credentials WHERE organization_id=:org) AS credentials,
           (SELECT COUNT(*) FROM storage_objects WHERE organization_id=:org) AS storage_objects
-    """), {"org": ORG_ZERO}).mappings().first()
-    print(f"DB verification:")
+    """),
+            {"org": ORG_ZERO},
+        )
+        .mappings()
+        .first()
+    )
+    print("DB verification:")
     print(f"  identities:     {counts['identities']}")
     print(f"  credentials:    {counts['credentials']}")
     print(f"  storage_objects:{counts['storage_objects']}")
-

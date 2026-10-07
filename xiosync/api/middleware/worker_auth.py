@@ -25,10 +25,10 @@ Or as a router-level dependency::
         dependencies=[Depends(verify_worker_auth)],
     )
 """
+
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 from fastapi import HTTPException, Request
 
@@ -57,5 +57,5 @@ def verify_worker_auth(request: Request) -> None:
     raise HTTPException(
         status_code=401,
         detail="Missing or invalid worker authentication. "
-               "Provide X-XIOSYNC-Internal or X-Worker-Secret header.",
+        "Provide X-XIOSYNC-Internal or X-Worker-Secret header.",
     )

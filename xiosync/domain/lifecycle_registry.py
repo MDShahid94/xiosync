@@ -45,15 +45,35 @@ DISABLED = "disabled"
 PAUSED = "paused"
 
 #: Full seed set — mirrors what genesis + XIOGRID bootstrap seed into type_registry.
-_SEED_LIFECYCLE_STATES: frozenset[str] = frozenset({
-    PROPOSED, DESIGNING, IMPLEMENTING, VALIDATING,
-    INITIALIZING, ACTIVE, UPDATING, SUSPENDED,
-    MIGRATING, TERMINATING, TERMINATED, ARCHIVED,
-    # Extended states:
-    FAILED, READY, BUSY, ERROR, CONFIGURING,
-    DRAFT, DEPRECATED, PENDING_APPROVAL, APPROVED, REVOKED,
-    DISABLED, PAUSED,
-})
+_SEED_LIFECYCLE_STATES: frozenset[str] = frozenset(
+    {
+        PROPOSED,
+        DESIGNING,
+        IMPLEMENTING,
+        VALIDATING,
+        INITIALIZING,
+        ACTIVE,
+        UPDATING,
+        SUSPENDED,
+        MIGRATING,
+        TERMINATING,
+        TERMINATED,
+        ARCHIVED,
+        # Extended states:
+        FAILED,
+        READY,
+        BUSY,
+        ERROR,
+        CONFIGURING,
+        DRAFT,
+        DEPRECATED,
+        PENDING_APPROVAL,
+        APPROVED,
+        REVOKED,
+        DISABLED,
+        PAUSED,
+    }
+)
 
 
 class LifecycleStateRegistry:

@@ -9,6 +9,7 @@ Connection testing is implemented per provider_type in _test_*() methods.
 Adding support for a new provider type requires only adding a new _test_*
 method — no DB schema changes.
 """
+
 from __future__ import annotations
 
 import json
@@ -45,7 +46,6 @@ class IntegrationRecord:
 
 
 class IntegrationsService:
-
     def __init__(self, session: Session) -> None:
         self._db = session
 
@@ -82,8 +82,13 @@ class IntegrationsService:
                           vault_key, last_synced_at, last_sync_status, sync_stats,
                           created_at, updated_at
             """),
-            {"org": str(ctx.organization_id), "name": name, "ptype": provider_type,
-             "cfg": json.dumps(connection_config), "vkey": vault_key},
+            {
+                "org": str(ctx.organization_id),
+                "name": name,
+                "ptype": provider_type,
+                "cfg": json.dumps(connection_config),
+                "vkey": vault_key,
+            },
         ).fetchone()
         self._db.commit()
         return _row_to_rec(row)
@@ -119,7 +124,9 @@ class IntegrationsService:
 
     def delete_provider(self, ctx: OrgContext, provider_id: uuid.UUID) -> None:
         result = self._db.execute(
-            text("DELETE FROM integration_providers WHERE id=:id AND organization_id=:org RETURNING id"),
+            text(
+                "DELETE FROM integration_providers WHERE id=:id AND organization_id=:org RETURNING id"
+            ),
             {"id": str(provider_id), "org": str(ctx.organization_id)},
         ).fetchone()
         if not result:
@@ -152,16 +159,22 @@ class IntegrationsService:
         elif provider.provider_type in ("http_webhook", "generic_http"):
             return self._test_http(provider.connection_config, credential)
         else:
-            return {"ok": False, "message": f"Connection test not implemented for {provider.provider_type}"}
+            return {
+                "ok": False,
+                "message": f"Connection test not implemented for {provider.provider_type}",
+            }
 
     def _test_d1(self, config: dict, credential: str | None) -> dict[str, Any]:
         import time
         import urllib.request
+
         account_id = config.get("account_id", "")
         database_id = config.get("database_id", "")
         if not account_id or not database_id:
             return {"ok": False, "message": "Missing account_id or database_id in config"}
-        url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/d1/database/{database_id}"
+        url = (
+            f"https://api.cloudflare.com/client/v4/accounts/{account_id}/d1/database/{database_id}"
+        )
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {credential or ''}"})
         t0 = time.time()
         try:
@@ -176,24 +189,28 @@ class IntegrationsService:
 
     def _test_postgres(self, config: dict, credential: str | None) -> dict[str, Any]:
         import time
+
         try:
             from sqlalchemy import create_engine as ce
+
             host = config.get("host", "localhost")
             port = config.get("port", 5432)
-            db   = config.get("database", "postgres")
+            db = config.get("database", "postgres")
             user = config.get("user", "postgres")
-            url  = f"postgresql+psycopg://{user}:{credential or ''}@{host}:{port}/{db}"
-            eng  = ce(url, pool_pre_ping=True, connect_args={"connect_timeout": 5})
-            t0   = time.time()
+            url = f"postgresql+psycopg://{user}:{credential or ''}@{host}:{port}/{db}"
+            eng = ce(url, pool_pre_ping=True, connect_args={"connect_timeout": 5})
+            t0 = time.time()
             with eng.connect() as c:
                 c.execute(text("SELECT 1"))
             ms = int((time.time() - t0) * 1000)
             return {"ok": True, "message": "Postgres connection successful", "latency_ms": ms}
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
+
     def _test_redis(self, config: dict, credential: str | None) -> dict[str, Any]:
-        import time
         import socket
+        import time
+
         host = config.get("host", "localhost")
         port = config.get("port", 6379)
         t0 = time.time()
@@ -210,14 +227,19 @@ class IntegrationsService:
 
     def _test_mysql(self, config: dict, credential: str | None) -> dict[str, Any]:
         import time
+
         try:
             from sqlalchemy import create_engine, text
+
             host = config.get("host")
             port = config.get("port", 3306)
             db = config.get("database")
             user = config.get("user")
             if not host or not db or not user:
-                return {"ok": False, "message": "Missing required config keys (host, database, user)"}
+                return {
+                    "ok": False,
+                    "message": "Missing required config keys (host, database, user)",
+                }
             url = f"mysql+pymysql://{user}:{credential or ''}@{host}:{port}/{db}"
             eng = create_engine(url, pool_pre_ping=True, connect_args={"connect_timeout": 5})
             t0 = time.time()
@@ -230,8 +252,10 @@ class IntegrationsService:
 
     def _test_mongodb(self, config: dict, credential: str | None) -> dict[str, Any]:
         import time
+
         try:
             import pymongo
+
             uri = config.get("uri")
             if not uri:
                 host = config.get("host")
@@ -250,11 +274,15 @@ class IntegrationsService:
 
     def _test_github(self, config: dict, credential: str | None) -> dict[str, Any]:
         import time
-        import urllib.request
         import urllib.error
+        import urllib.request
+
         t0 = time.time()
         try:
-            req = urllib.request.Request("https://api.github.com/user", headers={"Authorization": f"Bearer {credential or ''}"})
+            req = urllib.request.Request(
+                "https://api.github.com/user",
+                headers={"Authorization": f"Bearer {credential or ''}"},
+            )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 ms = int((time.time() - t0) * 1000)
                 if resp.status == 200:
@@ -266,12 +294,17 @@ class IntegrationsService:
             return {"ok": False, "message": str(exc)}
 
     def _test_slack(self, config: dict, credential: str | None) -> dict[str, Any]:
+        import json
         import time
         import urllib.request
-        import json
+
         t0 = time.time()
         try:
-            req = urllib.request.Request("https://slack.com/api/auth.test", method="POST", headers={"Authorization": f"Bearer {credential or ''}"})
+            req = urllib.request.Request(
+                "https://slack.com/api/auth.test",
+                method="POST",
+                headers={"Authorization": f"Bearer {credential or ''}"},
+            )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read())
                 ms = int((time.time() - t0) * 1000)
@@ -283,19 +316,26 @@ class IntegrationsService:
 
     def _test_google_sheets(self, config: dict, credential: str | None) -> dict[str, Any]:
         import time
-        import urllib.request
         import urllib.error
+        import urllib.request
+
         spreadsheet_id = config.get("spreadsheet_id")
         if not spreadsheet_id:
             return {"ok": False, "message": "Missing spreadsheet_id in config"}
         t0 = time.time()
         try:
             url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}?fields=spreadsheetId"
-            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {credential or ''}"})
+            req = urllib.request.Request(
+                url, headers={"Authorization": f"Bearer {credential or ''}"}
+            )
             with urllib.request.urlopen(req, timeout=10) as resp:
                 ms = int((time.time() - t0) * 1000)
                 if resp.status == 200:
-                    return {"ok": True, "message": "Google Sheets connection successful", "latency_ms": ms}
+                    return {
+                        "ok": True,
+                        "message": "Google Sheets connection successful",
+                        "latency_ms": ms,
+                    }
                 return {"ok": False, "message": f"Unexpected status code {resp.status}"}
         except urllib.error.HTTPError as exc:
             return {"ok": False, "message": f"HTTPError: {exc.code} {exc.reason}"}
@@ -304,8 +344,9 @@ class IntegrationsService:
 
     def _test_http(self, config: dict, credential: str | None) -> dict[str, Any]:
         import time
-        import urllib.request
         import urllib.error
+        import urllib.request
+
         endpoint_url = config.get("endpoint_url")
         if not endpoint_url:
             return {"ok": False, "message": "Missing endpoint_url in config"}
@@ -327,7 +368,6 @@ class IntegrationsService:
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
 
-
     # ── Private ───────────────────────────────────────────────────────────────
 
     def _resolve_credential(self, ctx: OrgContext, provider: IntegrationRecord) -> str | None:
@@ -335,13 +375,21 @@ class IntegrationsService:
             return None
         try:
             from xiosync.subsystems.vault.service import VaultService
+
             return VaultService(self._db).get_secret(ctx, provider.vault_key)
         except Exception:
             return None
 
+
 def _row_to_rec(row: Any) -> IntegrationRecord:
-    cfg  = row.connection_config if isinstance(row.connection_config, dict) else json.loads(row.connection_config or "{}")
-    stats = row.sync_stats if isinstance(row.sync_stats, dict) else json.loads(row.sync_stats or "{}")
+    cfg = (
+        row.connection_config
+        if isinstance(row.connection_config, dict)
+        else json.loads(row.connection_config or "{}")
+    )
+    stats = (
+        row.sync_stats if isinstance(row.sync_stats, dict) else json.loads(row.sync_stats or "{}")
+    )
     return IntegrationRecord(
         id=uuid.UUID(str(row.id)),
         organization_id=uuid.UUID(str(row.organization_id)) if row.organization_id else None,

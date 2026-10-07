@@ -4,6 +4,7 @@ Central definitions used across all XIOVIEW modules. Import from here
 to avoid circular dependencies between session_manager, control,
 screencast, and routes.
 """
+
 from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
@@ -45,16 +46,32 @@ CTL_RESUME_WORKFLOW = "resume_workflow"
 CTL_SET_FPS = "set_fps"
 
 # Control types that require a live page object
-PAGE_CONTROL_TYPES = frozenset({
-    CTL_MOUSE_MOVE, CTL_MOUSEDOWN, CTL_MOUSEUP, CTL_CLICK,
-    CTL_DBLCLICK, CTL_KEY, CTL_TYPE, CTL_SCROLL,
-})
+PAGE_CONTROL_TYPES = frozenset(
+    {
+        CTL_MOUSE_MOVE,
+        CTL_MOUSEDOWN,
+        CTL_MOUSEUP,
+        CTL_CLICK,
+        CTL_DBLCLICK,
+        CTL_KEY,
+        CTL_TYPE,
+        CTL_SCROLL,
+    }
+)
 
 # Control types blocked while an automated workflow is executing
-BLOCKABLE_CONTROL_TYPES = frozenset({
-    CTL_CLICK, CTL_MOUSEDOWN, CTL_MOUSEUP, CTL_DBLCLICK,
-    CTL_KEY, CTL_TYPE, CTL_SCROLL, CTL_MOUSE_MOVE,
-})
+BLOCKABLE_CONTROL_TYPES = frozenset(
+    {
+        CTL_CLICK,
+        CTL_MOUSEDOWN,
+        CTL_MOUSEUP,
+        CTL_DBLCLICK,
+        CTL_KEY,
+        CTL_TYPE,
+        CTL_SCROLL,
+        CTL_MOUSE_MOVE,
+    }
+)
 
 # ── DOM Cursor Injection Script ────────────────────────────────────────────────
 
@@ -75,6 +92,7 @@ DOM_CURSOR_JS = """(function(){
 
 
 # ── Protocols ──────────────────────────────────────────────────────────────────
+
 
 @runtime_checkable
 class PageLike(Protocol):

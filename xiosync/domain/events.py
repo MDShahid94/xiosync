@@ -71,10 +71,10 @@ EVENT_TYPES: frozenset[str] = frozenset(
         METRIC,
         POLICY_DECISION,
         # Wave 3 — platform event types
-        "task.output",         # R-3: streaming task output chunks
-        "webhook.dispatch",    # R-2: webhook delivery intent
-        "webhook.delivered",   # R-2: successful webhook delivery
-        "webhook.failed",      # R-2: failed webhook delivery
+        "task.output",  # R-3: streaming task output chunks
+        "webhook.dispatch",  # R-2: webhook delivery intent
+        "webhook.delivered",  # R-2: successful webhook delivery
+        "webhook.failed",  # R-2: failed webhook delivery
         # Genesis Phase 0 — development events (Gap G-5)
         "dev.commit",
         "dev.review",
@@ -108,10 +108,10 @@ EVENT_TYPES: frozenset[str] = frozenset(
         "workflow.created",
         "workflow.published",
         # XIOFLOW DAG node-level action events (emitted per node by dag_executor)
-        "workflow.action.started",    # node claimed, about to execute
+        "workflow.action.started",  # node claimed, about to execute
         "workflow.action.completed",  # node finished successfully
-        "workflow.action.failed",     # node failed (retry or dead)
-        "workflow.action.skipped",    # conditional branch not taken
+        "workflow.action.failed",  # node failed (retry or dead)
+        "workflow.action.skipped",  # conditional branch not taken
         "trigger.created",
         "secret.created",
         "secret.rotated",
@@ -153,9 +153,7 @@ class InvalidSeverityError(InvalidEventError):
     """The severity is not one of the declared levels (doc 03 §2.8)."""
 
     def __init__(self, severity: str) -> None:
-        super().__init__(
-            f"severity {severity!r} is not one of {sorted(SEVERITIES)}"
-        )
+        super().__init__(f"severity {severity!r} is not one of {sorted(SEVERITIES)}")
         self.severity = severity
 
 
@@ -201,9 +199,7 @@ def build_state_change_payload(
     """
     validate_severity(severity)
     payload: dict[str, Any] = {
-        "summary": (
-            f"{entity_type} {entity_id} transitioned from {from_state} to {to_state}"
-        ),
+        "summary": (f"{entity_type} {entity_id} transitioned from {from_state} to {to_state}"),
         "severity": severity,
         "entity_type": entity_type,
         "entity_id": str(entity_id),

@@ -9,6 +9,7 @@ from xiosync.subsystems.xioflow.engine.vision_matcher import VisionMatcher
 
 logger = structlog.get_logger(__name__)
 
+
 class LocatorCascade:
     """The 10-Tier Stability-Ordered Locator Cascade."""
 
@@ -21,12 +22,14 @@ class LocatorCascade:
         face_value: dict,
         action: str,
         params: dict,
-        locator_priority: list[int]
+        locator_priority: list[int],
     ) -> tuple[bool, int | None, str | None]:
         """Resolve an element through multiple tiers and act on it."""
         for tier in locator_priority:
             try:
-                success, locator = await self._try_tier(tier, place_value, face_value, action, params)
+                success, locator = await self._try_tier(
+                    tier, place_value, face_value, action, params
+                )
                 if success:
                     logger.info("locator_resolved", tier=tier, locator=locator)
                     return True, tier, locator
@@ -35,13 +38,22 @@ class LocatorCascade:
 
         return False, None, None
 
-    async def _try_tier(self, tier: int, place_value: dict, face_value: dict, action: str, params: dict) -> tuple[bool, str | None]:
+    async def _try_tier(
+        self, tier: int, place_value: dict, face_value: dict, action: str, params: dict
+    ) -> tuple[bool, str | None]:
         locator_str = None
         timeout = 2000
 
         if tier == 1:
             # test_id
-            test_ids = ["data-testid", "data-test-id", "data-test", "data-cy", "data-automation-id", "data-qa"]
+            test_ids = [
+                "data-testid",
+                "data-test-id",
+                "data-test",
+                "data-cy",
+                "data-automation-id",
+                "data-qa",
+            ]
             val = place_value.get("test_id")
             if val:
                 for attr in test_ids:
@@ -108,8 +120,8 @@ class LocatorCascade:
             # coordinate click
             box = face_value.get("bounding_box")
             if box and action == "click":
-                x = box.get("nx", 0) + box.get("nw", 0)/2
-                y = box.get("ny", 0) + box.get("nh", 0)/2
+                x = box.get("nx", 0) + box.get("nw", 0) / 2
+                y = box.get("ny", 0) + box.get("nh", 0) / 2
                 await self.page.mouse.click(x, y)
                 return True, f"coordinates: {x},{y}"
 

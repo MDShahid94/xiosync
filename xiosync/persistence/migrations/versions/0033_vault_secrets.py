@@ -9,6 +9,7 @@ Sharing model (consistent with platform-global pattern):
                              available to all orgs under RBAC control)
   organization_id = <uuid> → org-scoped, private to that org
 """
+
 from alembic import op
 
 revision = "0033"
@@ -66,9 +67,11 @@ def upgrade() -> None:
         WHERE expires_at IS NOT NULL
     """)
 
-    op.execute("COMMENT ON TABLE vaulted_secrets IS "
-               "'Universal per-org encrypted secret store. AES-256-GCM. "
-               "organization_id=NULL means platform-global shared secret.'")
+    op.execute(
+        "COMMENT ON TABLE vaulted_secrets IS "
+        "'Universal per-org encrypted secret store. AES-256-GCM. "
+        "organization_id=NULL means platform-global shared secret.'"
+    )
 
 
 def downgrade() -> None:

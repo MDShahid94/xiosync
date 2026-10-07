@@ -1,15 +1,14 @@
-"""XIOVIEW Screencast — CDP screencast streaming engine and rrweb DOM stream injector.
-"""
+"""XIOVIEW Screencast — CDP screencast streaming engine and rrweb DOM stream injector."""
+
 from __future__ import annotations
 
 import asyncio
 import base64
 import json
+import logging
 import pathlib
 import struct
 from typing import Any
-
-import logging
 
 from xiosync.subsystems.xioview import protocol
 
@@ -60,9 +59,9 @@ async def cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
     except asyncio.CancelledError:
         return
     except Exception as exc:
-        logger.warning("xioview.cdp_session_failed", extra={
-            "session_id": session_id, "error": str(exc)
-        })
+        logger.warning(
+            "xioview.cdp_session_failed", extra={"session_id": session_id, "error": str(exc)}
+        )
         return
 
     # 3. Probe frame dimensions via Page.captureScreenshot
@@ -74,11 +73,11 @@ async def cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
         while _i < len(_jpeg) - 4:
             if _jpeg[_i] != 0xFF:
                 break
-            if _jpeg[_i+1] in (0xC0, 0xC2):
-                STREAM_H = struct.unpack(">H", _jpeg[_i+5:_i+7])[0]
-                STREAM_W = struct.unpack(">H", _jpeg[_i+7:_i+9])[0]
+            if _jpeg[_i + 1] in (0xC0, 0xC2):
+                STREAM_H = struct.unpack(">H", _jpeg[_i + 5 : _i + 7])[0]
+                STREAM_W = struct.unpack(">H", _jpeg[_i + 7 : _i + 9])[0]
                 break
-            _i += 2 + struct.unpack(">H", _jpeg[_i+2:_i+4])[0]
+            _i += 2 + struct.unpack(">H", _jpeg[_i + 2 : _i + 4])[0]
     except asyncio.CancelledError:
         return
     except Exception:
@@ -89,12 +88,16 @@ async def cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
 
     # 5. Push session_info to queue
     try:
-        queue.put_nowait(json.dumps({
-            "type": protocol.MSG_SESSION_INFO,
-            "url": page.url,
-            "width": STREAM_W,
-            "height": STREAM_H,
-        }))
+        queue.put_nowait(
+            json.dumps(
+                {
+                    "type": protocol.MSG_SESSION_INFO,
+                    "url": page.url,
+                    "width": STREAM_W,
+                    "height": STREAM_H,
+                }
+            )
+        )
     except asyncio.QueueFull:
         pass
 
@@ -106,9 +109,15 @@ async def cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
         frame_no = event.get("sessionId", 0)
         _frames[0] += 1
         try:
-            queue.put_nowait(json.dumps({
-                "type": protocol.MSG_FRAME, "mode": "cdp_screencast", "jpeg_b64": data,
-            }))
+            queue.put_nowait(
+                json.dumps(
+                    {
+                        "type": protocol.MSG_FRAME,
+                        "mode": "cdp_screencast",
+                        "jpeg_b64": data,
+                    }
+                )
+            )
         except asyncio.QueueFull:
             pass
         try:
@@ -120,20 +129,27 @@ async def cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
 
     cdp.on("Page.screencastFrame", on_frame)
     try:
-        await cdp.send("Page.startScreencast", {
-            "format": "jpeg", "quality": 70,
-            "maxWidth": STREAM_W, "maxHeight": STREAM_H,
-            "everyNthFrame": 1,
-        })
-        logger.info("xioview.cdp_screencast_started", extra={
-            "session_id": session_id, "res": f"{STREAM_W}x{STREAM_H}"
-        })
+        await cdp.send(
+            "Page.startScreencast",
+            {
+                "format": "jpeg",
+                "quality": 70,
+                "maxWidth": STREAM_W,
+                "maxHeight": STREAM_H,
+                "everyNthFrame": 1,
+            },
+        )
+        logger.info(
+            "xioview.cdp_screencast_started",
+            extra={"session_id": session_id, "res": f"{STREAM_W}x{STREAM_H}"},
+        )
     except asyncio.CancelledError:
         return
     except Exception as exc:
-        logger.warning("xioview.cdp_screencast_start_failed", extra={
-            "session_id": session_id, "error": str(exc)
-        })
+        logger.warning(
+            "xioview.cdp_screencast_start_failed",
+            extra={"session_id": session_id, "error": str(exc)},
+        )
 
     # 7. Wait 3s for frames
     try:
@@ -148,9 +164,9 @@ async def cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
     # 8. If <=3 frames, fall back to Phase 2 polling
     if _frames[0] > 3:
         # Genuine event-driven screencast working
-        logger.info("xioview.cdp_screencast_live", extra={
-            "session_id": session_id, "frames_3s": _frames[0]
-        })
+        logger.info(
+            "xioview.cdp_screencast_live", extra={"session_id": session_id, "frames_3s": _frames[0]}
+        )
         try:
             while True:
                 await asyncio.sleep(60)
@@ -164,10 +180,13 @@ async def cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
         return
 
     # Phase 2: no frames — fall back to polling Page.captureScreenshot
-    logger.info("xioview.cdp_screencast_poll_fallback", extra={
-        "session_id": session_id,
-        "reason": "0 frames in 3s — UC Chrome/Xvfb, falling back to poll",
-    })
+    logger.info(
+        "xioview.cdp_screencast_poll_fallback",
+        extra={
+            "session_id": session_id,
+            "reason": "0 frames in 3s — UC Chrome/Xvfb, falling back to poll",
+        },
+    )
     try:
         await cdp.send("Page.stopScreencast")
     except asyncio.CancelledError:
@@ -184,57 +203,73 @@ async def cdp_screencast_loop(session_id: str, queue: asyncio.Queue) -> None:
     try:
         while True:
             try:
-                result = await cdp.send("Page.captureScreenshot", {
-                    "format": "jpeg", "quality": _quality,
-                    "fromSurface": True, "captureBeyondViewport": False,
-                })
+                result = await cdp.send(
+                    "Page.captureScreenshot",
+                    {
+                        "format": "jpeg",
+                        "quality": _quality,
+                        "fromSurface": True,
+                        "captureBeyondViewport": False,
+                    },
+                )
                 error_backoff = 0.5  # reset backoff on success
                 jpeg_b64 = result.get("data", "")
                 if jpeg_b64:
                     try:
-                        queue.put_nowait(json.dumps({
-                            "type": protocol.MSG_FRAME, "mode": "cdp_screencast",
-                            "jpeg_b64": jpeg_b64,
-                        }))
+                        queue.put_nowait(
+                            json.dumps(
+                                {
+                                    "type": protocol.MSG_FRAME,
+                                    "mode": "cdp_screencast",
+                                    "jpeg_b64": jpeg_b64,
+                                }
+                            )
+                        )
                         # Queue accepted frame — reduce backpressure counter
                         if _consecutive_full > 0:
                             _consecutive_full = max(0, _consecutive_full - 1)
-                        _quality = _QUALITY_TIERS[
-                            min(_consecutive_full, len(_QUALITY_TIERS) - 1)
-                        ]
+                        _quality = _QUALITY_TIERS[min(_consecutive_full, len(_QUALITY_TIERS) - 1)]
                     except asyncio.QueueFull:
                         _consecutive_full += 1
-                        _quality = _QUALITY_TIERS[
-                            min(_consecutive_full, len(_QUALITY_TIERS) - 1)
-                        ]
+                        _quality = _QUALITY_TIERS[min(_consecutive_full, len(_QUALITY_TIERS) - 1)]
                         # Notify client of frame drop
                         try:
                             # Drop oldest to make room for drop notification
                             queue.get_nowait()
-                            queue.put_nowait(json.dumps({
-                                "type": "frame_dropped",
-                                "quality": _quality,
-                                "backpressure": _consecutive_full,
-                            }))
+                            queue.put_nowait(
+                                json.dumps(
+                                    {
+                                        "type": "frame_dropped",
+                                        "quality": _quality,
+                                        "backpressure": _consecutive_full,
+                                    }
+                                )
+                            )
                         except (asyncio.QueueFull, asyncio.QueueEmpty):
                             pass
                     _frames[0] += 1
                     # Refresh URL every ~10s
                     if _frames[0] % 30 == 0:
                         try:
-                            queue.put_nowait(json.dumps({
-                                "type": protocol.MSG_SESSION_INFO,
-                                "url": page.url,
-                                "width": STREAM_W, "height": STREAM_H,
-                            }))
+                            queue.put_nowait(
+                                json.dumps(
+                                    {
+                                        "type": protocol.MSG_SESSION_INFO,
+                                        "url": page.url,
+                                        "width": STREAM_W,
+                                        "height": STREAM_H,
+                                    }
+                                )
+                            )
                         except asyncio.QueueFull:
                             pass
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.warning("xioview.poll_screenshot_error", extra={
-                    "session_id": session_id, "error": str(exc), "backoff": error_backoff
-                })
+                logger.warning(
+                    "xioview.poll_screenshot_error",
+                    extra={"session_id": session_id, "error": str(exc), "backoff": error_backoff},
+                )
                 await asyncio.sleep(error_backoff)
                 error_backoff = min(5.0, error_backoff * 2)
             else:
@@ -252,7 +287,10 @@ def _rrweb_path() -> str | None:
     if _RRWEB_JS_PATH is not None:
         return _RRWEB_JS_PATH
     candidates = [
-        pathlib.Path(__file__).parent.parent.parent.parent.parent / "tools" / "static" / "rrweb.min.js",
+        pathlib.Path(__file__).parent.parent.parent.parent.parent
+        / "tools"
+        / "static"
+        / "rrweb.min.js",
         pathlib.Path(__file__).parent / "static" / "rrweb.min.js",
     ]
     for p in candidates:
@@ -271,17 +309,19 @@ async def inject_rrweb(session_id: str, queue: asyncio.Queue) -> None:
     """
     from xiosync.subsystems.xioview.session_manager import get_playwright_page  # noqa: PLC0415
 
-    logger.warning("xioview.rrweb_violates_stealth", extra={
-        "session_id": session_id,
-        "reason": "rrweb injects JS that violates stealth mode"
-    })
+    logger.warning(
+        "xioview.rrweb_violates_stealth",
+        extra={"session_id": session_id, "reason": "rrweb injects JS that violates stealth mode"},
+    )
 
     path = _rrweb_path()
     if path is None:
-        msg = json.dumps({
-            "type": protocol.MSG_ERROR,
-            "detail": "rrweb not vendored — place rrweb.min.js at tools/static/rrweb.min.js",
-        })
+        msg = json.dumps(
+            {
+                "type": protocol.MSG_ERROR,
+                "detail": "rrweb not vendored — place rrweb.min.js at tools/static/rrweb.min.js",
+            }
+        )
         try:
             queue.put_nowait(msg)
         except asyncio.QueueFull:
@@ -303,10 +343,12 @@ async def inject_rrweb(session_id: str, queue: asyncio.Queue) -> None:
 
         await page.expose_function("__xioview_emit", _emit)
         await page.add_init_script(path=path)
-        await page.evaluate("() => { if (typeof rrweb !== 'undefined') { rrweb.record({ emit: window.__xioview_emit }); } }")
+        await page.evaluate(
+            "() => { if (typeof rrweb !== 'undefined') { rrweb.record({ emit: window.__xioview_emit }); } }"
+        )
         logger.info("xioview.rrweb_injected", extra={"session_id": session_id})
 
     except Exception as exc:  # noqa: BLE001
-        logger.warning("xioview.rrweb_inject_failed", extra={
-            "session_id": session_id, "error": str(exc)
-        })
+        logger.warning(
+            "xioview.rrweb_inject_failed", extra={"session_id": session_id, "error": str(exc)}
+        )

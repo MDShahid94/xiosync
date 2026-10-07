@@ -28,44 +28,60 @@ Exit codes:
   2 = bot-detection redirect
 """
 
-import argparse, asyncio, json, sys, os, time, struct, hmac, hashlib, base64
+import argparse
+import asyncio
+import base64
+import hashlib
+import hmac
+import json
+import os
+import struct
+import sys
+import time
 from pathlib import Path
 
-DISPLAY = os.environ.get('DISPLAY', ':99')
+DISPLAY = os.environ.get("DISPLAY", ":99")
 
 # ── TOTP Generator ────────────────────────────────────────────────────────────
 
+
 def base32_decode(encoded: str) -> bytes:
-    s = encoded.upper().replace(' ', '')
+    s = encoded.upper().replace(" ", "")
     pad = (8 - len(s) % 8) % 8
-    return base64.b32decode(s + '=' * pad)
+    return base64.b32decode(s + "=" * pad)
+
 
 def generate_totp(secret: str) -> str:
     key = base32_decode(secret)
     counter = int(time.time()) // 30
-    msg = struct.pack('>Q', counter)
+    msg = struct.pack(">Q", counter)
     h = hmac.new(key, msg, hashlib.sha1).digest()
     offset = h[-1] & 0x0F
-    code = (struct.unpack('>I', h[offset:offset+4])[0] & 0x7FFFFFFF) % 1_000_000
+    code = (struct.unpack(">I", h[offset : offset + 4])[0] & 0x7FFFFFFF) % 1_000_000
     return str(code).zfill(6)
 
+
 # ── Shared Utilities ──────────────────────────────────────────────────────────
+
 
 def log(msg: str):
     print(msg, flush=True)
 
+
 def save_screenshot(page_or_driver, path: str, engine: str):
     try:
-        if engine in ('camoufox', 'nodriver_pw'):
+        if engine in ("camoufox", "nodriver_pw"):
             # Playwright-compatible
             import asyncio
+
             asyncio.get_event_loop().run_until_complete(
                 page_or_driver.screenshot(path=path)
             ) if not asyncio.iscoroutine(page_or_driver.screenshot(path=path)) else None
-        elif engine == 'uc':
+        elif engine == "uc":
             uc_snap(page_or_driver, path)
     except Exception as e:
         log(f"  ⚠️  Screenshot failed: {e}")
+
 
 def uc_snap(driver, path: str, quality: int = 70):
     """Save a Selenium screenshot as JPEG (via PIL) — avoids PNG extension warning.
@@ -73,46 +89,53 @@ def uc_snap(driver, path: str, quality: int = 70):
     This helper captures raw PNG bytes and converts to JPEG in-memory."""
     try:
         import io
+
         from PIL import Image
+
         png_bytes = driver.get_screenshot_as_png()
-        img = Image.open(io.BytesIO(png_bytes)).convert('RGB')
+        img = Image.open(io.BytesIO(png_bytes)).convert("RGB")
         # Ensure .jpg extension
-        out_path = path if path.endswith('.jpg') else path.rsplit('.', 1)[0] + '.jpg'
-        img.save(out_path, 'JPEG', quality=quality)
+        out_path = path if path.endswith(".jpg") else path.rsplit(".", 1)[0] + ".jpg"
+        img.save(out_path, "JPEG", quality=quality)
     except Exception as e:
         log(f"  ⚠️  uc_snap failed ({path}): {e}")
         # Fallback to native save (will be PNG with wrong extension warning)
-        try: driver.save_screenshot(path)
-        except: pass
+        try:
+            driver.save_screenshot(path)
+        except:
+            pass
+
 
 def to_playwright_cookies(raw_cookies: list) -> list:
     """Normalize cookie dicts to Playwright storageState format."""
     result = []
     for c in raw_cookies:
-        result.append({
-            "name":     c.get("name", ""),
-            "value":    c.get("value", ""),
-            "domain":   c.get("domain", ""),
-            "path":     c.get("path", "/"),
-            "expires":  c.get("expires", -1),
-            "httpOnly": c.get("httpOnly", False),
-            "secure":   c.get("secure", False),
-            "sameSite": c.get("sameSite", "Lax"),
-        })
+        result.append(
+            {
+                "name": c.get("name", ""),
+                "value": c.get("value", ""),
+                "domain": c.get("domain", ""),
+                "path": c.get("path", "/"),
+                "expires": c.get("expires", -1),
+                "httpOnly": c.get("httpOnly", False),
+                "secure": c.get("secure", False),
+                "sameSite": c.get("sameSite", "Lax"),
+            }
+        )
     return result
 
+
 def write_session(cookies: list, output_path: str):
-    session_data = {
-        "cookies": to_playwright_cookies(cookies),
-        "origins": []
-    }
+    session_data = {"cookies": to_playwright_cookies(cookies), "origins": []}
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     Path(output_path).write_text(json.dumps(session_data, indent=2))
     log(f"[stealth-login] ✅ Session written to {output_path}")
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ENGINE 1: camoufox (Firefox, C++ level spoofing)
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 async def run_camoufox(email, password, totp_secret, socks5, output_path, screenshot_dir):
     log("[camoufox] Starting Firefox stealth session...")
@@ -150,14 +173,16 @@ async def run_camoufox(email, password, totp_secret, socks5, output_path, screen
                 for url in ["https://www.google.com", "https://news.google.com"]:
                     try:
                         await page.goto(url, wait_until="domcontentloaded", timeout=10000)
-                        await asyncio.sleep(1.2 + __import__('random').random())
-                    except Exception: pass
+                        await asyncio.sleep(1.2 + __import__("random").random())
+                    except Exception:
+                        pass
 
                 # Sign-in
                 await page.goto(
                     "https://accounts.google.com/ServiceLogin?service=mail&hl=en"
                     "&continue=https://mail.google.com",
-                    wait_until="domcontentloaded", timeout=25000
+                    wait_until="domcontentloaded",
+                    timeout=25000,
                 )
                 await asyncio.sleep(2.5)
 
@@ -167,7 +192,7 @@ async def run_camoufox(email, password, totp_secret, socks5, output_path, screen
                 await email_input.click()
                 await asyncio.sleep(0.5)
                 for ch in email:
-                    await email_input.type(ch, delay=75 + int(55 * __import__('random').random()))
+                    await email_input.type(ch, delay=75 + int(55 * __import__("random").random()))
                 await asyncio.sleep(0.8)
                 await page.locator("#identifierNext, button[type='submit']").first.click()
                 await asyncio.sleep(3.5)
@@ -186,7 +211,7 @@ async def run_camoufox(email, password, totp_secret, socks5, output_path, screen
                     await pw.click()
                     await asyncio.sleep(0.5)
                     for ch in password:
-                        await pw.type(ch, delay=70 + int(50 * __import__('random').random()))
+                        await pw.type(ch, delay=70 + int(50 * __import__("random").random()))
                     await asyncio.sleep(0.7)
                     await page.locator("#passwordNext, button[type='submit']").first.click()
                     await asyncio.sleep(4)
@@ -195,11 +220,15 @@ async def run_camoufox(email, password, totp_secret, socks5, output_path, screen
 
                 # TOTP
                 body = await page.evaluate("document.body.innerText")
-                if totp_secret and any(k in body for k in ["2-Step", "authenticator", "verification code"]):
+                if totp_secret and any(
+                    k in body for k in ["2-Step", "authenticator", "verification code"]
+                ):
                     code = generate_totp(totp_secret)
-                    log(f"[camoufox] 2FA detected, entering TOTP...")
+                    log("[camoufox] 2FA detected, entering TOTP...")
                     try:
-                        totp_in = page.locator("input[type='tel'], input[type='number'], input[name='totpPin']").first
+                        totp_in = page.locator(
+                            "input[type='tel'], input[type='number'], input[name='totpPin']"
+                        ).first
                         await totp_in.wait_for(state="visible", timeout=8000)
                         await totp_in.fill(code)
                         await asyncio.sleep(0.6)
@@ -222,6 +251,7 @@ async def run_camoufox(email, password, totp_secret, socks5, output_path, screen
         log(f"[camoufox] ❌ Exception: {e}")
         return False
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ENGINE 2: undetected-chromedriver (uc) — PROVEN in reference notebook
 # Borrows exact flags + fingerprint from Colab_Antibot_Browser.ipynb
@@ -230,10 +260,12 @@ async def run_camoufox(email, password, totp_secret, socks5, output_path, screen
 
 # reCAPTCHA audio solver — isolated, self-installing, reusable by any workflow.
 # All solving logic lives in colab/recaptcha_solver.py.
-import importlib.util as _ilib, os as _os
-_rc_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'recaptcha_solver.py')
-_rc_spec = _ilib.spec_from_file_location('recaptcha_solver', _rc_path)
-_rc_mod  = _ilib.module_from_spec(_rc_spec)
+import importlib.util as _ilib
+import os as _os
+
+_rc_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "recaptcha_solver.py")
+_rc_spec = _ilib.spec_from_file_location("recaptcha_solver", _rc_path)
+_rc_mod = _ilib.module_from_spec(_rc_spec)
 _rc_spec.loader.exec_module(_rc_mod)
 
 
@@ -245,23 +277,33 @@ def handle_recaptcha_buster(driver, log_fn, sleep_fn=None):
     return _rc_mod.solve_recaptcha(driver, log_fn=log_fn, sleep_fn=sleep_fn, max_attempts=2)
 
 
-
-def run_uc(email, password, totp_secret, socks5, output_path, screenshot_dir, profile_dir=None, signal_file="/tmp/xio_uc_2fa_signal.json", resume_file="/tmp/xio_uc_2fa_resume.json"):
+def run_uc(
+    email,
+    password,
+    totp_secret,
+    socks5,
+    output_path,
+    screenshot_dir,
+    profile_dir=None,
+    signal_file="/tmp/xio_uc_2fa_signal.json",
+    resume_file="/tmp/xio_uc_2fa_resume.json",
+):
     log("[uc] Starting undetected-chromedriver session (proven reference)...")
     try:
+        import subprocess
+
         import undetected_chromedriver as uc_mod
         from selenium.webdriver.common.by import By
-        from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
-        import subprocess
+        from selenium.webdriver.support.ui import WebDriverWait
     except ImportError:
         log("[uc] Installing undetected-chromedriver...")
         os.system("pip install undetected-chromedriver selenium -q")
         try:
             import undetected_chromedriver as uc_mod
             from selenium.webdriver.common.by import By
-            from selenium.webdriver.support.ui import WebDriverWait
             from selenium.webdriver.support import expected_conditions as EC
+            from selenium.webdriver.support.ui import WebDriverWait
         except ImportError:
             log("[uc] ❌ Install failed — skipping")
             return False
@@ -271,52 +313,61 @@ def run_uc(email, password, totp_secret, socks5, output_path, screenshot_dir, pr
     try:
         # Get Chrome version
         try:
-            cv_str = subprocess.check_output(
-                ['google-chrome', '--version'], stderr=subprocess.DEVNULL
-            ).decode().strip().split()[-1]
-            cv_major = int(cv_str.split('.')[0])
+            cv_str = (
+                subprocess.check_output(["google-chrome", "--version"], stderr=subprocess.DEVNULL)
+                .decode()
+                .strip()
+                .split()[-1]
+            )
+            cv_major = int(cv_str.split(".")[0])
         except Exception:
             cv_major = 131
 
         # Exact options from Colab_Antibot_Browser.ipynb reference notebook
         options = uc_mod.ChromeOptions()
         if socks5:
-            proxy_addr = socks5.replace('socks5://', '')
-            options.add_argument(f'--proxy-server=socks5://{proxy_addr}')
-        options.add_argument('--no-sandbox')
-        options.add_argument('--disable-setuid-sandbox')  # belt+braces for Colab root
-        options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--use-gl=angle')
-        options.add_argument('--use-angle=swiftshader')
-        options.add_argument('--disable-gpu-sandbox')
-        options.add_argument('--ignore-gpu-blocklist')
-        options.add_argument('--disable-service-workers')
-        options.add_argument('--disable-features=ServiceWorker,UserAgentClientHint')
-        options.add_argument('--window-size=1920,1080')
-        options.add_argument('--window-position=0,0')
-        options.add_argument(f'--display={DISPLAY}')
+            proxy_addr = socks5.replace("socks5://", "")
+            options.add_argument(f"--proxy-server=socks5://{proxy_addr}")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-setuid-sandbox")  # belt+braces for Colab root
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--use-gl=angle")
+        options.add_argument("--use-angle=swiftshader")
+        options.add_argument("--disable-gpu-sandbox")
+        options.add_argument("--ignore-gpu-blocklist")
+        options.add_argument("--disable-service-workers")
+        options.add_argument("--disable-features=ServiceWorker,UserAgentClientHint")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--window-position=0,0")
+        options.add_argument(f"--display={DISPLAY}")
         # Expose remote debugging so DevTools MCP can take over at 2FA
         import socket
+
         s = socket.socket()
-        s.bind(('', 0))
+        s.bind(("", 0))
         UC_DEBUG_PORT = s.getsockname()[1]
         s.close()
-        options.add_argument(f'--remote-debugging-port={UC_DEBUG_PORT}')
-        options.add_argument('--remote-debugging-address=0.0.0.0')
+        options.add_argument(f"--remote-debugging-port={UC_DEBUG_PORT}")
+        options.add_argument("--remote-debugging-address=0.0.0.0")
 
-        options.add_experimental_option("prefs", {
-            "webrtc.ip_handling_policy": "disable_non_proxied_udp",
-            "webrtc.multiple_routes_enabled": False,
-            "webrtc.nonproxied_udp_enabled": False,
-        })
+        options.add_experimental_option(
+            "prefs",
+            {
+                "webrtc.ip_handling_policy": "disable_non_proxied_udp",
+                "webrtc.multiple_routes_enabled": False,
+                "webrtc.nonproxied_udp_enabled": False,
+            },
+        )
 
         # Persist the browser profile so a signed-in Chrome profile is produced
         if profile_dir:
             os.makedirs(profile_dir, exist_ok=True)
-            options.add_argument(f'--user-data-dir={profile_dir}')
+            options.add_argument(f"--user-data-dir={profile_dir}")
             log(f"[uc] 💾 Profile dir: {profile_dir}")
 
-        log(f"[uc] Launching Chrome (version_main={cv_major}, DISPLAY={DISPLAY}, port={UC_DEBUG_PORT})")
+        log(
+            f"[uc] Launching Chrome (version_main={cv_major}, DISPLAY={DISPLAY}, port={UC_DEBUG_PORT})"
+        )
 
         # Pre-flight SOCKS5 proxy check — ERR_PROXY_CONNECTION_FAILED happens when
         # Chrome launches before Tailscale userspace networking has established the
@@ -324,35 +375,60 @@ def run_uc(email, password, totp_secret, socks5, output_path, screenshot_dir, pr
         # After 3 failures (15s), actively trigger tailscale re-up to accelerate recovery.
         if socks5:
             import subprocess as _subp
+
             _proxy_ready = False
-            _check_url = 'https://www.google.com'
+            _check_url = "https://www.google.com"
             _ts_restart_done = False
             for _attempt in range(24):  # try up to 120s (24 × 5s)
                 try:
                     _rc = _subp.run(
-                        ['curl', '-s', '--max-time', '5',
-                         '--proxy', socks5,
-                         '-o', '/dev/null', '-w', '%{http_code}',
-                         _check_url],
-                        capture_output=True, text=True, timeout=8
+                        [
+                            "curl",
+                            "-s",
+                            "--max-time",
+                            "5",
+                            "--proxy",
+                            socks5,
+                            "-o",
+                            "/dev/null",
+                            "-w",
+                            "%{http_code}",
+                            _check_url,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=8,
                     )
                     _code = _rc.stdout.strip()
-                    if _code and _code != '000':
+                    if _code and _code != "000":
                         _proxy_ready = True
                         if _attempt > 0:
                             log(f"[uc] ✅ SOCKS5 proxy ready after {_attempt * 5}s (HTTP {_code})")
                         break
                     raise OSError(f"HTTP {_code}")
                 except Exception as _pe:
-                    log(f"[uc] ⏳ SOCKS5 not ready (attempt {_attempt+1}/24): {_pe} — waiting 5s...")
+                    log(
+                        f"[uc] ⏳ SOCKS5 not ready (attempt {_attempt + 1}/24): {_pe} — waiting 5s..."
+                    )
                     # After 3 failures, nudge tailscale to re-establish the exit-node route
                     if _attempt == 2 and not _ts_restart_done:
-                        log("[uc] 🔄 Triggering tailscale re-up to accelerate exit-node reconnect...")
+                        log(
+                            "[uc] 🔄 Triggering tailscale re-up to accelerate exit-node reconnect..."
+                        )
                         try:
                             _subp.run(
-                                ['sudo', 'tailscale', 'up', '--accept-routes', '--ssh', '--reset',
-                                 '--hostname=colab-master', '--exit-node=100.86.149.127'],
-                                capture_output=True, timeout=15
+                                [
+                                    "sudo",
+                                    "tailscale",
+                                    "up",
+                                    "--accept-routes",
+                                    "--ssh",
+                                    "--reset",
+                                    "--hostname=colab-master",
+                                    "--exit-node=100.86.149.127",
+                                ],
+                                capture_output=True,
+                                timeout=15,
                             )
                         except Exception as _tse:
                             log(f"[uc] ⚠️  tailscale re-up failed: {_tse}")
@@ -362,7 +438,9 @@ def run_uc(email, password, totp_secret, socks5, output_path, screenshot_dir, pr
                 log("[uc] ❌ SOCKS5 proxy unreachable after 120s — aborting")
                 return False
 
-        driver = uc_mod.Chrome(options=options, headless=False, version_main=cv_major, port=UC_DEBUG_PORT)
+        driver = uc_mod.Chrome(
+            options=options, headless=False, version_main=cv_major, port=UC_DEBUG_PORT
+        )
 
         wait = WebDriverWait(driver, 15)
 
@@ -386,7 +464,8 @@ def run_uc(email, password, totp_secret, socks5, output_path, screenshot_dir, pr
                     try:
                         driver.get(url)
                         uc_sleep(1.0, 2.0)
-                    except Exception: pass
+                    except Exception:
+                        pass
 
                 # Sign-in page
                 driver.get(
@@ -397,9 +476,11 @@ def run_uc(email, password, totp_secret, socks5, output_path, screenshot_dir, pr
 
                 # Email
                 try:
-                    email_el = wait.until(EC.visibility_of_element_located(
-                        (By.CSS_SELECTOR, "input[type='email'], input[name='identifier']")
-                    ))
+                    email_el = wait.until(
+                        EC.visibility_of_element_located(
+                            (By.CSS_SELECTOR, "input[type='email'], input[name='identifier']")
+                        )
+                    )
                     email_el.click()
                     uc_sleep(0.4, 0.8)
                     uc_type(email_el, email)
@@ -408,7 +489,7 @@ def run_uc(email, password, totp_secret, socks5, output_path, screenshot_dir, pr
                     next_btn.click()
                     uc_sleep(3.0, 5.0)
                     uc_snap(driver, f"{screenshot_dir}/uc_email_submitted.jpg")
-                    log(f"[uc] 📸 uc_email_submitted.jpg")
+                    log("[uc] 📸 uc_email_submitted.jpg")
                 except Exception as e:
                     log(f"[uc] ⚠️ Email phase: {e}")
 
@@ -422,17 +503,21 @@ def run_uc(email, password, totp_secret, socks5, output_path, screenshot_dir, pr
 
                 # Password
                 try:
-                    pw_el = wait.until(EC.visibility_of_element_located(
-                        (By.CSS_SELECTOR, "input[type='password']")
-                    ))
+                    pw_el = wait.until(
+                        EC.visibility_of_element_located(
+                            (By.CSS_SELECTOR, "input[type='password']")
+                        )
+                    )
 
                     _cur_url_pw = driver.current_url
-                    _on_challenge_pwd = 'challenge/pwd' in _cur_url_pw
+                    _on_challenge_pwd = "challenge/pwd" in _cur_url_pw
 
                     # ── Check if field already has a value (autocomplete/autofill) ──────
                     # Chrome's autofill may pre-populate the field. If so, skip typing.
-                    _pre_val = pw_el.get_attribute('value') or ''
-                    log(f"[uc] 🔍 Password field pre-value: len={len(_pre_val)} (autocomplete={'YES' if _pre_val else 'NO'})")
+                    _pre_val = pw_el.get_attribute("value") or ""
+                    log(
+                        f"[uc] 🔍 Password field pre-value: len={len(_pre_val)} (autocomplete={'YES' if _pre_val else 'NO'})"
+                    )
 
                     if _pre_val.strip():
                         log("[uc] ✅ Field already has value — skipping typing, clicking Next")
@@ -443,32 +528,40 @@ def run_uc(email, password, totp_secret, socks5, output_path, screenshot_dir, pr
                         # _valueTracker reset ensures React sees the value as a new change.
                         log("[uc] 🔑 challenge/pwd — CDP Input.insertText (isTrusted events)")
                         # Focus + reset React tracker
-                        driver.execute_script("""
+                        driver.execute_script(
+                            """
 var el = arguments[0];
 el.focus();
 if (el._valueTracker) { el._valueTracker.setValue(''); }
-""", pw_el)
+""",
+                            pw_el,
+                        )
                         uc_sleep(0.3, 0.5)
                         # CDP insertText — real isTrusted keystroke events
                         driver.execute_cdp_cmd("Input.insertText", {"text": password})
                         uc_sleep(0.4, 0.6)
                         # Flush React synthetic event chain
-                        _post_val = driver.execute_script("""
+                        _post_val = driver.execute_script(
+                            """
 var el = arguments[0];
 el.dispatchEvent(new Event('input', {bubbles: true}));
 el.dispatchEvent(new Event('change', {bubbles: true}));
 return el.value;
-""", pw_el)
-                        log(f"[uc] 🔑 After CDP insertText: '{str(_post_val)[:3]}...' len={len(_post_val or '')}")
+""",
+                            pw_el,
+                        )
+                        log(
+                            f"[uc] 🔑 After CDP insertText: '{str(_post_val)[:3]}...' len={len(_post_val or '')}"
+                        )
                         # Diagnostic snapshot BEFORE submit — confirms field visual state
                         uc_snap(driver, f"{screenshot_dir}/uc_pw_before_submit.jpg")
-                        log(f"[uc] 📸 uc_pw_before_submit.jpg (check if bullets visible)")
+                        log("[uc] 📸 uc_pw_before_submit.jpg (check if bullets visible)")
                     else:
                         # Classic password page — uc_type with send_keys
                         pw_el.click()
                         uc_sleep(0.4, 0.8)
                         uc_type(pw_el, password)
-                        _post_val = pw_el.get_attribute('value') or ''
+                        _post_val = pw_el.get_attribute("value") or ""
                         log(f"[uc] 🔑 After send_keys: len={len(_post_val)}")
 
                     # ── Submit ───────────────────────────────────────────────────────────
@@ -481,27 +574,24 @@ if (btn) { btn.click(); return 'clicked:' + (btn.id || btn.type); }
 return 'not_found';
 """)
                     log(f"[uc] 🔑 Submit button: {_btn_clicked}")
-                    if _btn_clicked == 'not_found':
+                    if _btn_clicked == "not_found":
                         from selenium.webdriver.common.keys import Keys
+
                         pw_el.send_keys(Keys.RETURN)
 
                     uc_sleep(3.5, 5.0)
                     uc_snap(driver, f"{screenshot_dir}/uc_password_submitted.jpg")
-                    log(f"[uc] 📸 uc_password_submitted.jpg")
+                    log("[uc] 📸 uc_password_submitted.jpg")
                     _url_after_pw = driver.current_url
-                    if 'challenge/pwd' in _url_after_pw:
-                        log(f"[uc] ❌ Still on challenge/pwd after submit — password not accepted")
-                        try: driver.quit()
-                        except Exception: pass
+                    if "challenge/pwd" in _url_after_pw:
+                        log("[uc] ❌ Still on challenge/pwd after submit — password not accepted")
+                        try:
+                            driver.quit()
+                        except Exception:
+                            pass
                         return False
                 except Exception as e:
                     log(f"[uc] ⚠️ Password phase: {e}")
-
-
-
-
-
-
 
                 # ── 2FA / Challenge handling ────────────────────────────────────────
                 # Ported from XIO_VERSE 2 auth_manager.py:
@@ -518,23 +608,45 @@ return 'not_found';
                 # 'challenge/pwd' = password step itself (not 2FA) — exclude from 2FA routing.
                 # Real 2FA URLs contain: selection, totp, 2sv, lookup (not /pwd).
                 # Device push/notification challenge URLs: ipp, dp, az, sk, iap, iph (Google rotates these).
-                _is_pwd_challenge = 'challenge/pwd' in cur_url_after_pw
+                _is_pwd_challenge = "challenge/pwd" in cur_url_after_pw
                 is_challenge = (not _is_pwd_challenge) and (
-                    any(k in cur_url_after_pw for k in [
-                        'signin/v2/challenge', 'signin/challenge',
-                        '2sv', 'totp', 'lookup', 'selection',
-                        'challenge/ipp', 'challenge/dp', 'challenge/az',
-                        'challenge/sk', 'challenge/iap', 'challenge/iph',
-                        'challenge/sl', 'challenge/dk',
-                    ]) or any(k in body_text for k in [
-                        '2-Step', 'authenticator', 'verification code',
-                        'Check your', 'Try another way', 'Verification',
-                        '2-step verification', 'sent a notification',
-                    ])
+                    any(
+                        k in cur_url_after_pw
+                        for k in [
+                            "signin/v2/challenge",
+                            "signin/challenge",
+                            "2sv",
+                            "totp",
+                            "lookup",
+                            "selection",
+                            "challenge/ipp",
+                            "challenge/dp",
+                            "challenge/az",
+                            "challenge/sk",
+                            "challenge/iap",
+                            "challenge/iph",
+                            "challenge/sl",
+                            "challenge/dk",
+                        ]
+                    )
+                    or any(
+                        k in body_text
+                        for k in [
+                            "2-Step",
+                            "authenticator",
+                            "verification code",
+                            "Check your",
+                            "Try another way",
+                            "Verification",
+                            "2-step verification",
+                            "sent a notification",
+                        ]
+                    )
                 )
                 if _is_pwd_challenge and not is_challenge:
-                    log(f"[uc] ⚠️ Still on challenge/pwd after password submit — password may not have registered")
-
+                    log(
+                        "[uc] ⚠️ Still on challenge/pwd after password submit — password may not have registered"
+                    )
 
                 if is_challenge:
                     log(f"[uc] 🔐 2FA/Challenge at: {cur_url_after_pw[:80]}")
@@ -542,14 +654,19 @@ return 'not_found';
 
                     # Write CDP signal file for monitoring (non-blocking)
                     import json as _json
+
                     signal_path = signal_file
-                    with open(signal_path, 'w') as _f:
-                        _json.dump({
-                            'status': 'waiting_2fa', 'url': cur_url_after_pw,
-                            'debug_port': UC_DEBUG_PORT,
-                            'screenshot': f"{screenshot_dir}/uc_2fa_start.png",
-                            'timestamp': time.time(),
-                        }, _f)
+                    with open(signal_path, "w") as _f:
+                        _json.dump(
+                            {
+                                "status": "waiting_2fa",
+                                "url": cur_url_after_pw,
+                                "debug_port": UC_DEBUG_PORT,
+                                "screenshot": f"{screenshot_dir}/uc_2fa_start.png",
+                                "timestamp": time.time(),
+                            },
+                            _f,
+                        )
                     log(f"[uc] 📡 Signal written (monitoring only) | DevTools :{UC_DEBUG_PORT}")
 
                     # ── Anti-race: check if CDP handler already completed 2FA ──
@@ -567,11 +684,15 @@ return 'not_found';
                         if os.path.exists(_resume_path):
                             try:
                                 _rd = _json.loads(open(_resume_path).read())
-                                if _rd.get('status') == 'done':
+                                if _rd.get("status") == "done":
                                     _cdp_done = True
-                                    log("[uc] ✅ CDP handler already completed 2FA — skipping inline TOTP")
-                                elif _rd.get('status') == 'error':
-                                    log(f"[uc] ⚠️ CDP handler reported error: {_rd.get('msg','?')} — running inline fallback")
+                                    log(
+                                        "[uc] ✅ CDP handler already completed 2FA — skipping inline TOTP"
+                                    )
+                                elif _rd.get("status") == "error":
+                                    log(
+                                        f"[uc] ⚠️ CDP handler reported error: {_rd.get('msg', '?')} — running inline fallback"
+                                    )
                             except Exception:
                                 pass
                             break
@@ -582,40 +703,66 @@ return 'not_found';
                         log("[uc] ⚡ Running inline 2FA handler...")
                     # ── reCAPTCHA short-circuit: click checkbox directly, skip TOTP flow ──
                     # Clicking 'Try another way' on the reCAPTCHA page causes account rejection.
-                    if 'challenge/recaptcha' in cur_url_after_pw and not _cdp_done:
+                    if "challenge/recaptcha" in cur_url_after_pw and not _cdp_done:
                         log("[uc] 🤖 reCAPTCHA challenge detected inline — clicking checkbox...")
                         if handle_recaptcha_buster(driver, log, uc_sleep):
-                            log("[uc] ✅ reCAPTCHA resolved inline — proceeding to post-login check")
+                            log(
+                                "[uc] ✅ reCAPTCHA resolved inline — proceeding to post-login check"
+                            )
                             uc_sleep(3.0, 5.0)
                             # Check if Google now needs password (email→recaptcha→pwd flow)
                             _url_after_rc = driver.current_url
-                            if 'challenge/pwd' in _url_after_rc or 'signin/v2/challenge/pwd' in _url_after_rc:
-                                log(f"[uc] 🔑 Password challenge after reCAPTCHA — entering password... ({_url_after_rc[:60]})")
+                            if (
+                                "challenge/pwd" in _url_after_rc
+                                or "signin/v2/challenge/pwd" in _url_after_rc
+                            ):
+                                log(
+                                    f"[uc] 🔑 Password challenge after reCAPTCHA — entering password... ({_url_after_rc[:60]})"
+                                )
                                 try:
-                                    from selenium.webdriver.support.ui import WebDriverWait
-                                    from selenium.webdriver.support import expected_conditions as EC
                                     from selenium.webdriver.common.keys import Keys
+                                    from selenium.webdriver.support import expected_conditions as EC
+                                    from selenium.webdriver.support.ui import WebDriverWait
+
                                     _pw_wait = WebDriverWait(driver, 12)
-                                    _pw_el = _pw_wait.until(EC.visibility_of_element_located(
-                                        (By.CSS_SELECTOR, "input[type='password']")))
+                                    _pw_el = _pw_wait.until(
+                                        EC.visibility_of_element_located(
+                                            (By.CSS_SELECTOR, "input[type='password']")
+                                        )
+                                    )
                                     _pw_el.click()
                                     uc_sleep(0.4, 0.8)
                                     uc_type(_pw_el, password)
                                     _pw_el.send_keys(Keys.RETURN)
                                     # Wait up to 15s for URL to leave challenge/pwd
                                     import time as _tm2
+
                                     _nav_deadline = _tm2.time() + 15
-                                    while 'challenge/pwd' in driver.current_url and _tm2.time() < _nav_deadline:
+                                    while (
+                                        "challenge/pwd" in driver.current_url
+                                        and _tm2.time() < _nav_deadline
+                                    ):
                                         _tm2.sleep(0.5)
                                     uc_sleep(1.0, 1.5)
                                     uc_snap(driver, f"{screenshot_dir}/uc_pwd_after_recaptcha.jpg")
                                     log("[uc] 📸 uc_pwd_after_recaptcha.jpg")
                                     _url_post_pwd = driver.current_url
                                     log(f"[uc] Post-pwd URL: {_url_post_pwd[:80]}")
-                                    if ('challenge/pwd' not in _url_post_pwd and
-                                            totp_secret and
-                                            any(k in _url_post_pwd for k in ['challenge','2sv','totp','selection','lookup'])):
-                                        log(f"[uc] 🔐 2FA after reCAPTCHA+pwd — entering TOTP...")
+                                    if (
+                                        "challenge/pwd" not in _url_post_pwd
+                                        and totp_secret
+                                        and any(
+                                            k in _url_post_pwd
+                                            for k in [
+                                                "challenge",
+                                                "2sv",
+                                                "totp",
+                                                "selection",
+                                                "lookup",
+                                            ]
+                                        )
+                                    ):
+                                        log("[uc] 🔐 2FA after reCAPTCHA+pwd — entering TOTP...")
                                         try:
                                             # Step 1: ‘Try another way’ — JS multi-event (exact Branch B / c66f366)
                                             _rc_taw = driver.execute_script("""
@@ -632,9 +779,14 @@ if(t.includes('try another way')||t.includes('more options')){
   } return false;
 })()""")
                                             if _rc_taw:
-                                                log("[uc] 🔄 'Try another way' → multi-event dispatched")
+                                                log(
+                                                    "[uc] 🔄 'Try another way' → multi-event dispatched"
+                                                )
                                                 uc_sleep(2.0, 3.0)
-                                                uc_snap(driver, f"{screenshot_dir}/uc_rc_try_another.jpg")
+                                                uc_snap(
+                                                    driver,
+                                                    f"{screenshot_dir}/uc_rc_try_another.jpg",
+                                                )
                                                 log("[uc] 📸 uc_rc_try_another.jpg")
                                                 _rc_auth = driver.execute_script("""
 return (function(){
@@ -653,14 +805,23 @@ t.scrollIntoView({block:'center'});
   } return false;
 })()""")
                                                 if _rc_auth:
-                                                    log("[uc] ✅ Authenticator selected (data-challengetype=6)")
+                                                    log(
+                                                        "[uc] ✅ Authenticator selected (data-challengetype=6)"
+                                                    )
                                                     uc_sleep(2.5, 3.5)
-                                                    uc_snap(driver, f"{screenshot_dir}/uc_rc_auth_selected.jpg")
+                                                    uc_snap(
+                                                        driver,
+                                                        f"{screenshot_dir}/uc_rc_auth_selected.jpg",
+                                                    )
                                                     log("[uc] 📸 uc_rc_auth_selected.jpg")
                                                 else:
-                                                    log("[uc] ⚠️ Authenticator option not found in menu")
+                                                    log(
+                                                        "[uc] ⚠️ Authenticator option not found in menu"
+                                                    )
                                             else:
-                                                log("[uc] ℹ️ No 'Try another way' — TOTP may be direct")
+                                                log(
+                                                    "[uc] ℹ️ No 'Try another way' — TOTP may be direct"
+                                                )
                                             _rc_totp_el = driver.execute_script("""
 return (function(){
   var inps=document.querySelectorAll('input:not([type="hidden"])');
@@ -678,28 +839,56 @@ if(r.width>0&&r.height>0&&(inps[i].type==='tel'||inps[i].type==='number')) retur
   return null;
 })()""")
                                             if _rc_totp_el is None:
-                                                log("[uc] JS rect check missed — trying Selenium wait")
+                                                log(
+                                                    "[uc] JS rect check missed — trying Selenium wait"
+                                                )
                                                 try:
                                                     _rc_totp_el = WebDriverWait(driver, 10).until(
-                                                        EC.visibility_of_element_located((By.CSS_SELECTOR,
-                                                            "input[type='tel'],input[type='number'],"
-                                                            "input[name='totpPin'],input[autocomplete='one-time-code']")))
+                                                        EC.visibility_of_element_located(
+                                                            (
+                                                                By.CSS_SELECTOR,
+                                                                "input[type='tel'],input[type='number'],"
+                                                                "input[name='totpPin'],input[autocomplete='one-time-code']",
+                                                            )
+                                                        )
+                                                    )
                                                 except Exception:
                                                     _rc_totp_el = None
                                             if _rc_totp_el:
                                                 _rc_code = generate_totp(totp_secret)
-                                                log(f"[uc] ⌨️  TOTP {_rc_code} → robust clear + type")
-                                                try: driver.execute_script("arguments[0].value='';arguments[0].dispatchEvent(new Event('input',{bubbles:true}));",_rc_totp_el)
-                                                except Exception: pass
+                                                log(
+                                                    f"[uc] ⌨️  TOTP {_rc_code} → robust clear + type"
+                                                )
                                                 try:
-                                                    from selenium.webdriver.common.action_chains import ActionChains
-                                                    ActionChains(driver).triple_click(_rc_totp_el).send_keys(Keys.DELETE).perform()
+                                                    driver.execute_script(
+                                                        "arguments[0].value='';arguments[0].dispatchEvent(new Event('input',{bubbles:true}));",
+                                                        _rc_totp_el,
+                                                    )
+                                                except Exception:
+                                                    pass
+                                                try:
+                                                    from selenium.webdriver.common.action_chains import (
+                                                        ActionChains,
+                                                    )
+
+                                                    ActionChains(driver).triple_click(
+                                                        _rc_totp_el
+                                                    ).send_keys(Keys.DELETE).perform()
                                                     uc_sleep(0.2, 0.3)
-                                                except Exception: pass
-                                                try: _rc_totp_el.send_keys(Keys.CONTROL+'a'); _rc_totp_el.send_keys(Keys.DELETE); uc_sleep(0.1,0.2)
-                                                except Exception: pass
-                                                try: _rc_totp_el.send_keys(Keys.END); _rc_totp_el.send_keys(Keys.BACK_SPACE*20); uc_sleep(0.1,0.2)
-                                                except Exception: pass
+                                                except Exception:
+                                                    pass
+                                                try:
+                                                    _rc_totp_el.send_keys(Keys.CONTROL + "a")
+                                                    _rc_totp_el.send_keys(Keys.DELETE)
+                                                    uc_sleep(0.1, 0.2)
+                                                except Exception:
+                                                    pass
+                                                try:
+                                                    _rc_totp_el.send_keys(Keys.END)
+                                                    _rc_totp_el.send_keys(Keys.BACK_SPACE * 20)
+                                                    uc_sleep(0.1, 0.2)
+                                                except Exception:
+                                                    pass
                                                 _rc_totp_el.send_keys(_rc_code)
                                                 uc_sleep(0.4, 0.8)
                                                 _rc_next = driver.execute_script("""
@@ -709,15 +898,23 @@ return (function(){
     b.dispatchEvent(new MouseEvent(ev,{bubbles:true,cancelable:true,view:window}));
   });return true;} return false;
 })()""")
-                                                if not _rc_next: _rc_totp_el.send_keys(Keys.RETURN)
+                                                if not _rc_next:
+                                                    _rc_totp_el.send_keys(Keys.RETURN)
                                                 log("[uc] ✅ TOTP submitted (reCAPTCHA+pwd flow)")
                                                 uc_sleep(5.0, 7.0)
-                                                uc_snap(driver, f"{screenshot_dir}/uc_totp_after_recaptcha.jpg")
+                                                uc_snap(
+                                                    driver,
+                                                    f"{screenshot_dir}/uc_totp_after_recaptcha.jpg",
+                                                )
                                                 log("[uc] 📸 uc_totp_after_recaptcha.jpg")
                                             else:
-                                                log("[uc] ⚠️ TOTP input not found after reCAPTCHA+pwd")
+                                                log(
+                                                    "[uc] ⚠️ TOTP input not found after reCAPTCHA+pwd"
+                                                )
                                         except Exception as _rc_totp_err:
-                                            log(f"[uc] ⚠️ TOTP (reCAPTCHA+pwd) failed: {_rc_totp_err}")
+                                            log(
+                                                f"[uc] ⚠️ TOTP (reCAPTCHA+pwd) failed: {_rc_totp_err}"
+                                            )
                                 except Exception as _pwd_err:
                                     log(f"[uc] ⚠️ Password after reCAPTCHA failed: {_pwd_err}")
                         else:
@@ -730,22 +927,28 @@ return (function(){
                             # Avoids Selenium .click() renderer crash on Google 2FA pages
                             def js_multi_click(selector_or_el):
                                 if isinstance(selector_or_el, str):
-                                    return driver.execute_script("""
+                                    return driver.execute_script(
+                                        """
 (function(sel){
   var el=document.querySelector(sel); if(!el) return false;
   el.scrollIntoView({block:'center'});
   ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(ev){
 el.dispatchEvent(new MouseEvent(ev,{bubbles:true,cancelable:true,view:window}));
   }); return true;
-})(arguments[0])""", selector_or_el)
+})(arguments[0])""",
+                                        selector_or_el,
+                                    )
                                 else:
-                                    return driver.execute_script("""
+                                    return driver.execute_script(
+                                        """
 (function(el){
   el.scrollIntoView({block:'center'});
   ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(function(ev){
 el.dispatchEvent(new MouseEvent(ev,{bubbles:true,cancelable:true,view:window}));
   }); return true;
-})(arguments[0])""", selector_or_el)
+})(arguments[0])""",
+                                        selector_or_el,
+                                    )
 
                             # Step 1: "Try another way" — JS multi-event
                             taw = driver.execute_script("""
@@ -784,7 +987,9 @@ t.scrollIntoView({block:'center'});
   } return false;
 })()""")
                                 if auth:
-                                    log("[uc] ✅ Authenticator option selected (data-challengetype=6)")
+                                    log(
+                                        "[uc] ✅ Authenticator option selected (data-challengetype=6)"
+                                    )
                                     uc_sleep(2.5, 3.5)
                                     uc_snap(driver, f"{screenshot_dir}/uc_auth_selected.jpg")
                                 else:
@@ -813,10 +1018,13 @@ if(r.width>0&&r.height>0&&(inps[i].type==='tel'||inps[i].type==='number')) retur
                                 log("[uc] JS rect check missed — trying Selenium wait")
                                 try:
                                     totp_el = WebDriverWait(driver, 10).until(
-                                        EC.visibility_of_element_located((By.CSS_SELECTOR,
-                                            "input[type='tel'],input[type='number'],"
-                                            "input[name='totpPin'],input[autocomplete='one-time-code']"
-                                        ))
+                                        EC.visibility_of_element_located(
+                                            (
+                                                By.CSS_SELECTOR,
+                                                "input[type='tel'],input[type='number'],"
+                                                "input[name='totpPin'],input[autocomplete='one-time-code']",
+                                            )
+                                        )
                                     )
                                 except Exception:
                                     totp_el = None
@@ -833,20 +1041,23 @@ if(r.width>0&&r.height>0&&(inps[i].type==='tel'||inps[i].type==='number')) retur
                                     driver.execute_script(
                                         "arguments[0].value = ''; "
                                         "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));",
-                                        totp_el
+                                        totp_el,
                                     )
                                 except Exception:
                                     pass
                                 try:
                                     # S2: Triple-click to select all text, then Delete
                                     from selenium.webdriver.common.action_chains import ActionChains
-                                    ActionChains(driver).triple_click(totp_el).send_keys(Keys.DELETE).perform()
+
+                                    ActionChains(driver).triple_click(totp_el).send_keys(
+                                        Keys.DELETE
+                                    ).perform()
                                     uc_sleep(0.2, 0.3)
                                 except Exception:
                                     pass
                                 try:
                                     # S3: Ctrl+A to select all, then Delete
-                                    totp_el.send_keys(Keys.CONTROL + 'a')
+                                    totp_el.send_keys(Keys.CONTROL + "a")
                                     totp_el.send_keys(Keys.DELETE)
                                     uc_sleep(0.1, 0.2)
                                 except Exception:
@@ -861,9 +1072,11 @@ if(r.width>0&&r.height>0&&(inps[i].type==='tel'||inps[i].type==='number')) retur
 
                                 # Verify field is empty before typing
                                 try:
-                                    _cur_val = totp_el.get_attribute('value') or ''
+                                    _cur_val = totp_el.get_attribute("value") or ""
                                     if _cur_val:
-                                        log(f"[uc] ⚠️ Field still has '{_cur_val}' after clear — JS force")
+                                        log(
+                                            f"[uc] ⚠️ Field still has '{_cur_val}' after clear — JS force"
+                                        )
                                         driver.execute_script("arguments[0].value = '';", totp_el)
                                 except Exception:
                                     pass
@@ -874,13 +1087,17 @@ if(r.width>0&&r.height>0&&(inps[i].type==='tel'||inps[i].type==='number')) retur
 
                                 # Verify typed value matches expected
                                 try:
-                                    _typed = totp_el.get_attribute('value') or ''
+                                    _typed = totp_el.get_attribute("value") or ""
                                     if _typed != code:
-                                        log(f"[uc] ⚠️ Field shows '{_typed}' but expected '{code}' — re-clearing")
-                                        driver.execute_script("arguments[0].value = arguments[1];", totp_el, code)
+                                        log(
+                                            f"[uc] ⚠️ Field shows '{_typed}' but expected '{code}' — re-clearing"
+                                        )
+                                        driver.execute_script(
+                                            "arguments[0].value = arguments[1];", totp_el, code
+                                        )
                                         driver.execute_script(
                                             "arguments[0].dispatchEvent(new Event('input',{bubbles:true}));",
-                                            totp_el
+                                            totp_el,
                                         )
                                     else:
                                         log(f"[uc] ✅ Field confirmed: '{_typed}'")
@@ -890,9 +1107,10 @@ if(r.width>0&&r.height>0&&(inps[i].type==='tel'||inps[i].type==='number')) retur
                                 # Submit: try Next button via JS, else ENTER
                                 next_clicked = False
                                 try:
-                                    nb = driver.find_element(By.XPATH,
+                                    nb = driver.find_element(
+                                        By.XPATH,
                                         "//button[contains(.,'Next')]|//div[@id='totpNext']"
-                                        "|//div[@id='idvPreregisteredPhoneNext']"
+                                        "|//div[@id='idvPreregisteredPhoneNext']",
                                     )
                                     js_multi_click(nb)
                                     next_clicked = True
@@ -911,7 +1129,8 @@ if(r.width>0&&r.height>0&&(inps[i].type==='tel'||inps[i].type==='number')) retur
                             log(f"[uc] ⚠️ Inline 2FA error: {e}")
                             uc_snap(driver, f"{screenshot_dir}/uc_2fa_error.jpg")
 
-                    if os.path.exists(signal_path): os.remove(signal_path)
+                    if os.path.exists(signal_path):
+                        os.remove(signal_path)
 
                 # ── Post-login: Skip recovery/address/promo prompts ───────────
                 # Ported from XIO_VERSE 2 auth_manager.py lines 309-317
@@ -926,18 +1145,34 @@ if(r.width>0&&r.height>0&&(inps[i].type==='tel'||inps[i].type==='number')) retur
                     try:
                         uc_sleep(1.0, 2.0)
                         ps_lower = driver.page_source.lower()
-                        if any(x in ps_lower for x in ['recovery','make sure you can always sign in',
-                            'protect your account','passkey','add a phone number','not now', 'home address', 'set a home address']):
+                        if any(
+                            x in ps_lower
+                            for x in [
+                                "recovery",
+                                "make sure you can always sign in",
+                                "protect your account",
+                                "passkey",
+                                "add a phone number",
+                                "not now",
+                                "home address",
+                                "set a home address",
+                            ]
+                        ):
                             log("[uc] 🛡️ Post-login prompt — hunting Skip/Cancel...")
                             try:
                                 from selenium.webdriver.common.keys import Keys as _K
-                                skip = WebDriverWait(driver, 4).until(EC.element_to_be_clickable((
-                                    By.XPATH,
-                                    "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'cancel')"
-                                    " or contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'not now')"
-                                    " or contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip')"
-                                    " or contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'no thanks')]"
-                                )))
+
+                                skip = WebDriverWait(driver, 4).until(
+                                    EC.element_to_be_clickable(
+                                        (
+                                            By.XPATH,
+                                            "//button[contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'cancel')"
+                                            " or contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'not now')"
+                                            " or contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'skip')"
+                                            " or contains(translate(.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'no thanks')]",
+                                        )
+                                    )
+                                )
                                 skip.send_keys(_K.RETURN)
                                 log("[uc] ✅ Skip/Cancel clicked")
                                 uc_sleep(2.0, 3.0)
@@ -949,7 +1184,6 @@ if(r.width>0&&r.height>0&&(inps[i].type==='tel'||inps[i].type==='number')) retur
                     except Exception as e:
                         log(f"[uc] ⚠️ Post-login check failed: {e}")
                         break
-
 
             # Verify
             driver.get("https://myaccount.google.com/")
@@ -981,16 +1215,18 @@ if(r.width>0&&r.height>0&&(inps[i].type==='tel'||inps[i].type==='number')) retur
 
                 cookies = []
                 for c in raw_cookies:
-                    cookies.append({
-                        "name":     c.get("name", ""),
-                        "value":    c.get("value", ""),
-                        "domain":   c.get("domain", ""),
-                        "path":     c.get("path", "/"),
-                        "expires":  c.get("expiry", c.get("expires", -1)),
-                        "httpOnly": c.get("httpOnly", False),
-                        "secure":   c.get("secure", False),
-                        "sameSite": "Lax",
-                    })
+                    cookies.append(
+                        {
+                            "name": c.get("name", ""),
+                            "value": c.get("value", ""),
+                            "domain": c.get("domain", ""),
+                            "path": c.get("path", "/"),
+                            "expires": c.get("expiry", c.get("expires", -1)),
+                            "httpOnly": c.get("httpOnly", False),
+                            "secure": c.get("secure", False),
+                            "sameSite": "Lax",
+                        }
+                    )
                 write_session(cookies, output_path)
 
                 # ── Archive signed-in Chrome profile BEFORE quit ──────────────────────
@@ -1005,52 +1241,74 @@ if(r.width>0&&r.height>0&&(inps[i].type==='tel'||inps[i].type==='number')) retur
                             pass
 
                         profiles_root = os.path.dirname(profile_dir)
-                        profile_name  = os.path.basename(profile_dir)
-                        tar_path = os.path.join(profiles_root, f'{profile_name}.tar.gz')
+                        profile_name = os.path.basename(profile_dir)
+                        tar_path = os.path.join(profiles_root, f"{profile_name}.tar.gz")
                         import subprocess as _sp
+
                         r = _sp.run(
-                            ['tar', '--ignore-failed-read',
-                             '--exclude=SingletonLock', '--exclude=SingletonCookie',
-                             '--exclude=*.lock', '--exclude=lockfile',
-                             '-czf', tar_path, '-C', profiles_root, profile_name],
-                            capture_output=True, text=True, timeout=120
+                            [
+                                "tar",
+                                "--ignore-failed-read",
+                                "--exclude=SingletonLock",
+                                "--exclude=SingletonCookie",
+                                "--exclude=*.lock",
+                                "--exclude=lockfile",
+                                "-czf",
+                                tar_path,
+                                "-C",
+                                profiles_root,
+                                profile_name,
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=120,
                         )
                         # returncode 1 = "some files changed" warning, archive still valid
                         sz = os.path.getsize(tar_path) if os.path.exists(tar_path) else 0
                         if r.returncode in (0, 1) and sz > 10000:
-                            log(f'[uc] 💾 Profile archived: {tar_path} ({sz:,}b)')
+                            log(f"[uc] 💾 Profile archived: {tar_path} ({sz:,}b)")
                         else:
-                            log(f'[uc] ⚠️  Profile archive incomplete: code={r.returncode} size={sz}b err={r.stderr[:80]}')
+                            log(
+                                f"[uc] ⚠️  Profile archive incomplete: code={r.returncode} size={sz}b err={r.stderr[:80]}"
+                            )
                     except Exception as _pe:
-                        log(f'[uc] ⚠️  Profile archive skipped: {_pe}')
+                        log(f"[uc] ⚠️  Profile archive skipped: {_pe}")
 
-                try: driver.quit()
-                except Exception: pass
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
                 return True
             else:
                 log(f"[uc] \u274c Verification failed: {final_url[:80]}")
-                try: driver.quit()
-                except Exception: pass
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
                 return False
         except Exception as e:
             log(f"[uc] ❌ Exception in flow: {e}")
-            try: driver.quit()
-            except Exception: pass
+            try:
+                driver.quit()
+            except Exception:
+                pass
             return False
     except Exception as e:
         log(f"[uc] ❌ Launch failed: {e}")
         return False
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 # ENGINE 3: nodriver — modern uc successor, no WebDriver, pure CDP
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 async def run_nodriver(email, password, totp_secret, socks5, output_path, screenshot_dir):
     log("[nodriver] Starting nodriver session...")
 
     async def _nd_close(b):
         """Safely close/stop a nodriver Browser (API changed across versions)."""
-        for method in ('stop', 'close'):
+        for method in ("stop", "close"):
             fn = getattr(b, method, None)
             if callable(fn):
                 try:
@@ -1073,26 +1331,25 @@ async def run_nodriver(email, password, totp_secret, socks5, output_path, screen
             log("[nodriver] ❌ Install failed — skipping")
             return False
 
-    import random
-
     try:
         proxy_args = []
         if socks5:
-            proxy_addr = socks5.replace('socks5://', '')
-            proxy_args = [f'--proxy-server=socks5://{proxy_addr}']
+            proxy_addr = socks5.replace("socks5://", "")
+            proxy_args = [f"--proxy-server=socks5://{proxy_addr}"]
 
         browser = await nd.start(
             browser_args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--use-gl=angle',
-                '--use-angle=swiftshader',
-                '--disable-gpu-sandbox',
-                '--ignore-gpu-blocklist',
-                '--window-size=1920,1080',
-                f'--display={DISPLAY}',
-            ] + proxy_args,
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--use-gl=angle",
+                "--use-angle=swiftshader",
+                "--disable-gpu-sandbox",
+                "--ignore-gpu-blocklist",
+                "--window-size=1920,1080",
+                f"--display={DISPLAY}",
+            ]
+            + proxy_args,
             headless=False,
         )
 
@@ -1107,7 +1364,8 @@ async def run_nodriver(email, password, totp_secret, socks5, output_path, screen
                 try:
                     await browser.get(url)
                     await asyncio.sleep(1.5)
-                except Exception: pass
+                except Exception:
+                    pass
 
             # Email — get the current active page from browser
             try:
@@ -1117,14 +1375,18 @@ async def run_nodriver(email, password, totp_secret, socks5, output_path, screen
                 )
                 await asyncio.sleep(3.5)
                 # Use query_selector_all to handle page-reference staleness
-                email_els = await page.query_selector_all("input[type='email'], input[name='identifier']")
+                email_els = await page.query_selector_all(
+                    "input[type='email'], input[name='identifier']"
+                )
                 if email_els:
                     email_el = email_els[0]
                     await email_el.click()
                     await asyncio.sleep(0.5)
                     await email_el.send_keys(email)
                     await asyncio.sleep(0.8)
-                    next_els = await page.query_selector_all("#identifierNext, button[type='submit']")
+                    next_els = await page.query_selector_all(
+                        "#identifierNext, button[type='submit']"
+                    )
                     if next_els:
                         await next_els[0].click()
                     await asyncio.sleep(4)
@@ -1140,8 +1402,8 @@ async def run_nodriver(email, password, totp_secret, socks5, output_path, screen
             # Refresh page reference to get current URL
             # Guard: page.url may be None/empty after an email-phase exception.
             # Passing None to browser.get() raises "Cannot navigate to invalid URL".
-            _cur_url = getattr(page, 'url', None)
-            if _cur_url and isinstance(_cur_url, str) and _cur_url.startswith('http'):
+            _cur_url = getattr(page, "url", None)
+            if _cur_url and isinstance(_cur_url, str) and _cur_url.startswith("http"):
                 page = await browser.get(_cur_url)
             # else: keep existing page reference (no navigation needed)
             await asyncio.sleep(1)
@@ -1159,7 +1421,7 @@ async def run_nodriver(email, password, totp_secret, socks5, output_path, screen
                 await asyncio.sleep(0.5)
                 await page.send_keys(password)
                 await asyncio.sleep(0.5)
-                await page.send_keys('\n')
+                await page.send_keys("\n")
                 await asyncio.sleep(0.7)
                 try:
                     next_btn = await page.find("#passwordNext", timeout=5)
@@ -1177,9 +1439,11 @@ async def run_nodriver(email, password, totp_secret, socks5, output_path, screen
                     code = generate_totp(totp_secret)
                     log(f"[nodriver] 2FA entering TOTP {code}...")
                     totp_el = await page.find("input[type='tel'], input[name='totpPin']", timeout=8)
-                    await totp_el.apply(f"(el) => {{ el.value = '{code}'; el.dispatchEvent(new Event('input', {{bubbles: true}})); el.dispatchEvent(new Event('change', {{bubbles: true}})); }}")
+                    await totp_el.apply(
+                        f"(el) => {{ el.value = '{code}'; el.dispatchEvent(new Event('input', {{bubbles: true}})); el.dispatchEvent(new Event('change', {{bubbles: true}})); }}"
+                    )
                     await asyncio.sleep(0.6)
-                    await totp_el.send_keys('\\n')
+                    await totp_el.send_keys("\\n")
                     await asyncio.sleep(0.6)
                     next_btn = await page.find("#totpNext", timeout=5)
                     await next_btn.click()
@@ -1193,15 +1457,28 @@ async def run_nodriver(email, password, totp_secret, socks5, output_path, screen
                 await asyncio.sleep(1.5)
                 body_text = await page.get_content()
                 ps_lower = body_text.lower()
-                if any(x in ps_lower for x in ['recovery','make sure you can always sign in',
-                    'protect your account','passkey','add a phone number','not now', 'home address', 'set a home address']):
+                if any(
+                    x in ps_lower
+                    for x in [
+                        "recovery",
+                        "make sure you can always sign in",
+                        "protect your account",
+                        "passkey",
+                        "add a phone number",
+                        "not now",
+                        "home address",
+                        "set a home address",
+                    ]
+                ):
                     log("[nodriver] 🛡️ Post-login prompt — hunting Skip/Cancel...")
                     try:
-                        skip_btns = await page.find_all("button, div[role='button'], a, span", timeout=2)
+                        skip_btns = await page.find_all(
+                            "button, div[role='button'], a, span", timeout=2
+                        )
                         clicked = False
                         for btn in skip_btns:
                             t = (btn.text_all or "").lower()
-                            if any(k in t for k in ['cancel', 'not now', 'skip', 'no thanks']):
+                            if any(k in t for k in ["cancel", "not now", "skip", "no thanks"]):
                                 await btn.click()
                                 log("[nodriver] ✅ Skip/Cancel clicked")
                                 clicked = True
@@ -1234,62 +1511,87 @@ async def run_nodriver(email, password, totp_secret, socks5, output_path, screen
         log(f"[nodriver] ❌ Exception: {e}")
         return False
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MAIN — Multi-engine runner
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 async def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--email",           required=True)
-    parser.add_argument("--password",        required=True)
-    parser.add_argument("--totp_secret",     default="")
-    parser.add_argument("--socks5",          default="socks5://127.0.0.1:1055")
-    parser.add_argument("--output",          required=True)
-    parser.add_argument("--engines",         default="uc",
-                        help="Comma-separated ordered engine list (UC-only mode: only 'uc' is active)")
-    parser.add_argument("--screenshot_dir",  default="/tmp/xio_screenshots")
-    parser.add_argument("--profile_dir",     default="",
-                        help="Chrome user-data-dir path — produces a signed-in profile on success")
-    parser.add_argument("--workflow_id",     default="google-signin")
-    parser.add_argument("--domain",          default="accounts.google.com")
-    parser.add_argument("--signal_file",     default="/tmp/xio_uc_2fa_signal.json")
-    parser.add_argument("--resume_file",     default="/tmp/xio_uc_2fa_resume.json")
+    parser.add_argument("--email", required=True)
+    parser.add_argument("--password", required=True)
+    parser.add_argument("--totp_secret", default="")
+    parser.add_argument("--socks5", default="socks5://127.0.0.1:1055")
+    parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--engines",
+        default="uc",
+        help="Comma-separated ordered engine list (UC-only mode: only 'uc' is active)",
+    )
+    parser.add_argument("--screenshot_dir", default="/tmp/xio_screenshots")
+    parser.add_argument(
+        "--profile_dir",
+        default="",
+        help="Chrome user-data-dir path — produces a signed-in profile on success",
+    )
+    parser.add_argument("--workflow_id", default="google-signin")
+    parser.add_argument("--domain", default="accounts.google.com")
+    parser.add_argument("--signal_file", default="/tmp/xio_uc_2fa_signal.json")
+    parser.add_argument("--resume_file", default="/tmp/xio_uc_2fa_resume.json")
     args = parser.parse_args()
 
     os.makedirs(args.screenshot_dir, exist_ok=True)
-    engines = [e.strip() for e in args.engines.split(',') if e.strip()]
+    engines = [e.strip() for e in args.engines.split(",") if e.strip()]
 
     log(f"[stealth-login] Starting with engine order: {' → '.join(engines)}")
     log(f"[stealth-login] Target: {args.email} / workflow: {args.workflow_id}")
 
     results = {}
     for engine in engines:
-        log(f"\n[stealth-login] {'='*50}")
+        log(f"\n[stealth-login] {'=' * 50}")
         log(f"[stealth-login] Attempting engine: {engine}")
-        log(f"[stealth-login] {'='*50}")
+        log(f"[stealth-login] {'=' * 50}")
 
         ok = False
         try:
-            if engine == 'camoufox':
+            if engine == "camoufox":
                 ok = await run_camoufox(
-                    args.email, args.password, args.totp_secret,
-                    args.socks5, args.output, args.screenshot_dir
+                    args.email,
+                    args.password,
+                    args.totp_secret,
+                    args.socks5,
+                    args.output,
+                    args.screenshot_dir,
                 )
-            elif engine == 'uc':
+            elif engine == "uc":
                 # run_uc is synchronous — run in executor
                 loop = asyncio.get_event_loop()
                 import functools as _ft
-                ok = await loop.run_in_executor(None, _ft.partial(
-                    run_uc,
-                    args.email, args.password, args.totp_secret,
-                    args.socks5, args.output, args.screenshot_dir,
-                    args.profile_dir or None,
-                    args.signal_file, args.resume_file
-                ))
-            elif engine == 'nodriver':
+
+                ok = await loop.run_in_executor(
+                    None,
+                    _ft.partial(
+                        run_uc,
+                        args.email,
+                        args.password,
+                        args.totp_secret,
+                        args.socks5,
+                        args.output,
+                        args.screenshot_dir,
+                        args.profile_dir or None,
+                        args.signal_file,
+                        args.resume_file,
+                    ),
+                )
+            elif engine == "nodriver":
                 ok = await run_nodriver(
-                    args.email, args.password, args.totp_secret,
-                    args.socks5, args.output, args.screenshot_dir
+                    args.email,
+                    args.password,
+                    args.totp_secret,
+                    args.socks5,
+                    args.output,
+                    args.screenshot_dir,
                 )
         except Exception as e:
             log(f"[stealth-login] ❌ {engine} threw exception: {e}")
@@ -1302,16 +1604,22 @@ async def main():
         if ok:
             log(f"\n[stealth-login] ✅ SUCCESS via {engine}")
             # Final summary JSON for workflow caller
-            print(json.dumps({
-                "success": True,
-                "engine":  engine,
-                "output":  args.output,
-            }), flush=True)
+            print(
+                json.dumps(
+                    {
+                        "success": True,
+                        "engine": engine,
+                        "output": args.output,
+                    }
+                ),
+                flush=True,
+            )
             sys.exit(0)
 
     log(f"\n[stealth-login] ❌ All engines failed: {results}")
     print(json.dumps({"success": False, "engines_tried": results}), flush=True)
     sys.exit(1)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

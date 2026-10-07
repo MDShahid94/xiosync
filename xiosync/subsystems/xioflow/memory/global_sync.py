@@ -8,6 +8,7 @@ from xiosync.subsystems.xioflow.memory.pii_scrubber import PIIScrubber
 
 logger = logging.getLogger(__name__)
 
+
 class GlobalSyncRouter:
     """Domain guard + global hivemind routing."""
 
@@ -18,11 +19,11 @@ class GlobalSyncRouter:
 
     def is_eligible_for_global(self, node: dict) -> bool:
         """Check if node is eligible for global sharing."""
-        if node.get('tier') != 'organization_shared':
+        if node.get("tier") != "organization_shared":
             return False
-        if not self.pii_scrubber.is_public_domain(node.get('domain', '')):
+        if not self.pii_scrubber.is_public_domain(node.get("domain", "")):
             return False
-        if node.get('status') != 'ACTIVE':
+        if node.get("status") != "ACTIVE":
             return False
         return True
 
@@ -30,15 +31,17 @@ class GlobalSyncRouter:
         """Sanitize node for global tier."""
         sanitized = copy.deepcopy(node)
 
-        if sanitized.get('place_value'):
-            sanitized['place_value'] = self.pii_scrubber.redact_place_value(sanitized['place_value'])
+        if sanitized.get("place_value"):
+            sanitized["place_value"] = self.pii_scrubber.redact_place_value(
+                sanitized["place_value"]
+            )
 
-        if sanitized.get('action_params'):
-            scrubbed = self.pii_scrubber.scrub_dict(sanitized['action_params'])
-            sanitized['action_params'] = {k: "" for k in scrubbed.keys()}
+        if sanitized.get("action_params"):
+            scrubbed = self.pii_scrubber.scrub_dict(sanitized["action_params"])
+            sanitized["action_params"] = {k: "" for k in scrubbed.keys()}
 
-        if sanitized.get('face_value') and 'text' in sanitized['face_value']:
-            sanitized['face_value']['text'] = ""
+        if sanitized.get("face_value") and "text" in sanitized["face_value"]:
+            sanitized["face_value"]["text"] = ""
 
-        sanitized['tier'] = 'platform_global'
+        sanitized["tier"] = "platform_global"
         return sanitized

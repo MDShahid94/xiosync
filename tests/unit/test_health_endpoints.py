@@ -177,8 +177,7 @@ class TestReadinessScenarios:
                 is_ready=False,
                 live_reason="Process is running",
                 ready_reason=(
-                    "Database schema is at revision 5f7f5f1793c7,"
-                    " but head is 14c2c1f29abe"
+                    "Database schema is at revision 5f7f5f1793c7, but head is 14c2c1f29abe"
                 ),
             )
 

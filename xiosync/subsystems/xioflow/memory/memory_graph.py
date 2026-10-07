@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
 from xiosync.subsystems.xioflow.models.memory_nodes import XioflowMemoryNode
 
 logger = logging.getLogger(__name__)
+
 
 class MemoryGraph:
     """CRUD operations for xioflow_memory_nodes."""
@@ -27,21 +28,21 @@ class MemoryGraph:
         place_value: dict | None,
         action_type: str,
         action_params: dict | None,
-        context_hash: str = 'default',
+        context_hash: str = "default",
         device_type: str | None = None,
         os_name: str | None = None,
         browser: str | None = None,
         viewport_width: int | None = None,
         viewport_height: int | None = None,
         previous_intent: str | None = None,
-        recording_method: str = 'auto_learn',
+        recording_method: str = "auto_learn",
         recorded_by: str | None = None,
         client_id: str | None = None,
-        volatility_type: str = 'static',
+        volatility_type: str = "static",
         fallback_plugin: str | None = None,
         output_var: str | None = None,
-        execution_mode: str = 'sequential',
-        project_id: str | None = None
+        execution_mode: str = "sequential",
+        project_id: str | None = None,
     ) -> uuid.UUID:
         """Creates a new XioflowMemoryNode and returns its ID."""
         node = XioflowMemoryNode(
@@ -69,7 +70,7 @@ class MemoryGraph:
             execution_mode=execution_mode,
             project_id=project_id,
             tier="project_experimental",
-            status="ACTIVE"
+            status="ACTIVE",
         )
         self.session.add(node)
         self.session.commit()
@@ -77,6 +78,7 @@ class MemoryGraph:
 
     async def asave_new_action(self, **kwargs):
         import asyncio
+
         return await asyncio.to_thread(self.save_new_action, **kwargs)
 
     def get_node(self, node_id: uuid.UUID) -> dict | None:
@@ -100,17 +102,28 @@ class MemoryGraph:
         intent: str,
         context_hash: str,
         org_id: str,
-        tiers: list[str] | None = None
+        tiers: list[str] | None = None,
     ) -> dict | None:
         """Queries by lookup_key and tier priority order."""
         if not tiers:
-            tiers = ["project_experimental", "project_ground_truth", "organization_shared", "platform_global"]
+            tiers = [
+                "project_experimental",
+                "project_ground_truth",
+                "organization_shared",
+                "platform_global",
+            ]
 
-        query = self.session.query(XioflowMemoryNode).filter_by(
-            domain=domain, intent=intent, context_hash=context_hash,
-            organization_id=uuid.UUID(org_id) if isinstance(org_id, str) else org_id,
-            status="ACTIVE"
-        ).all()
+        query = (
+            self.session.query(XioflowMemoryNode)
+            .filter_by(
+                domain=domain,
+                intent=intent,
+                context_hash=context_hash,
+                organization_id=uuid.UUID(org_id) if isinstance(org_id, str) else org_id,
+                status="ACTIVE",
+            )
+            .all()
+        )
 
         nodes_by_tier = {n.tier: n for n in query}
         for tier in tiers:
@@ -177,7 +190,10 @@ class MemoryGraph:
 
     async def aget_workflow_graph(self, domain, start_intent, org_id, context, **kw):
         import asyncio
-        return await asyncio.to_thread(self.get_workflow_graph, domain, start_intent, org_id, context, **kw)
+
+        return await asyncio.to_thread(
+            self.get_workflow_graph, domain, start_intent, org_id, context, **kw
+        )
 
     def update_locator_priority(self, node_id: uuid.UUID, new_priority: list[int]) -> None:
         """Update locator priority array."""
@@ -185,12 +201,14 @@ class MemoryGraph:
 
     async def aupdate_locator_priority(self, node_id, new_priority):
         import asyncio
+
         await asyncio.to_thread(self.update_locator_priority, node_id, new_priority)
 
     def update_last_used(self, node_id: uuid.UUID) -> None:
         """Update last_used timestamp."""
-        self.update_node(node_id, last_used=datetime.now(timezone.utc))
+        self.update_node(node_id, last_used=datetime.now(UTC))
 
     async def aupdate_last_used(self, node_id):
         import asyncio
+
         await asyncio.to_thread(self.update_last_used, node_id)

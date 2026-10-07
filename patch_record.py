@@ -1,13 +1,13 @@
 import re
 
-with open("xiosync/subsystems/xiogrid/services/pppoe_nodes.py", "r") as f:
+with open("xiosync/subsystems/xiogrid/services/pppoe_nodes.py") as f:
     code = f.read()
 
 # 1. Update dataclass
 code = re.sub(
     r"(    fingerprint_profile_name: str\n    total_sessions_served: int\n    reconnect_count: int)",
     r"\1\n    fingerprint: dict[str, Any] | None = None",
-    code
+    code,
 )
 
 # 2. Update _to_record
@@ -59,7 +59,7 @@ code = re.sub(
     r"    def _to_record\(\s*self, node: PPPoEExitNode, host: PPPoEHost, profile: FingerprintProfile \| None\s*\) -> PPPoESlotRecord:(.*?)(?=\n    def _fp_record)",
     replacement,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("xiosync/subsystems/xiogrid/services/pppoe_nodes.py", "w") as f:

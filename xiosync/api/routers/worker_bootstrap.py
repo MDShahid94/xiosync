@@ -29,6 +29,7 @@ Tokens can be:
   - one-shot: deleted after first use (use_count incremented)
   - reusable: valid until revoked (useful for auto-spawn flows)
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -51,6 +52,7 @@ _ORG_ZERO = uuid.UUID("00000000-0000-7000-8000-000000000000")
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
 
+
 class _S(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -58,8 +60,11 @@ class _S(BaseModel):
 def _make_ctx():
     """Return a platform-admin OrgContext for Org Zero bootstrap operations."""
     from xiosync.domain.context import (  # noqa: PLC0415
-        OrgContext, PlatformRole, MembershipRole,
+        MembershipRole,
+        OrgContext,
+        PlatformRole,
     )
+
     return OrgContext(
         auth_identity_id=_ORG_ZERO,
         actor_id=_ORG_ZERO,
@@ -105,12 +110,13 @@ class CreateBootstrapTokenRequest(_S):
 
 class CreateBootstrapTokenResponse(_S):
     model_config = ConfigDict(extra="ignore")
-    token:     str
+    token: str
     colab_url: str
-    note:      str
+    note: str
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def _token_vault_key(token_hash: str) -> str:
     return f"workers/bootstrap/{token_hash}"
@@ -137,7 +143,6 @@ def _assemble_worker_config(
     """
     from xiosync.subsystems.vault.service import VaultService  # noqa: PLC0415
 
-
     ctx = _make_ctx()
     vault = VaultService(session)
 
@@ -160,7 +165,7 @@ def _assemble_worker_config(
     # proxy_ssh_key  = Ed25519 private key stored in vault — written to /root/.ssh/xio_proxy_key
     proxy_ssh_host = _safe_get("platform/proxy_ssh_host")
     proxy_ssh_user = _safe_get("platform/proxy_ssh_user", "karmareturns")
-    proxy_ssh_key  = _safe_get("platform/proxy_ssh_key")    # full PEM private key
+    proxy_ssh_key = _safe_get("platform/proxy_ssh_key")  # full PEM private key
 
     # R2 credentials — stored as JSON blob at storage/r2_primary
     _r2_blob = _safe_get("storage/r2_primary")
@@ -173,20 +178,26 @@ def _assemble_worker_config(
 
     # R2 endpoint/bucket from storage_providers table
     from sqlalchemy import text  # noqa: PLC0415
-    r2_row = session.execute(
-        text("""
+
+    r2_row = (
+        session.execute(
+            text("""
             SELECT config->>'endpoint' AS endpoint,
                    config->>'bucket'   AS bucket
             FROM storage_providers
             WHERE organization_id = :org AND provider_type = 'cloudflare_r2'
             LIMIT 1
         """),
-        {"org": str(_ORG_ZERO)},
-    ).mappings().first()
+            {"org": str(_ORG_ZERO)},
+        )
+        .mappings()
+        .first()
+    )
 
     # Drive provider config — for FUSE mount and shortcut setup
-    drive_row = session.execute(
-        text("""
+    drive_row = (
+        session.execute(
+            text("""
             SELECT config->>'folder_id'     AS folder_id,
                    config->>'shortcut_name' AS shortcut_name
             FROM storage_providers
@@ -194,46 +205,51 @@ def _assemble_worker_config(
               AND is_default = true
             LIMIT 1
         """),
-    ).mappings().first()
+        )
+        .mappings()
+        .first()
+    )
 
-    _drive_folder_id     = (drive_row["folder_id"]     if drive_row else "") or "19k79lkPzg1gBM7IhIhE-35rfiAyVfCsK"
+    _drive_folder_id = (
+        drive_row["folder_id"] if drive_row else ""
+    ) or "19k79lkPzg1gBM7IhIhE-35rfiAyVfCsK"
     _drive_shortcut_name = (drive_row["shortcut_name"] if drive_row else "") or "XIOSYNC-Shared"
-    _drive_fs_root       = f"/content/drive/MyDrive/{_drive_shortcut_name}"
+    _drive_fs_root = f"/content/drive/MyDrive/{_drive_shortcut_name}"
 
     config: dict = {
-        "node_name":                node_name,
+        "node_name": node_name,
         # Stable identity without counter suffix (e.g. "xiogrid--default--master")
         # Workers use this as their TS identity, Drive key prefix, etc.
-        "node_identity":            re.sub(r"-\d{3,}$", "", node_name),
+        "node_identity": re.sub(r"-\d{3,}$", "", node_name),
         # Org/project/role context — carried through to workers and XIORUN
-        "org_slug":                 org_slug,
-        "project_slug":             project_slug,
-        "role":                     role,
-        "xiosync_url":              xiosync_base,
-        "xiosync_token":            worker_secret,   # workers use org secret as bearer
-        "xiosync_worker_secret":    worker_secret,
-        "xiosync_internal_secret":  internal_secret,
-        "tailscale_auth_key":       ts_auth_key,
-        "default_exit":             ts_exit_ip,
-        "ssh_authorized_key":       ssh_authorized_key,
+        "org_slug": org_slug,
+        "project_slug": project_slug,
+        "role": role,
+        "xiosync_url": xiosync_base,
+        "xiosync_token": worker_secret,  # workers use org secret as bearer
+        "xiosync_worker_secret": worker_secret,
+        "xiosync_internal_secret": internal_secret,
+        "tailscale_auth_key": ts_auth_key,
+        "default_exit": ts_exit_ip,
+        "ssh_authorized_key": ssh_authorized_key,
         # ── SSH SOCKS5 exit-node — routes Chrome through Mac residential IP ──
-        "proxy_ssh_host":           proxy_ssh_host,   # 100.86.149.127 (Mac TS IP)
-        "proxy_ssh_user":           proxy_ssh_user,   # karmareturns
-        "proxy_ssh_key":            proxy_ssh_key,    # Ed25519 PEM private key
+        "proxy_ssh_host": proxy_ssh_host,  # 100.86.149.127 (Mac TS IP)
+        "proxy_ssh_user": proxy_ssh_user,  # karmareturns
+        "proxy_ssh_key": proxy_ssh_key,  # Ed25519 PEM private key
         # ─────────────────────────────────────────────────────────────────────
-        "r2_endpoint":              r2_row["endpoint"] if r2_row else "",
-        "r2_bucket":                r2_row["bucket"]   if r2_row else "xio-profiles",
-        "r2_access_key":            r2_access_key,
-        "r2_secret_key":            r2_secret_key,
-        "xiorun_agent_port":        9300,
-        "local_root":               "/content/xiosync-worker",
+        "r2_endpoint": r2_row["endpoint"] if r2_row else "",
+        "r2_bucket": r2_row["bucket"] if r2_row else "xio-profiles",
+        "r2_access_key": r2_access_key,
+        "r2_secret_key": r2_secret_key,
+        "xiorun_agent_port": 9300,
+        "local_root": "/content/xiosync-worker",
         # Drive FUSE mount configuration
-        "drive_folder_id":          _drive_folder_id,
-        "drive_shortcut_name":      _drive_shortcut_name,
-        "drive_fs_root":            _drive_fs_root,
+        "drive_folder_id": _drive_folder_id,
+        "drive_shortcut_name": _drive_shortcut_name,
+        "drive_fs_root": _drive_fs_root,
         # ── PPPoE SOCKS5 proxy — read active assigned slot from DB ───────────
         # xiorun_agent WS bridge uses this to route Chrome traffic via exit VM.
-        "pppoe_proxy":              _get_active_pppoe_proxy(session),
+        "pppoe_proxy": _get_active_pppoe_proxy(session),
         **extra_config,
     }
     return config
@@ -242,12 +258,19 @@ def _assemble_worker_config(
 def _get_active_pppoe_proxy(session) -> str:
     """Return HOST:PORT of the currently active PPPoE SOCKS5 proxy, or default."""
     from sqlalchemy import text as _t  # noqa: PLC0415
+
     try:
-        row = session.execute(_t("""
+        row = (
+            session.execute(
+                _t("""
             SELECT proxy_url FROM xiogrid_pppoe_exit_nodes
             WHERE state = 'assigned' AND proxy_state = 'active'
             ORDER BY (proxy_url IS NULL) LIMIT 1
-        """)).mappings().first()
+        """)
+            )
+            .mappings()
+            .first()
+        )
         if row and row["proxy_url"]:
             # proxy_url is like "socks5://100.106.81.15:10001" — extract HOST:PORT
             url = row["proxy_url"].replace("socks5://", "").replace("socks4://", "")
@@ -255,7 +278,6 @@ def _get_active_pppoe_proxy(session) -> str:
     except Exception:
         pass
     return "100.106.81.15:10001"  # fallback default
-
 
 
 def _get_xiosync_base(request: Request) -> str:
@@ -272,6 +294,7 @@ def _get_xiosync_base(request: Request) -> str:
 
 
 # ── Admin endpoints ────────────────────────────────────────────────────────────
+
 
 @router.post(
     "/workers/bootstrap-tokens",
@@ -291,15 +314,15 @@ def create_bootstrap_token(
     Secrets are stored in the XIOSYNC vault, not in the token itself.
     The token is only a lookup key.
     """
-    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
     from sqlalchemy import text  # noqa: PLC0415
+    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
     from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
     from xiosync.subsystems.vault.service import VaultService  # noqa: PLC0415
 
-
     token = secrets.token_urlsafe(32)
     token_hash = _hash_token(token)
-    vault_key  = _token_vault_key(token_hash)
+    vault_key = _token_vault_key(token_hash)
 
     xiosync_base = _get_xiosync_base(request)
 
@@ -309,15 +332,15 @@ def create_bootstrap_token(
     _node_base = f"{payload.org_slug}--{payload.project_slug}--{payload.role}"
 
     meta = {
-        "node_name":    _node_base,
-        "org_slug":     payload.org_slug,
+        "node_name": _node_base,
+        "org_slug": payload.org_slug,
         "project_slug": payload.project_slug,
-        "role":         payload.role,
-        "reusable":     payload.reusable,
-        "note":         payload.note,
+        "role": payload.role,
+        "reusable": payload.reusable,
+        "note": payload.note,
         "extra_config": payload.extra_config,
-        "created_by":   str(getattr(getattr(request.state, "org_context", None), "actor_id", "")),
-        "use_count":    0,
+        "created_by": str(getattr(getattr(request.state, "org_context", None), "actor_id", "")),
+        "use_count": 0,
     }
 
     with OrmSession(get_engine()) as sess:
@@ -327,46 +350,59 @@ def create_bootstrap_token(
             vault_key,
             json.dumps(meta),
             secret_type="generic",
-            platform_global=True,   # bootstrap tokens are global — fetched by public endpoint
+            platform_global=True,  # bootstrap tokens are global — fetched by public endpoint
         )
         sess.commit()
 
     # Get the notebook Drive file ID from Org Zero's default storage provider
     with OrmSession(get_engine()) as sess:
-        nb_row = sess.execute(
-            text("""
+        nb_row = (
+            sess.execute(
+                text("""
                 SELECT config->>'notebook_file_id' AS file_id
                 FROM storage_providers
                 WHERE organization_id = :org AND provider_type = 'google_drive'
                   AND is_default = true
                 LIMIT 1
             """),
-            {"org": str(_ORG_ZERO)},
-        ).mappings().first()
+                {"org": str(_ORG_ZERO)},
+            )
+            .mappings()
+            .first()
+        )
 
-    nb_file_id = (nb_row["file_id"] if nb_row and nb_row["file_id"] else "")
-    colab_base = f"https://colab.research.google.com/drive/{nb_file_id}" if nb_file_id else \
-                 "https://colab.research.google.com"
+    nb_file_id = nb_row["file_id"] if nb_row and nb_row["file_id"] else ""
+    colab_base = (
+        f"https://colab.research.google.com/drive/{nb_file_id}"
+        if nb_file_id
+        else "https://colab.research.google.com"
+    )
     colab_url = (
         f"{colab_base}"
         f"?xiosync_base={xiosync_base}&bootstrap_token={token}"
         f"#forceEdit=true&sandboxMode=true"
     )
 
-    logger.info("worker_bootstrap.created", extra={
-        "node_name": _node_base, "org_slug": payload.org_slug,
-        "project_slug": payload.project_slug, "role": payload.role,
-        "reusable": payload.reusable,
-    })
+    logger.info(
+        "worker_bootstrap.created",
+        extra={
+            "node_name": _node_base,
+            "org_slug": payload.org_slug,
+            "project_slug": payload.project_slug,
+            "role": payload.role,
+            "reusable": payload.reusable,
+        },
+    )
     return {
-        "token":     token,
+        "token": token,
         "colab_url": colab_url,
-        "note":      payload.note,
-        "reusable":  payload.reusable,
+        "note": payload.note,
+        "reusable": payload.reusable,
     }
 
 
 # ── Public endpoint (no auth — token is the credential) ───────────────────────
+
 
 @router.get(
     "/workers/bootstrap/{token}",
@@ -380,12 +416,12 @@ def fetch_bootstrap_config(token: str, request: Request) -> dict:
     On first use of a one-shot token, the token is deleted.
     """
     from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
     from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
     from xiosync.subsystems.vault.service import VaultService  # noqa: PLC0415
 
-
     token_hash = _hash_token(token)
-    vault_key  = _token_vault_key(token_hash)
+    vault_key = _token_vault_key(token_hash)
     ctx = _make_ctx()
 
     with OrmSession(get_engine()) as sess:
@@ -396,13 +432,13 @@ def fetch_bootstrap_config(token: str, request: Request) -> dict:
             raise HTTPException(status_code=404, detail="Invalid or expired bootstrap token")
 
         meta = json.loads(raw)
-        reusable     = meta.get("reusable", True)
-        node_name    = meta.get("node_name", "xiogrid--default--worker")
-        org_slug     = meta.get("org_slug", "xiogrid")
+        reusable = meta.get("reusable", True)
+        node_name = meta.get("node_name", "xiogrid--default--worker")
+        org_slug = meta.get("org_slug", "xiogrid")
         project_slug = meta.get("project_slug", "default")
-        role         = meta.get("role", "worker")
-        extra_cfg    = meta.get("extra_config", {})
-        use_count    = meta.get("use_count", 0)
+        role = meta.get("role", "worker")
+        extra_cfg = meta.get("extra_config", {})
+        use_count = meta.get("use_count", 0)
 
         # ── Node suffix strategy ───────────────────────────────────────────────
         # Single-instance roles (master, main, primary…) always get suffix -001
@@ -414,9 +450,8 @@ def fetch_bootstrap_config(token: str, request: Request) -> dict:
         # regardless of role name.
         _SINGLE_INSTANCE_ROLES = {"master", "main", "primary", "solo", "single", "control"}
         max_instances = meta.get("max_instances", None)
-        _is_single = (
-            max_instances == 1
-            or (max_instances is None and role.lower() in _SINGLE_INSTANCE_ROLES)
+        _is_single = max_instances == 1 or (
+            max_instances is None and role.lower() in _SINGLE_INSTANCE_ROLES
         )
 
         if reusable:
@@ -431,8 +466,9 @@ def fetch_bootstrap_config(token: str, request: Request) -> dict:
 
         # Update use count (always, for auditing)
         meta["use_count"] = use_count + 1
-        vault.put_secret(ctx, vault_key, json.dumps(meta),
-                         secret_type="generic", platform_global=False)
+        vault.put_secret(
+            ctx, vault_key, json.dumps(meta), secret_type="generic", platform_global=False
+        )
 
         # One-shot: delete after use
         if not reusable:
@@ -440,14 +476,24 @@ def fetch_bootstrap_config(token: str, request: Request) -> dict:
 
         xiosync_base = _get_xiosync_base(request)
         config = _assemble_worker_config(
-            sess, node_name, extra_cfg, xiosync_base,
-            org_slug=org_slug, project_slug=project_slug, role=role,
+            sess,
+            node_name,
+            extra_cfg,
+            xiosync_base,
+            org_slug=org_slug,
+            project_slug=project_slug,
+            role=role,
         )
         sess.commit()
 
-    logger.info("worker_bootstrap.fetched", extra={
-        "node_name": node_name, "reusable": reusable, "use_count": use_count + 1,
-    })
+    logger.info(
+        "worker_bootstrap.fetched",
+        extra={
+            "node_name": node_name,
+            "reusable": reusable,
+            "use_count": use_count + 1,
+        },
+    )
     return {"config": config, "node_name": node_name}
 
 
@@ -458,12 +504,14 @@ def fetch_bootstrap_config(token: str, request: Request) -> dict:
 def list_bootstrap_tokens(request: Request) -> dict:
     """List all active bootstrap tokens (without revealing the token itself)."""
     from sqlalchemy import text  # noqa: PLC0415
-    from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
     from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
 
+    from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
+
     with OrmSession(get_engine()) as sess:
-        rows = sess.execute(
-            text("""
+        rows = (
+            sess.execute(
+                text("""
                 SELECT key, created_at, updated_at
                 FROM vaulted_secrets
                 WHERE organization_id = :org
@@ -471,8 +519,11 @@ def list_bootstrap_tokens(request: Request) -> dict:
                 ORDER BY created_at DESC
                 LIMIT 100
             """),
-            {"org": str(_ORG_ZERO)},
-        ).mappings().all()
+                {"org": str(_ORG_ZERO)},
+            )
+            .mappings()
+            .all()
+        )
 
     return {
         "tokens": [
@@ -499,11 +550,14 @@ def serve_boot_py():
     Workers always get the latest version on every boot.
     """
     import pathlib
+
     from fastapi.responses import PlainTextResponse
+
     _root = pathlib.Path(__file__).parent.parent.parent.parent
     boot_path = _root / "colab" / "boot.py"
     if not boot_path.exists():
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="boot.py not found on server")
     return PlainTextResponse(boot_path.read_text())
 
@@ -516,11 +570,14 @@ def serve_boot_py():
 def serve_xiorun_agent():
     """Serve xiorun_agent.py directly from XIOSYNC — no GitHub dependency."""
     import pathlib
+
     from fastapi.responses import PlainTextResponse
+
     _root = pathlib.Path(__file__).parent.parent.parent.parent
     agent_path = _root / "colab" / "xiorun_agent.py"
     if not agent_path.exists():
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="xiorun_agent.py not found on server")
     return PlainTextResponse(agent_path.read_text())
 
@@ -533,11 +590,14 @@ def serve_xiorun_agent():
 def serve_google_signin_mjs():
     """Serve google-signin.mjs from XIOSYNC."""
     import pathlib
+
     from fastapi.responses import PlainTextResponse
+
     _root = pathlib.Path(__file__).parent.parent.parent.parent
     js_path = _root / "tools" / "workflows" / "google-signin.mjs"
     if not js_path.exists():
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="google-signin.mjs not found on server")
     return PlainTextResponse(js_path.read_text())
 
@@ -550,11 +610,14 @@ def serve_google_signin_mjs():
 def serve_hotpatch_agy():
     """Serve hotpatch_agy.py — run in a Colab cell to inject /ai/* endpoints live."""
     import pathlib
+
     from fastapi.responses import PlainTextResponse
+
     _root = pathlib.Path(__file__).parent.parent.parent.parent
     patch_path = _root / "colab" / "hotpatch_agy.py"
     if not patch_path.exists():
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="hotpatch_agy.py not found on server")
     return PlainTextResponse(patch_path.read_text())
 
@@ -567,15 +630,16 @@ def serve_hotpatch_agy():
 def serve_browser_profile_manager():
     """Serve browser_profile_manager.py — fingerprint/stealth layer for Chrome profiles."""
     import pathlib
+
     from fastapi.responses import PlainTextResponse
+
     _root = pathlib.Path(__file__).parent.parent.parent.parent
     bpm_path = _root / "colab" / "browser_profile_manager.py"
     if not bpm_path.exists():
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="browser_profile_manager.py not found")
     return PlainTextResponse(bpm_path.read_text())
-
-
 
 
 @router.get(
@@ -591,11 +655,14 @@ def serve_xio_drive_fs():
     No auth required — the file contains no secrets.
     """
     import pathlib
+
     from fastapi.responses import PlainTextResponse
+
     _root = pathlib.Path(__file__).parent.parent.parent.parent
     fs_path = _root / "colab" / "xio_drive_fs.py"
     if not fs_path.exists():
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="xio_drive_fs.py not found on server")
     return PlainTextResponse(fs_path.read_text())
 
@@ -613,11 +680,14 @@ def serve_patchright_boot():
     No auth required — the file contains no secrets.
     """
     import pathlib
+
     from fastapi.responses import PlainTextResponse
+
     _root = pathlib.Path(__file__).parent.parent.parent.parent
     pb_path = _root / "colab" / "patchright_boot.py"
     if not pb_path.exists():
         from fastapi import HTTPException
+
         raise HTTPException(status_code=404, detail="patchright_boot.py not found on server")
     return PlainTextResponse(pb_path.read_text())
 
@@ -633,15 +703,18 @@ def serve_notebook():
     No auth required. Workers fetch this on boot to self-update their Drive copy.
     Binary download (application/json wrapped as .ipynb).
     """
-    import pathlib, hashlib  # noqa: PLC0415
-    from fastapi.responses import Response  # noqa: PLC0415
+    import hashlib  # noqa: PLC0415
+    import pathlib
+
     from fastapi import HTTPException  # noqa: PLC0415
+    from fastapi.responses import Response  # noqa: PLC0415
+
     _root = pathlib.Path(__file__).parent.parent.parent.parent
     nb_path = _root / "colab" / "xiosync-worker.ipynb"
     if not nb_path.exists():
         raise HTTPException(status_code=404, detail="xiosync-worker.ipynb not found on server")
     data = nb_path.read_bytes()
-    sha  = hashlib.sha256(data).hexdigest()
+    sha = hashlib.sha256(data).hexdigest()
     return Response(
         content=data,
         media_type="application/json",
@@ -663,21 +736,24 @@ def serve_notebook_hash():
     Workers call this first (tiny payload) before deciding whether to
     download the full notebook. No auth required.
     """
-    import pathlib, hashlib, datetime  # noqa: PLC0415
+    import datetime  # noqa: PLC0415
+    import hashlib
+    import pathlib
+
     from fastapi import HTTPException  # noqa: PLC0415
+
     _root = pathlib.Path(__file__).parent.parent.parent.parent
     nb_path = _root / "colab" / "xiosync-worker.ipynb"
     if not nb_path.exists():
         raise HTTPException(status_code=404, detail="xiosync-worker.ipynb not found on server")
     data = nb_path.read_bytes()
-    sha  = hashlib.sha256(data).hexdigest()
-    mtime = datetime.datetime.fromtimestamp(
-        nb_path.stat().st_mtime, tz=datetime.UTC
-    ).isoformat()
+    sha = hashlib.sha256(data).hexdigest()
+    mtime = datetime.datetime.fromtimestamp(nb_path.stat().st_mtime, tz=datetime.UTC).isoformat()
     return JSONResponse({"sha256": sha, "updated_at": mtime, "name": "xiosync-worker.ipynb"})
 
 
 # ── Worker self-enroll (public — authenticates via worker_org_secret) ─────────
+
 
 class _SelfEnrollReq(_S):
     worker_org_secret: str
@@ -700,20 +776,29 @@ def self_enroll(payload: _SelfEnrollReq):
     No Bearer token needed — the shared org secret IS the credential.
     Returns enrollment_id + enrollment_token on success.
     """
-    import os, json as _json, secrets as _sec  # noqa: PLC0415
+    import json as _json
+    import os
+    import secrets as _sec  # noqa: PLC0415
+
+    from fastapi.responses import JSONResponse as _JR  # noqa: PLC0415
     from sqlalchemy import text  # noqa: PLC0415
     from sqlalchemy.orm import Session as _OrmSession  # noqa: PLC0415
-    from fastapi.responses import JSONResponse as _JR  # noqa: PLC0415
+
     from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
     from xiosync.platform.ids import new_id  # noqa: PLC0415
     from xiosync.services.workers import WorkerService  # noqa: PLC0415
 
     expected = os.environ.get("XIOSYNC_WORKER_ORG_SECRET", "")
     if not expected or payload.worker_org_secret != expected:
-        return _JR(status_code=401, media_type="application/problem+json", content={
-            "type": "https://xiosync.dev/problems/unauthorized",
-            "title": "Invalid worker org secret", "status": 401,
-        })
+        return _JR(
+            status_code=401,
+            media_type="application/problem+json",
+            content={
+                "type": "https://xiosync.dev/problems/unauthorized",
+                "title": "Invalid worker org secret",
+                "status": 401,
+            },
+        )
 
     ctx = _make_ctx()
     enrollment_token = _sec.token_urlsafe(32)
@@ -722,7 +807,8 @@ def self_enroll(payload: _SelfEnrollReq):
     with _OrmSession(get_engine()) as session:
         # Insert a worker actor row
         try:
-            session.execute(text("""
+            session.execute(
+                text("""
                 INSERT INTO actors
                   (id, organization_id, actor_type, actor_subtype, alias, state,
                    lifecycle_phase, trust_tier, health_status, created_at)
@@ -730,12 +816,14 @@ def self_enroll(payload: _SelfEnrollReq):
                   (:id, :org_id, 'worker', :subtype, :alias, 'active',
                    'operational', 'newcomer', 'healthy', now())
                 ON CONFLICT DO NOTHING
-            """), {
-                "id": str(actor_id),
-                "org_id": str(_ORG_ZERO),
-                "subtype": payload.runtime_type,
-                "alias": f"{payload.runtime_type}-{str(actor_id)[:8]}",
-            })
+            """),
+                {
+                    "id": str(actor_id),
+                    "org_id": str(_ORG_ZERO),
+                    "subtype": payload.runtime_type,
+                    "alias": f"{payload.runtime_type}-{str(actor_id)[:8]}",
+                },
+            )
             session.flush()
         except Exception as _actor_exc:
             logger.warning(
@@ -755,10 +843,16 @@ def self_enroll(payload: _SelfEnrollReq):
                 capability_manifest=payload.reported_caps or [],
             )
         except Exception as exc:
-            return _JR(status_code=422, media_type="application/problem+json", content={
-                "type": "https://xiosync.dev/problems/worker_error",
-                "title": "Self-enroll failed", "status": 422, "detail": str(exc),
-            })
+            return _JR(
+                status_code=422,
+                media_type="application/problem+json",
+                content={
+                    "type": "https://xiosync.dev/problems/worker_error",
+                    "title": "Self-enroll failed",
+                    "status": 422,
+                    "detail": str(exc),
+                },
+            )
 
         # Approve in same session — use actor_id as approved_by (it's in actors table)
         try:
@@ -768,7 +862,8 @@ def self_enroll(payload: _SelfEnrollReq):
 
         # Update metadata columns (re-insert actor if rollback wiped it)
         try:
-            session.execute(text("""
+            session.execute(
+                text("""
                 INSERT INTO actors
                   (id, organization_id, actor_type, actor_subtype, alias, state,
                    lifecycle_phase, trust_tier, health_status, created_at)
@@ -776,25 +871,30 @@ def self_enroll(payload: _SelfEnrollReq):
                   (:id, :org_id, 'worker', :subtype, :alias, 'active',
                    'operational', 'newcomer', 'healthy', now())
                 ON CONFLICT DO NOTHING
-            """), {
-                "id": str(actor_id),
-                "org_id": str(_ORG_ZERO),
-                "subtype": payload.runtime_type,
-                "alias": f"{payload.runtime_type}-{str(actor_id)[:8]}",
-            })
-            session.execute(text("""
+            """),
+                {
+                    "id": str(actor_id),
+                    "org_id": str(_ORG_ZERO),
+                    "subtype": payload.runtime_type,
+                    "alias": f"{payload.runtime_type}-{str(actor_id)[:8]}",
+                },
+            )
+            session.execute(
+                text("""
                 UPDATE worker_enrollments
                 SET tailscale_ip = :ts_ip,
                     reported_caps = cast(:caps as jsonb),
                     runtime_type = :rtype,
                     last_seen_at = now()
                 WHERE id = :eid
-            """), {
-                "ts_ip": payload.tailscale_ip,
-                "caps": _json.dumps(payload.reported_caps or []),
-                "rtype": payload.runtime_type,
-                "eid": str(rec.id),
-            })
+            """),
+                {
+                    "ts_ip": payload.tailscale_ip,
+                    "caps": _json.dumps(payload.reported_caps or []),
+                    "rtype": payload.runtime_type,
+                    "eid": str(rec.id),
+                },
+            )
         except Exception as _cap_exc:
             logger.warning(
                 "worker_bootstrap.caps_update_failed",
@@ -814,9 +914,10 @@ def self_enroll(payload: _SelfEnrollReq):
 
 # ── Mesh identity — stable node serial per Colab Google account ───────────────
 
+
 class _MeshIdentityReq(_S):
-    colab_account: str          # e.g. "etathyaghar" (local-part of Google account)
-    runtime_type:  str = "colab_cpu"
+    colab_account: str  # e.g. "etathyaghar" (local-part of Google account)
+    runtime_type: str = "colab_cpu"
 
 
 @router.post(
@@ -832,9 +933,11 @@ def resolve_mesh_identity(payload: _MeshIdentityReq, request: Request):
     the existing serial → same TS hostname every boot.
     """
     import os as _os  # noqa: PLC0415
+
+    from fastapi.responses import JSONResponse as _JR  # noqa: PLC0415
     from sqlalchemy import text  # noqa: PLC0415
     from sqlalchemy.orm import Session as _OrmSession  # noqa: PLC0415
-    from fastapi.responses import JSONResponse as _JR  # noqa: PLC0415
+
     from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
     from xiosync.platform.ids import new_id  # noqa: PLC0415
 
@@ -842,86 +945,113 @@ def resolve_mesh_identity(payload: _MeshIdentityReq, request: Request):
     expected_secret = _os.environ.get("XIOSYNC_WORKER_ORG_SECRET", "")
     provided = request.headers.get("X-Worker-Org-Secret", "")
     if not expected_secret or provided != expected_secret:
-        return _JR(status_code=401, media_type="application/problem+json", content={
-            "type": "https://xiosync.dev/problems/unauthorized",
-            "title": "Invalid worker org secret", "status": 401,
-        })
+        return _JR(
+            status_code=401,
+            media_type="application/problem+json",
+            content={
+                "type": "https://xiosync.dev/problems/unauthorized",
+                "title": "Invalid worker org secret",
+                "status": 401,
+            },
+        )
 
     account = payload.colab_account.strip().lower()
     if not account:
-        return _JR(status_code=422, media_type="application/problem+json", content={
-            "type": "https://xiosync.dev/problems/invalid_request",
-            "title": "colab_account is required", "status": 422,
-        })
+        return _JR(
+            status_code=422,
+            media_type="application/problem+json",
+            content={
+                "type": "https://xiosync.dev/problems/invalid_request",
+                "title": "colab_account is required",
+                "status": 422,
+            },
+        )
 
     with _OrmSession(get_engine()) as sess:
         # Bypass RLS — set app.current_org GUC for this transaction
         # (PostgreSQL SET does not accept bind params; use set_config instead)
-        sess.execute(text("SELECT set_config('app.current_org', :org, true)"),
-                     {"org": str(_ORG_ZERO)})
+        sess.execute(
+            text("SELECT set_config('app.current_org', :org, true)"), {"org": str(_ORG_ZERO)}
+        )
 
         # Look up existing binding → get the mesh_node serial
-        existing = sess.execute(text("""
+        existing = sess.execute(
+            text("""
             SELECT mn.serial
             FROM mesh_node_bindings mnb
             JOIN mesh_nodes mn ON mn.id = mnb.mesh_node_id
             WHERE mnb.organization_id = :org AND mnb.colab_account = :account
             LIMIT 1
-        """), {"org": str(_ORG_ZERO), "account": account}).one_or_none()
+        """),
+            {"org": str(_ORG_ZERO), "account": account},
+        ).one_or_none()
 
         if existing:
             serial = existing[0]
-            sess.execute(text("""
+            sess.execute(
+                text("""
                 UPDATE mesh_node_bindings
                 SET last_used_at = now()
                 WHERE organization_id = :org AND colab_account = :account
-            """), {"org": str(_ORG_ZERO), "account": account})
+            """),
+                {"org": str(_ORG_ZERO), "account": account},
+            )
             sess.commit()
         else:
             # 1. Get or create a default mesh_network for Org Zero
-            net_row = sess.execute(text("""
+            net_row = sess.execute(
+                text("""
                 SELECT id FROM mesh_networks
                 WHERE organization_id = :org LIMIT 1
-            """), {"org": str(_ORG_ZERO)}).one_or_none()
+            """),
+                {"org": str(_ORG_ZERO)},
+            ).one_or_none()
 
             if net_row:
                 net_id = net_row[0]
             else:
                 net_id = new_id()
-                sess.execute(text("""
+                sess.execute(
+                    text("""
                     INSERT INTO mesh_networks
                       (id, organization_id, name, network_type, state, created_at)
                     VALUES (:id, :org, 'default', 'tailscale', 'active', now())
                     ON CONFLICT DO NOTHING
-                """), {"id": str(net_id), "org": str(_ORG_ZERO)})
+                """),
+                    {"id": str(net_id), "org": str(_ORG_ZERO)},
+                )
                 sess.flush()
 
             # 2. Create the mesh_node — serial auto-assigned from sequence
-            node_id  = new_id()
+            node_id = new_id()
             actor_id = new_id()
-            sess.execute(text("""
+            sess.execute(
+                text("""
                 INSERT INTO mesh_nodes
                   (id, organization_id, network_id, node_id, address,
                    runtime_type, created_at)
                 VALUES
                   (:id, :org, :net, :node_id, :address, :rtype, now())
-            """), {
-                "id":      str(node_id),
-                "org":     str(_ORG_ZERO),
-                "net":     str(net_id),
-                "node_id": str(actor_id),
-                "address": f"colab/{account}",
-                "rtype":   payload.runtime_type,
-            })
+            """),
+                {
+                    "id": str(node_id),
+                    "org": str(_ORG_ZERO),
+                    "net": str(net_id),
+                    "node_id": str(actor_id),
+                    "address": f"colab/{account}",
+                    "rtype": payload.runtime_type,
+                },
+            )
             sess.flush()
 
             # 3. Read the auto-assigned serial back
-            serial = sess.execute(text(
-                "SELECT serial FROM mesh_nodes WHERE id = :id"
-            ), {"id": str(node_id)}).scalar()
+            serial = sess.execute(
+                text("SELECT serial FROM mesh_nodes WHERE id = :id"), {"id": str(node_id)}
+            ).scalar()
 
             # 4. Create the binding
-            sess.execute(text("""
+            sess.execute(
+                text("""
                 INSERT INTO mesh_node_bindings
                   (organization_id, colab_account, mesh_node_id, serial,
                    created_at, last_used_at)
@@ -929,24 +1059,31 @@ def resolve_mesh_identity(payload: _MeshIdentityReq, request: Request):
                   (:org, :account, :node_id, :serial, now(), now())
                 ON CONFLICT (organization_id, colab_account) DO UPDATE
                   SET last_used_at = now()
-            """), {
-                "org":     str(_ORG_ZERO),
-                "account": account,
-                "node_id": str(node_id),
-                "serial":  serial,
-            })
+            """),
+                {
+                    "org": str(_ORG_ZERO),
+                    "account": account,
+                    "node_id": str(node_id),
+                    "serial": serial,
+                },
+            )
             sess.commit()
 
-    logger.info("worker_bootstrap.mesh_identity", extra={
-        "colab_account": account, "serial": serial, "runtime_type": payload.runtime_type,
-    })
+    logger.info(
+        "worker_bootstrap.mesh_identity",
+        extra={
+            "colab_account": account,
+            "serial": serial,
+            "runtime_type": payload.runtime_type,
+        },
+    )
     return {"serial": serial, "mesh_name": f"MESH-{serial:03d}", "colab_account": account}
-
 
 
 # Workers fetch/save their Tailscale state through XIOSYNC.
 # XIOSYNC stores it in the default storage provider (Google Drive).
 # No R2 dependency after initial migration.
+
 
 @router.get(
     "/workers/ts-state/{node_name}",
@@ -964,9 +1101,11 @@ def get_ts_state(node_name: str):
       - An encoded account key (e.g. "ts_states__account__user_at_gmail_state") → decoded to original
     """
     import pathlib  # noqa: PLC0415
-    from fastapi.responses import Response  # noqa: PLC0415
+
     from fastapi import HTTPException  # noqa: PLC0415
+    from fastapi.responses import Response  # noqa: PLC0415
     from sqlalchemy.orm import Session as _OrmSession  # noqa: PLC0415
+
     from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
 
     # Decode: if node_name contains __ it was encoded by boot.py (new account-based key)
@@ -987,15 +1126,23 @@ def get_ts_state(node_name: str):
 
     # Look up the stored file path in storage_objects
     from sqlalchemy import text  # noqa: PLC0415
+
     with _OrmSession(get_engine()) as sess:
-        row = sess.execute(text("""
+        row = (
+            sess.execute(
+                text("""
             SELECT so.file_path, sp.config, sp.provider_type
             FROM storage_objects so
             JOIN storage_providers sp ON so.storage_provider_id = sp.id
             WHERE so.object_key = :key
               AND so.organization_id = :org
             ORDER BY so.created_at DESC LIMIT 1
-        """), {"key": _object_key, "org": str(_ORG_ZERO)}).mappings().first()
+        """),
+                {"key": _object_key, "org": str(_ORG_ZERO)},
+            )
+            .mappings()
+            .first()
+        )
 
     if not row:
         raise HTTPException(status_code=404, detail=f"No saved TS state for '{node_name}'")
@@ -1005,13 +1152,12 @@ def get_ts_state(node_name: str):
         cfg = row["config"] if isinstance(row["config"], dict) else {}
         file_id = cfg.get("drive_file_id") or row.get("file_path", "")
         import urllib.request as _urq  # noqa: PLC0415
+
         url = f"https://drive.google.com/uc?export=download&id={file_id}"
         content = _urq.urlopen(url, timeout=15).read()
         return Response(content=content, media_type="application/octet-stream")
 
     raise HTTPException(status_code=503, detail="TS state provider not available")
-
-
 
 
 @router.put(
@@ -1025,7 +1171,8 @@ async def put_ts_state(node_name: str, request: __import__("fastapi").Request):
     Called by boot.py after Tailscale connects to persist the state.
     Uses XIOSYNC_WORKER_ORG_SECRET header for auth.
     """
-    import os, pathlib  # noqa: PLC0415
+    import os
+    import pathlib  # noqa: PLC0415
 
     # Minimal auth — worker org secret in header
     secret = request.headers.get("X-Worker-Secret", "")
@@ -1058,24 +1205,30 @@ async def put_ts_state(node_name: str, request: __import__("fastapi").Request):
 
     try:
         import uuid as _uuid  # noqa: PLC0415
-        from sqlalchemy.orm import Session as _Session  # noqa: PLC0415
-        from xiosync.persistence.engine import get_engine as _get_engine  # noqa: PLC0415
-        from xiosync.domain.context import OrgContext as _OrgCtx  # noqa: PLC0415
-        from xiosync.subsystems.storage.service import StorageService  # noqa: PLC0415
+
         from sqlalchemy import text as _text  # noqa: PLC0415
+        from sqlalchemy.orm import Session as _Session  # noqa: PLC0415
+
+        from xiosync.domain.context import OrgContext as _OrgCtx  # noqa: PLC0415
+        from xiosync.persistence.engine import get_engine as _get_engine  # noqa: PLC0415
+        from xiosync.subsystems.storage.service import StorageService  # noqa: PLC0415
 
         with _Session(_get_engine()) as _db:
             # Find the platform-global google_drive provider
-            _prow = _db.execute(
-                _text("""
+            _prow = (
+                _db.execute(
+                    _text("""
                     SELECT id, config FROM storage_providers
                     WHERE provider_type = 'google_drive'
                       AND (organization_id = :org OR organization_id IS NULL)
                     ORDER BY organization_id NULLS LAST
                     LIMIT 1
                 """),
-                {"org": str(_ORG_ZERO)},
-            ).mappings().first()
+                    {"org": str(_ORG_ZERO)},
+                )
+                .mappings()
+                .first()
+            )
 
             if _prow:
                 _provider_id = _prow["id"]
@@ -1087,7 +1240,10 @@ async def put_ts_state(node_name: str, request: __import__("fastapi").Request):
 
                 # Try to upload via adapter (Drive FUSE or service account)
                 try:
-                    from xiosync.subsystems.storage.adapters.base import make_adapter  # noqa: PLC0415
+                    from xiosync.subsystems.storage.adapters.base import (
+                        make_adapter,  # noqa: PLC0415
+                    )
+
                     _adapter = make_adapter(
                         provider_type="google_drive",
                         config=_prow["config"] or {},
@@ -1103,6 +1259,7 @@ async def put_ts_state(node_name: str, request: __import__("fastapi").Request):
 
                 # Always register/upsert the object record so get_ts_state works
                 import hashlib as _hl  # noqa: PLC0415
+
                 _svc.register_object(
                     _ctx,
                     _uuid.UUID(str(_provider_id)),
@@ -1119,8 +1276,8 @@ async def put_ts_state(node_name: str, request: __import__("fastapi").Request):
                     "worker_bootstrap.ts_state.no_drive_provider",
                     extra={
                         "node_name": node_name,
-                        "advice":    "Register a google_drive storage_provider to enable "
-                                     "cross-session TS state persistence.",
+                        "advice": "Register a google_drive storage_provider to enable "
+                        "cross-session TS state persistence.",
                     },
                 )
     except Exception as _exc:
@@ -1130,16 +1287,18 @@ async def put_ts_state(node_name: str, request: __import__("fastapi").Request):
         )
 
     return {
-        "saved":     True,
+        "saved": True,
         "node_name": node_name,
-        "size":      len(body),
-        "drive":     _drive_note,
+        "size": len(body),
+        "drive": _drive_note,
     }
 
 
 # ── WebSocket TCP relay — lets Colab reach PPPoE SOCKS5 via WSS ──────────────
 import asyncio as _asyncio
-from fastapi import WebSocket as _WebSocket, WebSocketDisconnect as _WSDisco
+
+from fastapi import WebSocket as _WebSocket
+from fastapi import WebSocketDisconnect as _WSDisco
 
 
 @router.websocket("/workers/tcp-relay")
@@ -1167,8 +1326,9 @@ async def tcp_relay_ws(
     try:
         reader, writer = await _asyncio.open_connection(host, port)
     except Exception as exc:
-        logger.warning("tcp_relay.connect_failed",
-                       extra={"host": host, "port": port, "error": str(exc)})
+        logger.warning(
+            "tcp_relay.connect_failed", extra={"host": host, "port": port, "error": str(exc)}
+        )
         await websocket.close(code=4004, reason=f"upstream_connect_failed: {exc}")
         return
 
@@ -1196,7 +1356,7 @@ async def tcp_relay_ws(
         except (_WSDisco, Exception):
             pass
 
-    ws_task  = _asyncio.create_task(_ws_to_tcp())
+    ws_task = _asyncio.create_task(_ws_to_tcp())
     tcp_task = _asyncio.create_task(_tcp_to_ws())
     await _asyncio.wait([ws_task, tcp_task], return_when=_asyncio.FIRST_COMPLETED)
     for t in [ws_task, tcp_task]:
@@ -1210,12 +1370,14 @@ async def tcp_relay_ws(
 
 # ── Bootstrap Token Management (Phase 3 audit — Fix 16) ──────────────────────
 
+
 @router.post("/workers/bootstrap-tokens/revoke", summary="Revoke a bootstrap token")
 def revoke_bootstrap_token(request: Request, body: dict) -> dict:
     """Revoke a bootstrap token by its raw value or hash."""
     from sqlalchemy.orm import Session as _Sess
-    from xiosync.platform.engine_ref import get_engine
+
     from xiosync.api.middleware.worker_auth import verify_worker_auth
+    from xiosync.platform.engine_ref import get_engine
 
     verify_worker_auth(request)
 
@@ -1227,7 +1389,9 @@ def revoke_bootstrap_token(request: Request, body: dict) -> dict:
         raise HTTPException(status_code=422, detail="Provide 'token' or 'token_hash'")
 
     with _Sess(get_engine()) as sess:
-        from datetime import UTC, datetime as _dt
+        from datetime import UTC
+        from datetime import datetime as _dt
+
         result = sess.execute(
             text("""
                 UPDATE bootstrap_tokens
@@ -1256,8 +1420,9 @@ def revoke_bootstrap_token(request: Request, body: dict) -> dict:
 def list_bootstrap_tokens(request: Request, org_id: str = "") -> dict:
     """List all bootstrap tokens (active/revoked) for an organization."""
     from sqlalchemy.orm import Session as _Sess
-    from xiosync.platform.engine_ref import get_engine
+
     from xiosync.api.middleware.worker_auth import verify_worker_auth
+    from xiosync.platform.engine_ref import get_engine
 
     verify_worker_auth(request)
     if not org_id:

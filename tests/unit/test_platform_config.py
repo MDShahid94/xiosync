@@ -43,7 +43,6 @@ def test_all_environments_and_explicit_log_level() -> None:
         assert config.log_level == "DEBUG"
 
 
-
 def test_plain_postgresql_scheme_is_accepted() -> None:
     config = load_config({**VALID_ENV, "DATABASE_URL": "postgresql://u:p@h/db"})
     assert config.database_url == "postgresql://u:p@h/db"

@@ -1,4 +1,5 @@
 """XIOFLOW WorkflowTemplate model — per-org isolated script/DAG library."""
+
 from __future__ import annotations
 
 import uuid
@@ -27,9 +28,7 @@ class WorkflowTemplate(Base):
 
     __tablename__ = "workflow_templates"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=new_id
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("organizations.id"),
@@ -58,8 +57,5 @@ class WorkflowTemplate(Base):
     is_platform_global: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false")
     )
-    created_at: Mapped[Any] = mapped_column(
-        _ts, nullable=False, server_default=text("now()")
-    )
+    created_at: Mapped[Any] = mapped_column(_ts, nullable=False, server_default=text("now()"))
     updated_at: Mapped[Any | None] = mapped_column(_ts)
-

@@ -9,6 +9,7 @@ in XIORunRuntimePool:
   - Triggers emergency save + marks session 'failed'
   - Logs active browser count and per-session state
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,8 +33,9 @@ def tick_xiorun_health(session: Session) -> int:
     _LAST_RUN = now
 
     try:
-        from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
         import asyncio  # noqa: PLC0415
+
+        from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
 
         pool = get_runtime_pool()
         entries = pool.list_sessions()
@@ -41,20 +43,21 @@ def tick_xiorun_health(session: Session) -> int:
         if not entries:
             return 0
 
-        logger.info("xiorun.health.tick", extra={
-            "active_sessions": len(entries)
-        })
+        logger.info("xiorun.health.tick", extra={"active_sessions": len(entries)})
 
         checked = 0
         for entry in entries:
-            sid  = entry["session_id"]
+            sid = entry["session_id"]
             closed = entry["page_closed"]
             checked += 1
 
             if closed:
-                logger.error("xiorun.health.page_closed_unexpectedly", extra={
-                    "session_id": sid,
-                })
+                logger.error(
+                    "xiorun.health.page_closed_unexpectedly",
+                    extra={
+                        "session_id": sid,
+                    },
+                )
                 launcher = pool.get_launcher(sid)
                 if launcher:
                     # Schedule emergency save onto the running event loop from this
@@ -62,15 +65,14 @@ def tick_xiorun_health(session: Session) -> int:
                     try:
                         loop = asyncio.get_event_loop()
                         if loop.is_running():
-                            asyncio.run_coroutine_threadsafe(
-                                launcher._emergency_save(), loop
-                            )
+                            asyncio.run_coroutine_threadsafe(launcher._emergency_save(), loop)
                     except Exception:
                         pass
 
                 # Mark failed in DB (sync — we're in a worker thread)
                 try:
                     from sqlalchemy import text  # noqa: PLC0415
+
                     session.execute(
                         text("""
                             UPDATE browser_sessions
@@ -81,9 +83,10 @@ def tick_xiorun_health(session: Session) -> int:
                     )
                     session.commit()
                 except Exception as exc:
-                    logger.warning("xiorun.health.mark_failed_error", extra={
-                        "session_id": sid, "error": str(exc)
-                    })
+                    logger.warning(
+                        "xiorun.health.mark_failed_error",
+                        extra={"session_id": sid, "error": str(exc)},
+                    )
 
                 # Remove from pool
                 pool._unregister(sid)

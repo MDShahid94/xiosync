@@ -13,6 +13,7 @@ Usage (in locator_cascade.py tier 10)
     healer = AIHealer()
     result = await healer.heal(page, intent="click login button", dom_inspector=get_dom)
 """
+
 from __future__ import annotations
 
 import json
@@ -47,7 +48,8 @@ Rules:
 - Output ONLY the JSON object — no markdown, no prose.
 """
 
-_DOM_TRUNCATE  = 32_000   # chars — Context large but we clip to save tokens
+_DOM_TRUNCATE = 32_000  # chars — Context large but we clip to save tokens
+
 
 class AIHealer:
     """Tier-10 LLM DOM exploration.
@@ -77,7 +79,7 @@ class AIHealer:
         try:
             # DOMInspector.get_interactive_elements() returns (dom_string, node_map)
             # We only need the dom_string for the LLM prompt
-            if hasattr(dom_inspector, 'get_interactive_elements'):
+            if hasattr(dom_inspector, "get_interactive_elements"):
                 dom_string, _node_map = await dom_inspector.get_interactive_elements()
             elif callable(dom_inspector):
                 dom_string = await dom_inspector()
@@ -85,26 +87,25 @@ class AIHealer:
                 logger.warning("ai_healer: dom_inspector is neither DOMInspector nor callable")
                 return None
             truncated_dom = dom_string[:_DOM_TRUNCATE]
-            prompt = (
-                f"Intent: {intent}\n\n"
-                f"DOM snapshot (may be truncated):\n{truncated_dom}"
+            prompt = f"Intent: {intent}\n\nDOM snapshot (may be truncated):\n{truncated_dom}"
+
+            result = await self.gateway.generate(
+                prompt, system=_SYSTEM_PROMPT, output_format="json"
             )
-            
-            result = await self.gateway.generate(prompt, system=_SYSTEM_PROMPT, output_format='json')
-            
+
             if result.success:
                 try:
                     parsed = json.loads(result.text)
                     if not isinstance(parsed, dict) or parsed.get("selector") is None:
                         return None
-                    
+
                     logger.info(
                         "ai_healer.success",
                         extra={
-                            "intent":        intent,
-                            "selector":      parsed.get("selector"),
+                            "intent": intent,
+                            "selector": parsed.get("selector"),
                             "selector_type": parsed.get("selector_type"),
-                            "confidence":    parsed.get("confidence"),
+                            "confidence": parsed.get("confidence"),
                         },
                     )
                     return parsed

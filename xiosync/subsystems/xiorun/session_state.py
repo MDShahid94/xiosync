@@ -22,6 +22,7 @@ Vault key convention (established by D1 migration):
   organization_id = 00000000-0000-7000-8000-000000000000 (Org Zero)
   conflict target = (organization_id, key)
 """
+
 from __future__ import annotations
 
 import json
@@ -109,9 +110,9 @@ def _merge_cookies(
 
     for c in incoming:
         domain = _apex_domain(c.get("domain", ""))
-        name   = c.get("name", "")
-        path   = c.get("path", "/")
-        key    = (domain, name, path)
+        name = c.get("name", "")
+        path = c.get("path", "/")
+        key = (domain, name, path)
 
         if guard_google and _is_google_domain(c):
             continue
@@ -123,20 +124,21 @@ def _merge_cookies(
 
         if _is_google_domain(c) and name in GOOGLE_SID_NAMES:
             prev_ttl = _cookie_remaining_ttl(prev, now_sec)
-            new_ttl  = _cookie_remaining_ttl(c,    now_sec)
+            new_ttl = _cookie_remaining_ttl(c, now_sec)
             if prev_ttl - new_ttl > SID_TTL_THRESHOLD_SEC:
                 logger.warning(
                     "xiorun.session_state.sid_ttl_guard",
                     extra={
-                        "cookie_name": name, "domain": domain,
+                        "cookie_name": name,
+                        "domain": domain,
                         "prev_ttl_h": round(prev_ttl / 3600, 1),
-                        "new_ttl_h":  round(new_ttl  / 3600, 1),
+                        "new_ttl_h": round(new_ttl / 3600, 1),
                     },
                 )
                 continue
 
         prev_ttl = _cookie_remaining_ttl(prev, now_sec)
-        new_ttl  = _cookie_remaining_ttl(c,    now_sec)
+        new_ttl = _cookie_remaining_ttl(c, now_sec)
         if new_ttl >= prev_ttl:
             idx[key] = c
 
@@ -146,6 +148,7 @@ def _merge_cookies(
 def _get_crypto():
     """Return a VaultCrypto instance from XIOSYNC_AUTH_SECRET."""
     from xiosync.subsystems.vault.crypto import VaultCrypto  # noqa: PLC0415
+
     return VaultCrypto(os.environ["XIOSYNC_AUTH_SECRET"])
 
 
@@ -170,15 +173,19 @@ class SessionStateIO:
             from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
 
             with OrmSession(self._engine) as sess:
-                row = sess.execute(
-                    text("""
+                row = (
+                    sess.execute(
+                        text("""
                         SELECT ciphertext, iv, auth_tag, organization_id
                         FROM vaulted_secrets
                         WHERE organization_id = :org AND key = :k
                         LIMIT 1
                     """),
-                    {"org": str(_ORG_ZERO), "k": vault_key},
-                ).mappings().first()
+                        {"org": str(_ORG_ZERO), "k": vault_key},
+                    )
+                    .mappings()
+                    .first()
+                )
 
                 if not row:
                     return None
@@ -197,9 +204,10 @@ class SessionStateIO:
                 return state
 
         except Exception as exc:
-            logger.warning("xiorun.session_state.load_error", extra={
-                "identity_id": identity_id, "error": str(exc)
-            })
+            logger.warning(
+                "xiorun.session_state.load_error",
+                extra={"identity_id": identity_id, "error": str(exc)},
+            )
             return None
 
     def save(
@@ -218,8 +226,8 @@ class SessionStateIO:
           - SID-TTL check: rejects incoming Google SID if TTL is much shorter
           - TTL-aware merge: longer remaining TTL always wins
         """
-        vault_key    = f"identities/{identity_id}/cookie_state"
-        now_sec      = time.time()
+        vault_key = f"identities/{identity_id}/cookie_state"
+        now_sec = time.time()
         guard_google = emergency or _is_mid_auth(page_url)
 
         try:
@@ -229,15 +237,19 @@ class SessionStateIO:
             with OrmSession(self._engine) as sess:
                 # Load existing state for merge
                 existing_cookies: list[dict] = []
-                row = sess.execute(
-                    text("""
+                row = (
+                    sess.execute(
+                        text("""
                         SELECT ciphertext, iv, auth_tag
                         FROM vaulted_secrets
                         WHERE organization_id = :org AND key = :k
                         LIMIT 1
                     """),
-                    {"org": str(_ORG_ZERO), "k": vault_key},
-                ).mappings().first()
+                        {"org": str(_ORG_ZERO), "k": vault_key},
+                    )
+                    .mappings()
+                    .first()
+                )
 
                 if row:
                     try:
@@ -255,20 +267,20 @@ class SessionStateIO:
                             "session_state.cookie_decrypt_failed",
                             extra={
                                 "identity_id": str(identity_id),
-                                "error":       str(_dec_exc),
-                                "effect":      "merging with empty existing_cookies",
+                                "error": str(_dec_exc),
+                                "effect": "merging with empty existing_cookies",
                             },
                         )
 
                 incoming_cookies = state.get("cookies", [])
-                merged_cookies   = _merge_cookies(
+                merged_cookies = _merge_cookies(
                     existing_cookies, incoming_cookies, guard_google, now_sec
                 )
 
                 merged_state = {
                     **state,
-                    "cookies":      merged_cookies,
-                    "_version":     2,
+                    "cookies": merged_cookies,
+                    "_version": 2,
                     "_captured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 }
 
@@ -295,22 +307,26 @@ class SessionStateIO:
                     """),
                     {
                         "org": str(_ORG_ZERO),
-                        "k":   vault_key,
-                        "ct":  ciphertext,
-                        "iv":  iv,
-                        "at":  auth_tag,
+                        "k": vault_key,
+                        "ct": ciphertext,
+                        "iv": iv,
+                        "at": auth_tag,
                     },
                 )
                 sess.commit()
 
-                logger.info("xiorun.session_state.saved", extra={
-                    "identity_id":  identity_id,
-                    "cookie_count": len(merged_cookies),
-                    "guard_google": guard_google,
-                    "emergency":    emergency,
-                })
+                logger.info(
+                    "xiorun.session_state.saved",
+                    extra={
+                        "identity_id": identity_id,
+                        "cookie_count": len(merged_cookies),
+                        "guard_google": guard_google,
+                        "emergency": emergency,
+                    },
+                )
 
         except Exception as exc:
-            logger.warning("xiorun.session_state.save_error", extra={
-                "identity_id": identity_id, "error": str(exc)
-            })
+            logger.warning(
+                "xiorun.session_state.save_error",
+                extra={"identity_id": identity_id, "error": str(exc)},
+            )

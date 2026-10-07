@@ -8,6 +8,7 @@ Lookup precedence (when resolving 'default' provider for an operation):
   1. Org-private default provider (is_default=true, lowest priority number)
   2. Platform-global default provider
 """
+
 from __future__ import annotations
 
 import uuid
@@ -22,20 +23,24 @@ from xiosync.domain.context import OrgContext
 from xiosync.subsystems.storage.adapters.base import AccessInfo, make_adapter
 
 __all__ = [
-    "StorageService", "ProviderRecord", "ObjectRecord",
-    "StorageNotFoundError", "StorageProviderError",
+    "StorageService",
+    "ProviderRecord",
+    "ObjectRecord",
+    "StorageNotFoundError",
+    "StorageProviderError",
 ]
 
-_ALLOWED_PROVIDER_TYPES = frozenset({
-    "google_drive", "cloudflare_r2", "s3", "supabase_storage", "local"
-})
-_ALLOWED_OBJECT_TYPES = frozenset({
-    "chrome_profile", "ts_state", "session_export", "workflow_artifact", "generic"
-})
+_ALLOWED_PROVIDER_TYPES = frozenset(
+    {"google_drive", "cloudflare_r2", "s3", "supabase_storage", "local"}
+)
+_ALLOWED_OBJECT_TYPES = frozenset(
+    {"chrome_profile", "ts_state", "session_export", "workflow_artifact", "generic"}
+)
 
 
 class StorageNotFoundError(KeyError):
     pass
+
 
 class StorageProviderError(ValueError):
     pass
@@ -75,7 +80,6 @@ class ObjectRecord:
 
 
 class StorageService:
-
     def __init__(self, session: Session) -> None:
         self._db = session
 
@@ -217,13 +221,12 @@ class StorageService:
         adapter = make_adapter(provider.provider_type, provider.config, credential)
         return adapter.get_access_info(object_key, operation)
 
-    def _resolve_credential(
-        self, ctx: OrgContext, provider: ProviderRecord
-    ) -> str | None:
+    def _resolve_credential(self, ctx: OrgContext, provider: ProviderRecord) -> str | None:
         if not provider.vault_key:
             return None
         try:
             from xiosync.subsystems.vault.service import VaultService
+
             vault = VaultService(self._db)
             return vault.get_secret(ctx, provider.vault_key)
         except Exception:
@@ -253,6 +256,7 @@ class StorageService:
                 f"object_type must be one of {sorted(_ALLOWED_OBJECT_TYPES)}"
             )
         import json
+
         self._db.execute(
             text("""
                 INSERT INTO storage_objects
@@ -307,6 +311,7 @@ class StorageService:
             params["otype"] = object_type
         if metadata_filter:
             import json
+
             where.append("o.metadata @> cast(:mf as jsonb)")
             params["mf"] = json.dumps(metadata_filter)
 
@@ -349,8 +354,7 @@ class StorageService:
     def _get_provider_by_name(
         self, ctx: OrgContext, name: str, *, platform_global: bool
     ) -> ProviderRecord:
-        org_clause = "organization_id IS NULL" if platform_global \
-                     else "organization_id = :org"
+        org_clause = "organization_id IS NULL" if platform_global else "organization_id = :org"
         row = self._db.execute(
             text(f"""
                 SELECT id, organization_id, name, provider_type, config, vault_key,
@@ -363,9 +367,7 @@ class StorageService:
             raise StorageNotFoundError(f"Provider {name!r} not found")
         return _row_to_provider(row)
 
-    def _get_object(
-        self, ctx: OrgContext, provider_id: uuid.UUID, object_key: str
-    ) -> ObjectRecord:
+    def _get_object(self, ctx: OrgContext, provider_id: uuid.UUID, object_key: str) -> ObjectRecord:
         row = self._db.execute(
             text("""
                 SELECT id, organization_id, provider_id, object_key, object_type,
@@ -383,8 +385,10 @@ class StorageService:
 
 # ── Row → dataclass helpers ───────────────────────────────────────────────────
 
+
 def _row_to_provider(row: Any) -> ProviderRecord:
     import json
+
     config = row.config if isinstance(row.config, dict) else json.loads(row.config or "{}")
     org_id = uuid.UUID(str(row.organization_id)) if row.organization_id else None
     return ProviderRecord(
@@ -405,6 +409,7 @@ def _row_to_provider(row: Any) -> ProviderRecord:
 
 def _row_to_object(row: Any) -> ObjectRecord:
     import json
+
     meta = row.metadata if isinstance(row.metadata, dict) else json.loads(row.metadata or "{}")
     return ObjectRecord(
         id=uuid.UUID(str(row.id)),

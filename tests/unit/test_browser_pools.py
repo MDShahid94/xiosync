@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.orm import Session
-
-from xiosync.domain.context import OrgContext, MembershipRole, PlatformRole
+from xiosync.domain.context import MembershipRole, OrgContext, PlatformRole
 from xiosync.persistence.models.browser import BrowserPool
 from xiosync.services.browser_pools import (
     BrowserPoolNotFoundError,
@@ -21,6 +19,7 @@ _ORG_ID = uuid.UUID("00000000-0000-7000-8000-000000000000")
 _ACTOR_ID = uuid.UUID("00000000-0000-7000-8000-000000000002")
 _IDENTITY_ID = uuid.UUID("00000000-0000-7000-8000-aaaaaaaaaaaa")
 _SESSION_ID = uuid.UUID("00000000-0000-7000-8000-bbbbbbbbbbbb")
+
 
 @pytest.fixture
 def org_context() -> OrgContext:
@@ -33,9 +32,11 @@ def org_context() -> OrgContext:
         membership_role=MembershipRole.ORG_ADMIN,
     )
 
+
 @pytest.fixture
 def mock_session() -> MagicMock:
     return MagicMock(spec=Session)
+
 
 def test_create_pool_success(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserPoolService(mock_session)
@@ -55,6 +56,7 @@ def test_create_pool_success(org_context: OrgContext, mock_session: MagicMock) -
     assert mock_session.add.call_count >= 3  # Pool, Operation, Event
     mock_session.flush.assert_called_once()
 
+
 def test_create_pool_invalid_engine(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserPoolService(mock_session)
     with pytest.raises(ValueError, match="Unsupported engine type"):
@@ -64,6 +66,7 @@ def test_create_pool_invalid_engine(org_context: OrgContext, mock_session: Magic
             engine_type="invalid",
             max_instances=5,
         )
+
 
 def test_get_pool_success(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserPoolService(mock_session)
@@ -84,11 +87,13 @@ def test_get_pool_success(org_context: OrgContext, mock_session: MagicMock) -> N
     assert record.id == pool_id
     assert record.name == "test"
 
+
 def test_get_pool_not_found(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserPoolService(mock_session)
     mock_session.scalar.return_value = None
     with pytest.raises(BrowserPoolNotFoundError):
         svc.get_pool(org_context, uuid.uuid4())
+
 
 def test_list_pools_empty(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserPoolService(mock_session)
@@ -98,6 +103,7 @@ def test_list_pools_empty(org_context: OrgContext, mock_session: MagicMock) -> N
 
     records = svc.list_pools(org_context)
     assert records == []
+
 
 def test_list_pools_multiple(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserPoolService(mock_session)
@@ -117,6 +123,7 @@ def test_list_pools_multiple(org_context: OrgContext, mock_session: MagicMock) -
 
     records = svc.list_pools(org_context)
     assert len(records) == 2
+
 
 def test_scale_pool_success(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserPoolService(mock_session)
@@ -139,11 +146,13 @@ def test_scale_pool_success(org_context: OrgContext, mock_session: MagicMock) ->
     mock_session.execute.assert_called_once()
     mock_session.flush.assert_called_once()
 
+
 def test_scale_pool_not_found(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserPoolService(mock_session)
     mock_session.scalar.return_value = None
     with pytest.raises(BrowserPoolNotFoundError):
         svc.scale_pool(org_context, uuid.uuid4(), target_instances=10)
+
 
 def test_destroy_pool_success(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserPoolService(mock_session)
@@ -164,12 +173,16 @@ def test_destroy_pool_success(org_context: OrgContext, mock_session: MagicMock) 
     mock_session.execute.assert_called_once()
     mock_session.flush.assert_called_once()
 
+
 def test_destroy_pool_not_found(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = BrowserPoolService(mock_session)
     mock_session.scalar.return_value = None
     with pytest.raises(BrowserPoolNotFoundError):
         svc.destroy_pool(org_context, uuid.uuid4())
 
+
 @pytest.fixture(autouse=True)
 def mock_quota_service_daily_events(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("xiosync.services.quotas.QuotaService.check_daily_events", lambda self, org_id: None)
+    monkeypatch.setattr(
+        "xiosync.services.quotas.QuotaService.check_daily_events", lambda self, org_id: None
+    )

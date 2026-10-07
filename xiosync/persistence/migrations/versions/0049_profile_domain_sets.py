@@ -9,6 +9,7 @@ Create Date: 2026-09-21
 Adds materialization_mode and profile_version to identities.
 Creates profile_domain_sets table for domain-scoped cookie health tracking.
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -17,6 +18,7 @@ revision = "0049"
 down_revision = ("0048", "0024", "c3d4e5f6a7b8")
 branch_labels = None
 depends_on = None
+
 
 def upgrade():
     op.execute("""
@@ -48,6 +50,7 @@ def upgrade():
     CREATE POLICY rls_profile_domain_sets ON profile_domain_sets
         USING (organization_id = current_setting('app.current_org_id')::UUID);
     """)
+
 
 def downgrade():
     op.execute("""

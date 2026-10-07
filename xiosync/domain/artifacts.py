@@ -34,10 +34,7 @@ class InvalidProviderTypeError(ValueError):
     """Raised when the provider_type is not one of the known types."""
 
     def __init__(self, provider_type: str) -> None:
-        super().__init__(
-            f"provider_type {provider_type!r} is not one of "
-            f"{sorted(PROVIDER_TYPES)}"
-        )
+        super().__init__(f"provider_type {provider_type!r} is not one of {sorted(PROVIDER_TYPES)}")
         self.provider_type = provider_type
 
 

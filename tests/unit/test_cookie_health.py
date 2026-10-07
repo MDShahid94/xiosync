@@ -1,36 +1,48 @@
 """Unit tests for xiosync.domain.cookie_health (4-tier classification)."""
+
 from __future__ import annotations
 
 import time
 
-import pytest
-
-from xiosync.domain.profile_identity import BrowserCookie, CookieTier, CookieHealthUrgency
 from xiosync.domain.cookie_health import (
     AUTH_REQUIRED,
-    ROTATING,
-    LOGIN_TOKENS,
-    CRIT_DAYS,
-    WARN_DAYS,
     MIN_COOKIE_COUNT,
-    classify_cookie,
+    ROTATING,
     check_cookie_health,
+    classify_cookie,
     should_refresh,
 )
+from xiosync.domain.profile_identity import BrowserCookie, CookieHealthUrgency, CookieTier
 
 
 def _cookie(name: str, domain: str = ".google.com", expires: float = -1) -> BrowserCookie:
     return BrowserCookie(
-        name=name, value="v", domain=domain, path="/",
-        expires=expires, httpOnly=True, secure=True, sameSite="Lax", size=None,
+        name=name,
+        value="v",
+        domain=domain,
+        path="/",
+        expires=expires,
+        httpOnly=True,
+        secure=True,
+        sameSite="Lax",
+        size=None,
     )
 
 
 # ── Tests: Cookie classification ─────────────────────────────────────
 
+
 class TestClassifyCookie:
     def test_auth_required_cookies(self):
-        for name in ("SID", "SSID", "HSID", "APISID", "SAPISID", "__Secure-1PSID", "__Secure-3PSID"):
+        for name in (
+            "SID",
+            "SSID",
+            "HSID",
+            "APISID",
+            "SAPISID",
+            "__Secure-1PSID",
+            "__Secure-3PSID",
+        ):
             assert classify_cookie(name) == CookieTier.PRIMARY, f"{name} should be PRIMARY"
 
     def test_rotating_cookies(self):
@@ -46,6 +58,7 @@ class TestClassifyCookie:
 
 
 # ── Tests: Health check ──────────────────────────────────────────────
+
 
 class TestCheckCookieHealth:
     def test_healthy_session_with_all_cookies(self):
@@ -108,6 +121,7 @@ class TestCheckCookieHealth:
 
 
 # ── Tests: should_refresh ────────────────────────────────────────────
+
 
 class TestShouldRefresh:
     def test_returns_true_for_immediate(self):

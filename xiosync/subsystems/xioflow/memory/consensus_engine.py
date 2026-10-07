@@ -10,6 +10,7 @@ from xiosync.subsystems.xioflow.models.memory_nodes import XioflowMemoryNode
 
 logger = logging.getLogger(__name__)
 
+
 class ConsensusEngine:
     """Bayesian EMA voting and tier promotion."""
 
@@ -17,12 +18,12 @@ class ConsensusEngine:
         """Initialize with a SQLAlchemy session."""
         self.session = session
         self.settings = {
-            'ema_alpha': 0.3,
-            'prior_weight': 5.0,
-            'prior_mean': 0.5,
-            'promote_threshold': 0.75,
-            'demote_threshold': 0.25,
-            'archive_threshold': 0.1
+            "ema_alpha": 0.3,
+            "prior_weight": 5.0,
+            "prior_mean": 0.5,
+            "promote_threshold": 0.75,
+            "demote_threshold": 0.25,
+            "archive_threshold": 0.1,
         }
 
     @staticmethod
@@ -31,15 +32,15 @@ class ConsensusEngine:
         raw_vote: float,
         tier_confidence: float,
         vote_weight: float,
-        settings: dict
+        settings: dict,
     ) -> tuple[float, float, float]:
         """Calculates bayesian score, new ema, and new weight."""
-        alpha = settings['ema_alpha']
+        alpha = settings["ema_alpha"]
         new_ema = alpha * (raw_vote * tier_confidence) + (1 - alpha) * existing_score
         new_weight = vote_weight + abs(raw_vote)
 
-        prior_weight = settings['prior_weight']
-        prior_mean = settings['prior_mean']
+        prior_weight = settings["prior_weight"]
+        prior_mean = settings["prior_mean"]
 
         bayesian = (new_weight * new_ema + prior_weight * prior_mean) / (new_weight + prior_weight)
         return (bayesian, new_ema, new_weight)
@@ -52,7 +53,7 @@ class ConsensusEngine:
         raw_vote: float,
         tier_confidence: float = 1.0,
         winning_tier: str | None = None,
-        context_hash: str | None = None
+        context_hash: str | None = None,
     ) -> None:
         """Insert vote, recalculate Bayesian scores, and auto-promote/demote."""
         stmt = insert(XioflowConsensusVote).values(
@@ -64,19 +65,21 @@ class ConsensusEngine:
             context_hash=context_hash,
         )
         stmt = stmt.on_conflict_do_update(
-            index_elements=['node_id', 'voter_id', 'context_hash'],
-            set_={'raw_vote': raw_vote, 'tier_confidence': tier_confidence}
+            index_elements=["node_id", "voter_id", "context_hash"],
+            set_={"raw_vote": raw_vote, "tier_confidence": tier_confidence},
         )
         self.session.execute(stmt)
 
-        node = self.session.query(XioflowMemoryNode).filter_by(
-            id=node_id, organization_id=org_id
-        ).first()
+        node = (
+            self.session.query(XioflowMemoryNode)
+            .filter_by(id=node_id, organization_id=org_id)
+            .first()
+        )
         if not node:
             return
 
-        existing_score = getattr(node, 'ema_score', 0.5)
-        vote_weight = getattr(node, 'total_vote_weight', 0.0)
+        existing_score = getattr(node, "ema_score", 0.5)
+        vote_weight = getattr(node, "total_vote_weight", 0.0)
 
         bayesian, new_ema, new_weight = self.calculate_bayesian_ema(
             existing_score, raw_vote, tier_confidence, vote_weight, self.settings
@@ -86,23 +89,22 @@ class ConsensusEngine:
         node.ema_score = new_ema
         node.total_vote_weight = new_weight
 
-        if node.tier == 'platform_global':
+        if node.tier == "platform_global":
             self.session.commit()
             return
 
-        if bayesian > self.settings['promote_threshold'] and new_weight > 5.0:
-            if node.tier == 'project_experimental':
-                node.tier = 'project_ground_truth'
-            elif node.tier == 'project_ground_truth':
-                node.tier = 'organization_shared'
-        elif bayesian < self.settings['demote_threshold']:
-            if node.tier == 'organization_shared':
-                node.tier = 'project_ground_truth'
-            elif node.tier == 'project_ground_truth':
-                node.tier = 'project_experimental'
+        if bayesian > self.settings["promote_threshold"] and new_weight > 5.0:
+            if node.tier == "project_experimental":
+                node.tier = "project_ground_truth"
+            elif node.tier == "project_ground_truth":
+                node.tier = "organization_shared"
+        elif bayesian < self.settings["demote_threshold"]:
+            if node.tier == "organization_shared":
+                node.tier = "project_ground_truth"
+            elif node.tier == "project_ground_truth":
+                node.tier = "project_experimental"
 
-        if bayesian < self.settings['archive_threshold']:
-            node.status = 'ARCHIVED'
+        if bayesian < self.settings["archive_threshold"]:
+            node.status = "ARCHIVED"
 
         self.session.commit()
-

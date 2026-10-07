@@ -13,6 +13,7 @@ POST /xioflow/compute-nodes/{name}/enable   — enable for this org
 POST /xioflow/compute-nodes/{name}/disable  — disable for this org
 DELETE /xioflow/compute-nodes/{name}        — deregister (org-owned only)
 """
+
 from __future__ import annotations
 
 import logging
@@ -35,59 +36,62 @@ router = APIRouter(prefix="/xioflow/compute-nodes", tags=["XIOFLOW Compute Nodes
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
+
 class RegisterNodeRequest(BaseModel):
-    name:         str
-    description:  str = ""
+    name: str
+    description: str = ""
     display_name: str = ""
-    runtime:      str
-    source_code:  str
-    manifest:     dict[str, Any] = {}
+    runtime: str
+    source_code: str
+    manifest: dict[str, Any] = {}
 
     model_config = ConfigDict(from_attributes=True)
 
 
 class ComputeNodeResponse(BaseModel):
-    id:           str
-    name:         str
+    id: str
+    name: str
     display_name: str
-    description:  str
-    runtime:      str
-    source_code:  str
-    manifest:     dict[str, Any]
-    enabled:      bool
-    created_at:   datetime
-    updated_at:   datetime
-    is_platform:  bool  # True when organization_id IS NULL
+    description: str
+    runtime: str
+    source_code: str
+    manifest: dict[str, Any]
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+    is_platform: bool  # True when organization_id IS NULL
 
     model_config = ConfigDict(from_attributes=True)
 
 
 def _row_to_response(row: Any) -> dict:
     return {
-        "id":           str(row["id"]),
-        "name":         row["name"],
+        "id": str(row["id"]),
+        "name": row["name"],
         "display_name": row["display_name"] or "",
-        "description":  row["description"] or "",
-        "runtime":      row["runtime"],
-        "source_code":  row["source_code"],
-        "manifest":     row["manifest"] or {},
-        "enabled":      bool(row["enabled"]),
-        "created_at":   row["created_at"],
-        "updated_at":   row["updated_at"],
-        "is_platform":  row["organization_id"] is None,
+        "description": row["description"] or "",
+        "runtime": row["runtime"],
+        "source_code": row["source_code"],
+        "manifest": row["manifest"] or {},
+        "enabled": bool(row["enabled"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "is_platform": row["organization_id"] is None,
     }
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
+
 @router.get("/", response_model=list[ComputeNodeResponse])
 def list_compute_nodes(
-    db:  Session    = Depends(get_db),
+    db: Session = Depends(get_db),
     ctx: OrgContext = Depends(get_org_context),
 ) -> list[dict]:
     """List all compute nodes accessible to this org (org-private + platform-global)."""
-    rows = db.execute(
-        text("""
+    rows = (
+        db.execute(
+            text("""
             SELECT id, organization_id, name, display_name, description,
                    runtime, source_code, manifest, enabled, created_at, updated_at
             FROM   compute_node_definitions
@@ -95,21 +99,26 @@ def list_compute_nodes(
                OR  organization_id IS NULL
             ORDER  BY organization_id NULLS LAST, name ASC
         """),
-        {"org": str(ctx.organization_id)},
-    ).mappings().all()
+            {"org": str(ctx.organization_id)},
+        )
+        .mappings()
+        .all()
+    )
     return [_row_to_response(r) for r in rows]
 
 
 @router.post("/", response_model=ComputeNodeResponse, status_code=201)
 def register_compute_node(
     req: RegisterNodeRequest,
-    db:  Session    = Depends(get_db),
+    db: Session = Depends(get_db),
     ctx: OrgContext = Depends(get_org_context),
 ) -> dict:
     """Register or update a compute node definition (upsert by org + name)."""
     import json
-    row = db.execute(
-        text("""
+
+    row = (
+        db.execute(
+            text("""
             INSERT INTO compute_node_definitions
               (id, organization_id, name, display_name, description,
                runtime, source_code, manifest, enabled, created_at, updated_at)
@@ -126,30 +135,36 @@ def register_compute_node(
             RETURNING id, organization_id, name, display_name, description,
                       runtime, source_code, manifest, enabled, created_at, updated_at
         """),
-        {
-            "org":      str(ctx.organization_id),
-            "name":     req.name,
-            "dname":    req.display_name or req.name,
-            "desc":     req.description,
-            "runtime":  req.runtime,
-            "src":      req.source_code,
-            "manifest": json.dumps(req.manifest),
-        },
-    ).mappings().fetchone()
+            {
+                "org": str(ctx.organization_id),
+                "name": req.name,
+                "dname": req.display_name or req.name,
+                "desc": req.description,
+                "runtime": req.runtime,
+                "src": req.source_code,
+                "manifest": json.dumps(req.manifest),
+            },
+        )
+        .mappings()
+        .fetchone()
+    )
     db.commit()
-    logger.info("compute_node.registered", extra={"name": req.name, "org": str(ctx.organization_id)})
+    logger.info(
+        "compute_node.registered", extra={"name": req.name, "org": str(ctx.organization_id)}
+    )
     return _row_to_response(row)
 
 
 @router.get("/{name}", response_model=ComputeNodeResponse)
 def get_compute_node(
     name: str,
-    db:   Session    = Depends(get_db),
-    ctx:  OrgContext = Depends(get_org_context),
+    db: Session = Depends(get_db),
+    ctx: OrgContext = Depends(get_org_context),
 ) -> dict:
     """Fetch a single compute node by name (org-private or platform-global)."""
-    row = db.execute(
-        text("""
+    row = (
+        db.execute(
+            text("""
             SELECT id, organization_id, name, display_name, description,
                    runtime, source_code, manifest, enabled, created_at, updated_at
             FROM   compute_node_definitions
@@ -158,8 +173,11 @@ def get_compute_node(
             ORDER  BY organization_id NULLS LAST
             LIMIT  1
         """),
-        {"name": name, "org": str(ctx.organization_id)},
-    ).mappings().fetchone()
+            {"name": name, "org": str(ctx.organization_id)},
+        )
+        .mappings()
+        .fetchone()
+    )
     if not row:
         raise HTTPException(status_code=404, detail=f"Compute node '{name}' not found")
     return _row_to_response(row)
@@ -168,20 +186,24 @@ def get_compute_node(
 @router.post("/{name}/enable", response_model=ComputeNodeResponse)
 def enable_compute_node(
     name: str,
-    db:   Session    = Depends(get_db),
-    ctx:  OrgContext = Depends(get_org_context),
+    db: Session = Depends(get_db),
+    ctx: OrgContext = Depends(get_org_context),
 ) -> dict:
     """Enable a compute node for this org."""
-    row = db.execute(
-        text("""
+    row = (
+        db.execute(
+            text("""
             UPDATE compute_node_definitions
             SET    enabled = true, updated_at = now()
             WHERE  name = :name AND organization_id = :org
             RETURNING id, organization_id, name, display_name, description,
                       runtime, source_code, manifest, enabled, created_at, updated_at
         """),
-        {"name": name, "org": str(ctx.organization_id)},
-    ).mappings().fetchone()
+            {"name": name, "org": str(ctx.organization_id)},
+        )
+        .mappings()
+        .fetchone()
+    )
     if not row:
         raise HTTPException(status_code=404, detail=f"Compute node '{name}' not found for this org")
     db.commit()
@@ -191,20 +213,24 @@ def enable_compute_node(
 @router.post("/{name}/disable", response_model=ComputeNodeResponse)
 def disable_compute_node(
     name: str,
-    db:   Session    = Depends(get_db),
-    ctx:  OrgContext = Depends(get_org_context),
+    db: Session = Depends(get_db),
+    ctx: OrgContext = Depends(get_org_context),
 ) -> dict:
     """Disable a compute node for this org."""
-    row = db.execute(
-        text("""
+    row = (
+        db.execute(
+            text("""
             UPDATE compute_node_definitions
             SET    enabled = false, updated_at = now()
             WHERE  name = :name AND organization_id = :org
             RETURNING id, organization_id, name, display_name, description,
                       runtime, source_code, manifest, enabled, created_at, updated_at
         """),
-        {"name": name, "org": str(ctx.organization_id)},
-    ).mappings().fetchone()
+            {"name": name, "org": str(ctx.organization_id)},
+        )
+        .mappings()
+        .fetchone()
+    )
     if not row:
         raise HTTPException(status_code=404, detail=f"Compute node '{name}' not found for this org")
     db.commit()
@@ -214,8 +240,8 @@ def disable_compute_node(
 @router.delete("/{name}", status_code=204)
 def deregister_compute_node(
     name: str,
-    db:   Session    = Depends(get_db),
-    ctx:  OrgContext = Depends(get_org_context),
+    db: Session = Depends(get_db),
+    ctx: OrgContext = Depends(get_org_context),
 ) -> None:
     """Delete an org-owned compute node definition (platform nodes cannot be deleted)."""
     result = db.execute(
@@ -235,8 +261,8 @@ def deregister_compute_node(
 
 
 # ── Router registration ────────────────────────────────────────────────────────
-from xiosync.api.router_registry import register_router  # noqa: E402
 from xiosync.api.middleware.rbac import require_capability  # noqa: E402
+from xiosync.api.router_registry import register_router  # noqa: E402
 
 register_router(
     router,

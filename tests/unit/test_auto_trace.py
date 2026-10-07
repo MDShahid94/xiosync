@@ -5,20 +5,19 @@ Validates:
   - PageProxy: click/fill/goto interception, passthrough, capture failure
   - DAGGraphBuilder: trace → DAG conversion, intent dedup, terminal node, volatility
 """
+
 from __future__ import annotations
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
-
-import pytest
 
 from xiosync.subsystems.xioflow.ingestion.trace_collector import (
     TraceAction,
     TraceCollector,
 )
 
-
 # ── TraceCollector ────────────────────────────────────────────────────────────
+
 
 class TestTraceCollector:
     """Tests for TraceCollector action stream builder."""
@@ -103,6 +102,7 @@ class TestTraceCollector:
 
 # ── PageProxy ─────────────────────────────────────────────────────────────────
 
+
 class TestPageProxy:
     """Tests for PageProxy transparent Page wrapper."""
 
@@ -128,10 +128,13 @@ class TestPageProxy:
         trace = TraceCollector(org_id="org1", domain="example.com")
 
         dom = MagicMock()
-        dom.inspect_target = AsyncMock(return_value=dom_result or {
-            "place_value": {"selector": "#btn", "test_id": "submit"},
-            "face_value": {"tag": "button", "text": "Submit"},
-        })
+        dom.inspect_target = AsyncMock(
+            return_value=dom_result
+            or {
+                "place_value": {"selector": "#btn", "test_id": "submit"},
+                "face_value": {"tag": "button", "text": "Submit"},
+            }
+        )
 
         proxy = PageProxy(mock_page, trace, dom)
         return proxy, mock_page, trace, dom
@@ -197,6 +200,7 @@ class TestPageProxy:
 
     def test_no_dom_inspector(self):
         from xiosync.subsystems.xioflow.ingestion.page_proxy import PageProxy
+
         mock_page = MagicMock()
         mock_page.url = "https://example.com"
         mock_page.click = AsyncMock()
@@ -209,11 +213,13 @@ class TestPageProxy:
 
 # ── DAGGraphBuilder ───────────────────────────────────────────────────────────
 
+
 class TestDAGGraphBuilder:
     """Tests for DAGGraphBuilder trace → DAG conversion."""
 
     def test_empty_trace(self):
         from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+
         tc = TraceCollector(org_id="org1", domain="example.com")
         result = DAGGraphBuilder().build(tc, {})
         assert result["nodes"] == []
@@ -221,6 +227,7 @@ class TestDAGGraphBuilder:
 
     def test_single_action_trace(self):
         from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+
         tc = TraceCollector(org_id="org1", domain="example.com")
         tc.record(TraceAction(action_type="click", place_value={"selector": "#btn"}))
         result = DAGGraphBuilder().build(tc, {"device_type": "desktop"})
@@ -232,6 +239,7 @@ class TestDAGGraphBuilder:
 
     def test_multi_action_chain(self):
         from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+
         tc = TraceCollector(org_id="org1", domain="example.com")
         tc.enter_step("login")
         tc.record(TraceAction(action_type="navigate", action_params={"url": "https://example.com"}))
@@ -247,6 +255,7 @@ class TestDAGGraphBuilder:
 
     def test_previous_intent_linkage(self):
         from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+
         tc = TraceCollector(org_id="org1", domain="example.com")
         tc.record(TraceAction(action_type="navigate"))
         tc.record(TraceAction(action_type="click"))
@@ -256,6 +265,7 @@ class TestDAGGraphBuilder:
 
     def test_recording_method_auto_trace(self):
         from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+
         tc = TraceCollector(org_id="org1", domain="example.com")
         tc.record(TraceAction(action_type="click"))
         result = DAGGraphBuilder().build(tc, {})
@@ -264,6 +274,7 @@ class TestDAGGraphBuilder:
 
     def test_control_actions_filtered(self):
         from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+
         tc = TraceCollector(org_id="org1", domain="example.com")
         tc.record(TraceAction(action_type="wait_for_selector"))
         tc.record(TraceAction(action_type="click"))
@@ -275,6 +286,7 @@ class TestDAGGraphBuilder:
 
     def test_action_type_mapping(self):
         from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+
         tc = TraceCollector(org_id="org1", domain="example.com")
         tc.record(TraceAction(action_type="press"))
         tc.record(TraceAction(action_type="hover"))
@@ -284,15 +296,17 @@ class TestDAGGraphBuilder:
 
     def test_volatility_classification(self):
         from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+
         tc = TraceCollector(org_id="org1", domain="example.com")
         tc.record(TraceAction(action_type="click", category="browser"))
         tc.record(TraceAction(action_type="navigate", category="browser"))
         result = DAGGraphBuilder().build(tc, {})
         assert result["nodes"][0].get("volatility_type") == "dynamic"  # click
-        assert result["nodes"][1].get("volatility_type") == "static"   # navigate
+        assert result["nodes"][1].get("volatility_type") == "static"  # navigate
 
     def test_metadata_included(self):
         from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+
         tc = TraceCollector(org_id="org1", domain="example.com", run_id="run1")
         tc.record(TraceAction(action_type="click"))
         result = DAGGraphBuilder().build(tc, {}, template_name="google-signin")
@@ -302,6 +316,7 @@ class TestDAGGraphBuilder:
 
     def test_intent_deduplication(self):
         from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+
         tc = TraceCollector(org_id="org1", domain="example.com")
         # Force same intent on two actions
         tc.record(TraceAction(action_type="click", intent="same_intent"))

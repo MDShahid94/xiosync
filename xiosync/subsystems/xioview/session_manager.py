@@ -4,6 +4,7 @@ This module is the authoritative owner of browser session state for XIOVIEW.
 It manages manually-attached sessions and caches CDP sessions for interaction,
 providing a clean API for other modules to access browser state.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -26,6 +27,7 @@ _interaction_cdp_sessions: dict[str, Any] = {}
 
 
 # ── CDP Session Management ────────────────────────────────────────────────────
+
 
 async def get_or_create_cdp_session(session_id: str, page: Any) -> Any:
     """Get or create a cached CDP session for dispatching interactions.
@@ -71,6 +73,7 @@ def invalidate_cdp_session(session_id: str) -> None:
 
 # ── Browser Attachment ────────────────────────────────────────────────────────
 
+
 async def get_playwright_page(session_id: str) -> Any | None:
     """Resolve the live Playwright page for a browser session.
 
@@ -87,6 +90,7 @@ async def get_playwright_page(session_id: str) -> Any | None:
 
     try:
         from xiosync.worker.run_dispatcher import get_active_page  # noqa: PLC0415
+
         page = await get_active_page(session_id)
         if page is not None:
             return page
@@ -95,6 +99,7 @@ async def get_playwright_page(session_id: str) -> Any | None:
 
     try:
         from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+
         return get_runtime_pool().get_page(session_id)
     except Exception:
         return None
@@ -115,6 +120,7 @@ async def attach_browser(
         raise ValueError("invalid_internal_secret")
 
     from patchright.async_api import async_playwright  # noqa: PLC0415
+
     from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
 
     await cleanup_dead_sessions()
@@ -133,13 +139,16 @@ async def attach_browser(
             pass
 
     cdp_http_url = cdp_ws_url.replace("ws://", "http://").split("/json")[0]
-    logger.info("xioview.attach_start", extra={
-        "session_id": session_id,
-        "url": cdp_http_url,
-        "mode": mode,
-        "novnc_url": novnc_url,
-        "profile_id": profile_id,
-    })
+    logger.info(
+        "xioview.attach_start",
+        extra={
+            "session_id": session_id,
+            "url": cdp_http_url,
+            "mode": mode,
+            "novnc_url": novnc_url,
+            "profile_id": profile_id,
+        },
+    )
 
     pw = await async_playwright().start()
     try:
@@ -170,8 +179,12 @@ async def attach_browser(
     # Update registry entry with profile/worker metadata for HITL-aware viewer
     try:
         from xiosync.subsystems.xioview.registry import get_registry  # noqa: PLC0415
+
         get_registry().update_session_meta(
-            session_id, novnc_url=novnc_url, profile_id=profile_id, worker_node=worker_node,
+            session_id,
+            novnc_url=novnc_url,
+            profile_id=profile_id,
+            worker_node=worker_node,
         )
     except Exception:
         pass
@@ -192,8 +205,7 @@ async def attach_browser(
                 if cur_entry:
                     cur_cdp = cur_entry[0] if isinstance(cur_entry, tuple) else cur_entry
                     await cur_cdp.send(
-                        "Runtime.evaluate",
-                        {"expression": DOM_CURSOR_JS, "returnByValue": False}
+                        "Runtime.evaluate", {"expression": DOM_CURSOR_JS, "returnByValue": False}
                     )
             except Exception:
                 pass
@@ -201,19 +213,25 @@ async def attach_browser(
         page.on("load", _on_load)
 
     except Exception as warm_exc:
-        logger.warning("xioview.cdp_warmup_failed", extra={
-            "session_id": session_id,
-            "error": str(warm_exc),
-        })
+        logger.warning(
+            "xioview.cdp_warmup_failed",
+            extra={
+                "session_id": session_id,
+                "error": str(warm_exc),
+            },
+        )
 
     current_url = page.url
-    logger.info("xioview.attached", extra={
-        "session_id": session_id,
-        "url": current_url,
-        "mode": mode,
-        "novnc_url": novnc_url,
-        "profile_id": profile_id,
-    })
+    logger.info(
+        "xioview.attached",
+        extra={
+            "session_id": session_id,
+            "url": current_url,
+            "mode": mode,
+            "novnc_url": novnc_url,
+            "profile_id": profile_id,
+        },
+    )
 
     return {
         "session_id": session_id,
@@ -259,7 +277,8 @@ async def cleanup_dead_sessions() -> None:
     from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
 
     dead = [
-        sid for sid, entry in list(_attached_browsers.items())
+        sid
+        for sid, entry in list(_attached_browsers.items())
         if not entry.get("browser") or not entry["browser"].is_connected()
     ]
 
@@ -279,13 +298,17 @@ async def cleanup_dead_sessions() -> None:
         logger.info("xioview.dead_session_cleaned", extra={"session_id": sid})
 
     if dead:
-        logger.info("xioview.cleanup_dead_sessions", extra={
-            "removed_count": len(dead),
-            "alive_count": len(_attached_browsers),
-        })
+        logger.info(
+            "xioview.cleanup_dead_sessions",
+            extra={
+                "removed_count": len(dead),
+                "alive_count": len(_attached_browsers),
+            },
+        )
 
 
 # ── Viewport and Stream Info Accessors ────────────────────────────────────────
+
 
 def get_attached_info(session_id: str) -> dict[str, Any] | None:
     """Get the _attached_browsers entry for a session, if any."""

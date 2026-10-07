@@ -5,6 +5,7 @@ The xiorun-agent is a thin FastAPI process started by boot.py Phase 7 on each
 Colab worker. It handles launching/terminating patchright Chromium processes
 and performing direct Colab ↔ R2 profile transfers (avoiding a Mac → Colab hop).
 """
+
 from __future__ import annotations
 
 import logging
@@ -15,8 +16,8 @@ import httpx
 logger = logging.getLogger(__name__)
 
 AGENT_PORT: int = 9300
-AGENT_TIMEOUT: float = 30.0      # launch can take ~10s on cold start
-PROFILE_TIMEOUT: float = 120.0   # R2 profile pull/push can take longer
+AGENT_TIMEOUT: float = 30.0  # launch can take ~10s on cold start
+PROFILE_TIMEOUT: float = 120.0  # R2 profile pull/push can take longer
 
 
 class XIORunNodeClient:
@@ -26,7 +27,12 @@ class XIORunNodeClient:
         self._base = f"http://{tailscale_ip}:{port}"
         self._tailscale_ip = tailscale_ip
         from xiosync.core.config import settings
-        self._secret = secret or settings.WORKER_SECRET.get_secret_value() if hasattr(settings.WORKER_SECRET, 'get_secret_value') else str(settings.WORKER_SECRET)
+
+        self._secret = (
+            secret or settings.WORKER_SECRET.get_secret_value()
+            if hasattr(settings.WORKER_SECRET, "get_secret_value")
+            else str(settings.WORKER_SECRET)
+        )
         self._headers = {"X-Worker-Secret": self._secret}
 
     async def health(self) -> bool:
@@ -65,11 +71,11 @@ class XIORunNodeClient:
             RuntimeError if response is missing cdp_ws_url.
         """
         payload = {
-            "session_id":  session_id,
-            "proxy_url":   proxy_url,
+            "session_id": session_id,
+            "proxy_url": proxy_url,
             "profile_dir": profile_dir,
             "fingerprint": fingerprint,
-            "headless":    headless,
+            "headless": headless,
         }
         async with httpx.AsyncClient(headers=self._headers, timeout=AGENT_TIMEOUT) as client:
             resp = await client.post(f"{self._base}/launch", json=payload)
@@ -77,15 +83,16 @@ class XIORunNodeClient:
             data = resp.json()
 
         if "cdp_ws_url" not in data:
-            raise RuntimeError(
-                f"xiorun-agent /launch missing cdp_ws_url: {data}"
-            )
+            raise RuntimeError(f"xiorun-agent /launch missing cdp_ws_url: {data}")
 
-        logger.info("xiorun.node_client.launched", extra={
-            "session_id": session_id,
-            "node_ip":    self._tailscale_ip,
-            "cdp_ws_url": data["cdp_ws_url"],
-        })
+        logger.info(
+            "xiorun.node_client.launched",
+            extra={
+                "session_id": session_id,
+                "node_ip": self._tailscale_ip,
+                "cdp_ws_url": data["cdp_ws_url"],
+            },
+        )
         return data
 
     async def terminate_browser(self, session_id: str) -> None:
@@ -99,11 +106,14 @@ class XIORunNodeClient:
                 resp.raise_for_status()
         except Exception as exc:
             # Best-effort — log and continue (process may already be dead)
-            logger.warning("xiorun.node_client.terminate_error", extra={
-                "session_id": session_id,
-                "node_ip":    self._tailscale_ip,
-                "error":      str(exc),
-            })
+            logger.warning(
+                "xiorun.node_client.terminate_error",
+                extra={
+                    "session_id": session_id,
+                    "node_ip": self._tailscale_ip,
+                    "error": str(exc),
+                },
+            )
 
     async def pull_profile(
         self,
@@ -132,11 +142,14 @@ class XIORunNodeClient:
                 return None
             raise
         except Exception as exc:
-            logger.warning("xiorun.node_client.pull_profile_error", extra={
-                "identity_id":      identity_id,
-                "drive_object_key": drive_object_key,
-                "error":            str(exc),
-            })
+            logger.warning(
+                "xiorun.node_client.pull_profile_error",
+                extra={
+                    "identity_id": identity_id,
+                    "drive_object_key": drive_object_key,
+                    "error": str(exc),
+                },
+            )
             return None
 
     async def push_profile(
@@ -154,19 +167,25 @@ class XIORunNodeClient:
                 resp = await client.post(
                     f"{self._base}/push-profile",
                     json={
-                        "identity_id":      identity_id,
-                        "local_dir":        local_dir,
+                        "identity_id": identity_id,
+                        "local_dir": local_dir,
                         "drive_object_key": drive_object_key,
                     },
                 )
                 resp.raise_for_status()
-            logger.info("xiorun.node_client.profile_pushed", extra={
-                "identity_id":      identity_id,
-                "drive_object_key": drive_object_key,
-            })
+            logger.info(
+                "xiorun.node_client.profile_pushed",
+                extra={
+                    "identity_id": identity_id,
+                    "drive_object_key": drive_object_key,
+                },
+            )
         except Exception as exc:
-            logger.warning("xiorun.node_client.push_profile_error", extra={
-                "identity_id":      identity_id,
-                "drive_object_key": drive_object_key,
-                "error":            str(exc),
-            })
+            logger.warning(
+                "xiorun.node_client.push_profile_error",
+                extra={
+                    "identity_id": identity_id,
+                    "drive_object_key": drive_object_key,
+                    "error": str(exc),
+                },
+            )

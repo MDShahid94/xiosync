@@ -4,18 +4,22 @@ import asyncio
 import logging
 import os
 import sys
-import tempfile
 from io import StringIO
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_RUNTIMES = {'python', 'bash', 'docker', 'wasm'}
+ALLOWED_RUNTIMES = {"python", "bash", "docker", "wasm"}
 
 # Blocked builtins in Python sandbox — prevent import of dangerous modules
-_BLOCKED_MODULES = frozenset({
-    'subprocess', 'shutil', 'ctypes', 'importlib',
-})
+_BLOCKED_MODULES = frozenset(
+    {
+        "subprocess",
+        "shutil",
+        "ctypes",
+        "importlib",
+    }
+)
 
 
 class ComputeNodeRunner:
@@ -51,47 +55,89 @@ class ComputeNodeRunner:
                 error (str | None): Error message if failed
         """
         if self.allowed_plugins and plugin_name not in self.allowed_plugins:
-            return {"success": False, "stdout": "", "result": None,
-                    "error": f"Plugin {plugin_name!r} is not in allowed list"}
+            return {
+                "success": False,
+                "stdout": "",
+                "result": None,
+                "error": f"Plugin {plugin_name!r} is not in allowed list",
+            }
 
         if runtime not in ALLOWED_RUNTIMES:
-            return {"success": False, "stdout": "", "result": None,
-                    "error": f"Runtime {runtime!r} is not supported. Allowed: {ALLOWED_RUNTIMES}"}
+            return {
+                "success": False,
+                "stdout": "",
+                "result": None,
+                "error": f"Runtime {runtime!r} is not supported. Allowed: {ALLOWED_RUNTIMES}",
+            }
 
-        if runtime == 'python':
-            return await self._run_python(plugin_name, source_code, action_params, workflow_vars, timeout)
-        elif runtime == 'bash':
-            return await self._run_bash(plugin_name, source_code, action_params, workflow_vars, timeout)
-        elif runtime == 'docker':
-            return await self._run_docker(plugin_name, source_code, action_params, workflow_vars, timeout)
+        if runtime == "python":
+            return await self._run_python(
+                plugin_name, source_code, action_params, workflow_vars, timeout
+            )
+        elif runtime == "bash":
+            return await self._run_bash(
+                plugin_name, source_code, action_params, workflow_vars, timeout
+            )
+        elif runtime == "docker":
+            return await self._run_docker(
+                plugin_name, source_code, action_params, workflow_vars, timeout
+            )
         else:
-            return {"success": False, "stdout": "", "result": None,
-                    "error": f"Runtime {runtime!r} not yet implemented"}
+            return {
+                "success": False,
+                "stdout": "",
+                "result": None,
+                "error": f"Runtime {runtime!r} not yet implemented",
+            }
 
     async def _run_python(
-        self, plugin_name: str, source_code: str,
-        action_params: dict, workflow_vars: dict, timeout: int,
+        self,
+        plugin_name: str,
+        source_code: str,
+        action_params: dict,
+        workflow_vars: dict,
+        timeout: int,
     ) -> dict[str, Any]:
         """Execute Python code in a restricted namespace with stdout capture."""
+
         def _exec_in_thread():
             # Build restricted namespace
             sandbox_globals = {
-                "__builtins__": {k: v for k, v in __builtins__.__dict__.items()
-                                 if k not in ('exec', 'eval', 'compile', '__import__', 'open')}
-                                if isinstance(__builtins__, type(sys)) else
-                                {k: v for k, v in __builtins__.items()
-                                 if k not in ('exec', 'eval', 'compile', '__import__', 'open')},
+                "__builtins__": {
+                    k: v
+                    for k, v in __builtins__.__dict__.items()
+                    if k not in ("exec", "eval", "compile", "__import__", "open")
+                }
+                if isinstance(__builtins__, type(sys))
+                else {
+                    k: v
+                    for k, v in __builtins__.items()
+                    if k not in ("exec", "eval", "compile", "__import__", "open")
+                },
                 "params": dict(action_params),
                 "vars": dict(workflow_vars),
                 "result": None,
             }
             # Allow safe imports
-            import json, math, re, datetime, hashlib, base64, urllib.parse
-            sandbox_globals.update({
-                "json": json, "math": math, "re": re,
-                "datetime": datetime, "hashlib": hashlib,
-                "base64": base64, "urllib": urllib,
-            })
+            import base64
+            import datetime
+            import hashlib
+            import json
+            import math
+            import re
+            import urllib.parse
+
+            sandbox_globals.update(
+                {
+                    "json": json,
+                    "math": math,
+                    "re": re,
+                    "datetime": datetime,
+                    "hashlib": hashlib,
+                    "base64": base64,
+                    "urllib": urllib,
+                }
+            )
 
             # Capture stdout
             old_stdout = sys.stdout
@@ -119,13 +165,21 @@ class ComputeNodeRunner:
                 asyncio.to_thread(_exec_in_thread),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
-            return {"success": False, "stdout": "", "result": None,
-                    "error": f"Python plugin {plugin_name!r} timed out after {timeout}s"}
+        except TimeoutError:
+            return {
+                "success": False,
+                "stdout": "",
+                "result": None,
+                "error": f"Python plugin {plugin_name!r} timed out after {timeout}s",
+            }
 
     async def _run_bash(
-        self, plugin_name: str, source_code: str,
-        action_params: dict, workflow_vars: dict, timeout: int,
+        self,
+        plugin_name: str,
+        source_code: str,
+        action_params: dict,
+        workflow_vars: dict,
+        timeout: int,
     ) -> dict[str, Any]:
         """Execute bash script as subprocess with env injection."""
         # Inject action_params and workflow_vars as environment variables
@@ -142,8 +196,8 @@ class ComputeNodeRunner:
                 env=env,
             )
             stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            stdout = stdout_b.decode('utf-8', errors='replace')
-            stderr = stderr_b.decode('utf-8', errors='replace')
+            stdout = stdout_b.decode("utf-8", errors="replace")
+            stderr = stderr_b.decode("utf-8", errors="replace")
 
             if proc.returncode != 0:
                 return {
@@ -156,9 +210,10 @@ class ComputeNodeRunner:
             result_val = None
             for line in reversed(stdout.strip().splitlines()):
                 line = line.strip()
-                if line.startswith('{'):
+                if line.startswith("{"):
                     try:
                         import json
+
                         result_val = json.loads(line)
                     except Exception:
                         pass
@@ -170,32 +225,56 @@ class ComputeNodeRunner:
                 "result": result_val,
                 "error": None,
             }
-        except asyncio.TimeoutError:
-            return {"success": False, "stdout": "", "result": None,
-                    "error": f"Bash plugin {plugin_name!r} timed out after {timeout}s"}
+        except TimeoutError:
+            return {
+                "success": False,
+                "stdout": "",
+                "result": None,
+                "error": f"Bash plugin {plugin_name!r} timed out after {timeout}s",
+            }
         except Exception as exc:
-            return {"success": False, "stdout": "", "result": None,
-                    "error": f"{type(exc).__name__}: {exc}"}
+            return {
+                "success": False,
+                "stdout": "",
+                "result": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
 
     async def _run_docker(
-        self, plugin_name: str, source_code: str,
-        action_params: dict, workflow_vars: dict, timeout: int,
+        self,
+        plugin_name: str,
+        source_code: str,
+        action_params: dict,
+        workflow_vars: dict,
+        timeout: int,
     ) -> dict[str, Any]:
         """Execute code inside a Docker container."""
-        image = action_params.get('image', '')
+        image = action_params.get("image", "")
         if not image:
-            return {"success": False, "stdout": "", "result": None,
-                    "error": "Docker runtime requires 'image' in action_params"}
+            return {
+                "success": False,
+                "stdout": "",
+                "result": None,
+                "error": "Docker runtime requires 'image' in action_params",
+            }
         # Build docker run command
         env_args = []
         for k, v in action_params.items():
-            if isinstance(v, str) and k not in ('image', 'command'):
-                env_args.extend(['-e', f'XIOFLOW_{k.upper()}={v}'])
-        cmd = action_params.get('command', source_code)
-        docker_cmd = ['docker', 'run', '--rm', '--network=none',
-                      f'--memory=512m', f'--cpus=1', *env_args, image]
+            if isinstance(v, str) and k not in ("image", "command"):
+                env_args.extend(["-e", f"XIOFLOW_{k.upper()}={v}"])
+        cmd = action_params.get("command", source_code)
+        docker_cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "--network=none",
+            "--memory=512m",
+            "--cpus=1",
+            *env_args,
+            image,
+        ]
         if cmd:
-            docker_cmd.extend(['sh', '-c', cmd])
+            docker_cmd.extend(["sh", "-c", cmd])
         try:
             proc = await asyncio.create_subprocess_exec(
                 *docker_cmd,
@@ -203,16 +282,24 @@ class ComputeNodeRunner:
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            stdout = stdout_b.decode('utf-8', errors='replace')
+            stdout = stdout_b.decode("utf-8", errors="replace")
             return {
                 "success": proc.returncode == 0,
                 "stdout": stdout,
                 "result": None,
                 "error": stderr_b.decode()[:500] if proc.returncode != 0 else None,
             }
-        except asyncio.TimeoutError:
-            return {"success": False, "stdout": "", "result": None,
-                    "error": f"Docker container timed out after {timeout}s"}
+        except TimeoutError:
+            return {
+                "success": False,
+                "stdout": "",
+                "result": None,
+                "error": f"Docker container timed out after {timeout}s",
+            }
         except Exception as exc:
-            return {"success": False, "stdout": "", "result": None,
-                    "error": f"{type(exc).__name__}: {exc}"}
+            return {
+                "success": False,
+                "stdout": "",
+                "result": None,
+                "error": f"{type(exc).__name__}: {exc}",
+            }

@@ -24,15 +24,13 @@ Or configure via environment variables:
     XIOSYNC_WORKER_SECRET — worker secret for API auth
     XIOBR_GH_PAT       — GitHub PAT to clone xio-browser
 """
+
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
-import traceback
 from pathlib import Path
 from typing import Any
 
@@ -44,20 +42,20 @@ except ImportError:
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-XIOSYNC_URL    = os.environ.get("XIOSYNC_URL", "https://xiosync.xiogrid.dev").rstrip("/")
-TOKEN          = os.environ.get("XIOSYNC_TOKEN", "")
-WORKER_SECRET  = os.environ.get("XIOSYNC_WORKER_SECRET", "")
-GH_PAT         = os.environ.get("XIOBR_GH_PAT", "")
-NODE_NAME      = os.environ.get("XIOSYNC_NODE_NAME", "colab-agent")
+XIOSYNC_URL = os.environ.get("XIOSYNC_URL", "https://xiosync.xiogrid.dev").rstrip("/")
+TOKEN = os.environ.get("XIOSYNC_TOKEN", "")
+WORKER_SECRET = os.environ.get("XIOSYNC_WORKER_SECRET", "")
+GH_PAT = os.environ.get("XIOBR_GH_PAT", "")
+NODE_NAME = os.environ.get("XIOSYNC_NODE_NAME", "colab-agent")
 
 # Derived at runtime from XIOSYNC
 WORKER_ID: str | None = None
 WORKER_CFG: dict[str, Any] = {}
 
-DRIVE_ROOT     = Path("/content/drive/MyDrive")
-CONTENT        = Path("/content")
-XIO_BROWSER    = CONTENT / "xio-browser"
-TS_STATE_KEY   = f"ts_states/{NODE_NAME}.state"
+DRIVE_ROOT = Path("/content/drive/MyDrive")
+CONTENT = Path("/content")
+XIO_BROWSER = CONTENT / "xio-browser"
+TS_STATE_KEY = f"ts_states/{NODE_NAME}.state"
 
 SESS = requests.Session()
 SESS.headers.update({"Content-Type": "application/json"})
@@ -69,12 +67,14 @@ def log(msg: str) -> None:
 
 # ── Phase 1: Mount Drive ──────────────────────────────────────────────────────
 
+
 def phase1_mount_drive() -> bool:
     """Mount Google Drive. Returns True if mounted."""
     try:
         from google.colab import drive  # type: ignore
+
         drive.mount("/content/drive")
-        log(f"✅ Drive mounted at /content/drive")
+        log("✅ Drive mounted at /content/drive")
         return True
     except Exception as exc:
         log(f"⚠️ Drive mount skipped: {exc}")
@@ -83,12 +83,15 @@ def phase1_mount_drive() -> bool:
 
 # ── Phase 2: Tailscale ────────────────────────────────────────────────────────
 
+
 def phase2_tailscale(storage_provider_id: str | None, ts_auth_key: str | None) -> None:
     """Install Tailscale and join tailnet. Restore state from XIOSYNC storage if available."""
     log("Installing Tailscale...")
     subprocess.run(
         "curl -fsSL https://tailscale.com/install.sh | sh",
-        shell=True, check=False, capture_output=True
+        shell=True,
+        check=False,
+        capture_output=True,
     )
 
     # Try to restore saved state
@@ -100,12 +103,14 @@ def phase2_tailscale(storage_provider_id: str | None, ts_auth_key: str | None) -
         if drive_path.exists():
             log(f"Restoring Tailscale state from Drive: {drive_path}")
             import shutil
+
             shutil.copy(str(drive_path), str(state_path))
 
     # Start tailscaled
     subprocess.Popen(
         ["tailscaled", "--state=/var/lib/tailscale/tailscaled.state"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     time.sleep(3)
 
@@ -113,12 +118,12 @@ def phase2_tailscale(storage_provider_id: str | None, ts_auth_key: str | None) -
     if ts_auth_key:
         result = subprocess.run(
             ["tailscale", "up", "--authkey", ts_auth_key, "--accept-routes"],
-            capture_output=True, text=True
+            capture_output=True,
+            text=True,
         )
         if result.returncode == 0:
             ip = subprocess.run(
-                ["tailscale", "ip", "-4"],
-                capture_output=True, text=True
+                ["tailscale", "ip", "-4"], capture_output=True, text=True
             ).stdout.strip()
             log(f"✅ Tailscale up — IP: {ip}")
         else:
@@ -129,6 +134,7 @@ def phase2_tailscale(storage_provider_id: str | None, ts_auth_key: str | None) -
 
 # ── Phase 3: xio-browser ─────────────────────────────────────────────────────
 
+
 def phase3_start_xio_browser(port: int = 4242) -> subprocess.Popen | None:
     """Clone (if needed) and start xio-browser MCP server."""
     if not XIO_BROWSER.exists():
@@ -136,7 +142,9 @@ def phase3_start_xio_browser(port: int = 4242) -> subprocess.Popen | None:
             log("Cloning xio-browser from GitHub...")
             subprocess.run(
                 f"git clone https://{GH_PAT}@github.com/xiogrid-dev/xio-browser.git {XIO_BROWSER}",
-                shell=True, check=False, capture_output=True
+                shell=True,
+                check=False,
+                capture_output=True,
             )
         else:
             log("⚠️ GH_PAT not set — skipping xio-browser clone")
@@ -147,14 +155,18 @@ def phase3_start_xio_browser(port: int = 4242) -> subprocess.Popen | None:
         return None
 
     log("Installing xio-browser deps...")
-    subprocess.run(["npm", "install", "--prefix", str(XIO_BROWSER)],
-                   capture_output=True, check=False)
+    subprocess.run(
+        ["npm", "install", "--prefix", str(XIO_BROWSER)], capture_output=True, check=False
+    )
 
     db_path = str(CONTENT / "xio-browser.db")
     cmd = [
-        "node", str(XIO_BROWSER / "bin" / "xio-browser.mjs"),
-        "--http", str(port),
-        "--db", db_path,
+        "node",
+        str(XIO_BROWSER / "bin" / "xio-browser.mjs"),
+        "--http",
+        str(port),
+        "--db",
+        db_path,
     ]
 
     # Pass Drive shared folder from config
@@ -176,14 +188,16 @@ def phase3_start_xio_browser(port: int = 4242) -> subprocess.Popen | None:
 
 # ── Phase 4: Self-enroll + pull config ────────────────────────────────────────
 
+
 def phase4_enroll() -> bool:
     """Enroll this worker with XIOSYNC and pull config + secrets."""
     global WORKER_ID, WORKER_CFG
 
     # Get tailscale IP
-    ts_ip = subprocess.run(
-        ["tailscale", "ip", "-4"], capture_output=True, text=True
-    ).stdout.strip() or ""
+    ts_ip = (
+        subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True).stdout.strip()
+        or ""
+    )
 
     payload = {
         "node_name": NODE_NAME,
@@ -222,6 +236,7 @@ def phase4_enroll() -> bool:
 
 # ── Keep-alive loop ───────────────────────────────────────────────────────────
 
+
 def heartbeat() -> None:
     try:
         SESS.post(f"{XIOSYNC_URL}/api/v1/workers/{WORKER_ID}/heartbeat", timeout=5)
@@ -238,6 +253,7 @@ def sync_tailscale_state(storage_provider_id: str | None) -> None:
         drive_dest = DRIVE_ROOT / TS_STATE_KEY
         drive_dest.parent.mkdir(parents=True, exist_ok=True)
         import shutil
+
         shutil.copy(str(state_path), str(drive_dest))
         # Register/update in XIOSYNC object index
         SESS.post(
@@ -261,16 +277,16 @@ def poll_and_run_dag() -> bool:
     try:
         resp = SESS.get(f"{XIOSYNC_URL}/api/v1/xioflow/events/runs/pending-dag", timeout=10)
         if resp.status_code == 204:
-            return False   # Nothing pending
+            return False  # Nothing pending
         resp.raise_for_status()
         run = resp.json()
     except Exception:
         return False
 
-    run_id   = run.get("run_id")
-    task_id  = run.get("task_id")
+    run_id = run.get("run_id")
+    task_id = run.get("task_id")
     template = run.get("template_name", "unknown")
-    context  = run.get("context", {})
+    context = run.get("context", {})
     log(f"▶ Running DAG: {template}  run_id={run_id}")
 
     try:
@@ -310,6 +326,7 @@ def _execute_workflow(template_name: str, context: dict, xiobr_port: int) -> dic
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     log(f"Starting colab_agent — node={NODE_NAME} url={XIOSYNC_URL}")
@@ -355,9 +372,9 @@ def main() -> None:
     # Phase 5: Keep-alive loop
     log("=== Keep-alive loop started ===")
     last_ts_sync = 0.0
-    heartbeat_interval  = 30
-    ts_sync_interval    = 300
-    last_heartbeat      = 0.0
+    heartbeat_interval = 30
+    ts_sync_interval = 300
+    last_heartbeat = 0.0
 
     while True:
         now = time.time()

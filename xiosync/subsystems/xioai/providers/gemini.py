@@ -3,11 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Any
 
 from xiosync.subsystems.xioai.providers.base import GenerationProvider, GenerationResult
 
 logger = logging.getLogger(__name__)
+
 
 class GeminiProvider(GenerationProvider):
     @property
@@ -30,25 +30,30 @@ class GeminiProvider(GenerationProvider):
         timeout: int = 120,
     ) -> GenerationResult:
         if not self.is_available():
-            return GenerationResult(success=False, error="GEMINI_API_KEY not set", provider=self.name)
+            return GenerationResult(
+                success=False, error="GEMINI_API_KEY not set", provider=self.name
+            )
 
         api_key = os.environ.get("GEMINI_API_KEY")
         model_name = os.environ.get("XIOAI_GEMINI_MODEL", "gemini-2.0-flash")
 
         try:
             import google.generativeai as genai
+
             genai.configure(api_key=api_key)
         except ImportError:
-            return GenerationResult(success=False, error="google.generativeai not installed", provider=self.name)
-        
+            return GenerationResult(
+                success=False, error="google.generativeai not installed", provider=self.name
+            )
+
         full_text = system + prompt
         if len(full_text) > 100000:
             logger.warning("Prompt exceeds 100k characters, truncating...")
             # Truncating appropriately while keeping system if possible
             if len(system) > 50000:
                 system = system[:50000]
-            prompt = prompt[:100000 - len(system)]
-            
+            prompt = prompt[: 100000 - len(system)]
+
         try:
             config = genai.GenerationConfig(
                 temperature=temperature,
@@ -61,7 +66,8 @@ class GeminiProvider(GenerationProvider):
                 generation_config=config,
             )
             response = await asyncio.to_thread(
-                model.generate_content, prompt,
+                model.generate_content,
+                prompt,
             )
             return GenerationResult(
                 text=response.text.strip(),
@@ -71,5 +77,8 @@ class GeminiProvider(GenerationProvider):
             )
         except Exception as exc:
             return GenerationResult(
-                success=False, error=str(exc), provider=self.name, model=model_name,
+                success=False,
+                error=str(exc),
+                provider=self.name,
+                model=model_name,
             )

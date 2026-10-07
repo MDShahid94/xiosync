@@ -71,6 +71,7 @@ class RedisEventBus:
 
     def __init__(self, redis_url: str) -> None:
         import redis.asyncio as aioredis
+
         self._redis: Any = aioredis.from_url(redis_url, decode_responses=True)  # type: ignore[no-untyped-call]
 
     async def publish(self, channel: str, message: dict[str, Any]) -> None:

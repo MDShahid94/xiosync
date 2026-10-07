@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import uuid
@@ -7,13 +6,13 @@ from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.orm import Session
-
-from xiosync.domain.context import OrgContext, MembershipRole, PlatformRole
-from xiosync.persistence.models.browser import RuntimeNode, ComputeRuntime as RuntimeProvider
+from xiosync.domain.context import MembershipRole, OrgContext, PlatformRole
+from xiosync.persistence.models.browser import RuntimeNode
 from xiosync.services.compute_runtimes import ComputeRuntimeService
 
 _ORG_ID = uuid.UUID("00000000-0000-7000-8000-000000000000")
 _ACTOR_ID = uuid.UUID("00000000-0000-7000-8000-000000000002")
+
 
 @pytest.fixture
 def org_context() -> OrgContext:
@@ -26,9 +25,11 @@ def org_context() -> OrgContext:
         membership_role=MembershipRole.ORG_ADMIN,
     )
 
+
 @pytest.fixture
 def mock_session() -> MagicMock:
     return MagicMock(spec=Session)
+
 
 def test_register_provider_success(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = ComputeRuntimeService(mock_session)
@@ -44,6 +45,7 @@ def test_register_provider_success(org_context: OrgContext, mock_session: MagicM
     mock_session.add.assert_called()
     assert mock_session.flush.call_count >= 1
 
+
 def test_register_provider_kubernetes(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = ComputeRuntimeService(mock_session)
     record = svc.register_provider(
@@ -53,6 +55,7 @@ def test_register_provider_kubernetes(org_context: OrgContext, mock_session: Mag
         config={"namespace": "default"},
     )
     assert record.provider == "kubernetes"
+
 
 def test_provision_node_success(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = ComputeRuntimeService(mock_session)
@@ -66,6 +69,7 @@ def test_provision_node_success(org_context: OrgContext, mock_session: MagicMock
     assert record.state == "provisioning"
     assert record.spec == {"cpu": "2", "memory": "4Gi"}
 
+
 def test_provision_node_empty_spec(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = ComputeRuntimeService(mock_session)
     record = svc.provision_node(
@@ -74,6 +78,7 @@ def test_provision_node_empty_spec(org_context: OrgContext, mock_session: MagicM
         spec={},
     )
     assert record.spec == {}
+
 
 def test_list_nodes_empty(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = ComputeRuntimeService(mock_session)
@@ -84,6 +89,7 @@ def test_list_nodes_empty(org_context: OrgContext, mock_session: MagicMock) -> N
     records = svc.list_nodes(org_context, runtime_id=uuid.uuid4())
     assert records == []
 
+
 def test_list_nodes_filtered(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = ComputeRuntimeService(mock_session)
     mock_result = MagicMock()
@@ -92,7 +98,8 @@ def test_list_nodes_filtered(org_context: OrgContext, mock_session: MagicMock) -
         organization_id=_ORG_ID,
         runtime_id=uuid.uuid4(),
         state="running",
-        node_metadata={}, hostname="test",
+        node_metadata={},
+        hostname="test",
         created_at=datetime.now(UTC),
     )
     mock_result.all.return_value = [node]
@@ -100,6 +107,7 @@ def test_list_nodes_filtered(org_context: OrgContext, mock_session: MagicMock) -
 
     records = svc.list_nodes(org_context, runtime_id=node.runtime_id, state="running")
     assert len(records) == 1
+
 
 def test_terminate_node_success(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = ComputeRuntimeService(mock_session)
@@ -112,11 +120,13 @@ def test_terminate_node_success(org_context: OrgContext, mock_session: MagicMock
     assert mock_row.state == "terminated"
     assert mock_session.flush.call_count >= 1
 
+
 def test_terminate_node_not_found(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = ComputeRuntimeService(mock_session)
     mock_session.scalar.return_value = None
     with pytest.raises(ValueError, match="not found"):
         svc.terminate_node(org_context, uuid.uuid4())
+
 
 def test_get_node_health_running(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = ComputeRuntimeService(mock_session)
@@ -125,7 +135,8 @@ def test_get_node_health_running(org_context: OrgContext, mock_session: MagicMoc
         organization_id=_ORG_ID,
         runtime_id=uuid.uuid4(),
         state="running",
-        node_metadata={}, hostname="test",
+        node_metadata={},
+        hostname="test",
         created_at=datetime.now(UTC),
     )
     mock_session.scalar.return_value = node
@@ -134,6 +145,7 @@ def test_get_node_health_running(org_context: OrgContext, mock_session: MagicMoc
     assert record.status == "healthy"
     assert record.last_heartbeat is not None
 
+
 def test_get_node_health_not_running(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = ComputeRuntimeService(mock_session)
     node = RuntimeNode(
@@ -141,7 +153,8 @@ def test_get_node_health_not_running(org_context: OrgContext, mock_session: Magi
         organization_id=_ORG_ID,
         runtime_id=uuid.uuid4(),
         state="provisioning",
-        node_metadata={}, hostname="test",
+        node_metadata={},
+        hostname="test",
         created_at=datetime.now(UTC),
     )
     mock_session.scalar.return_value = node
@@ -150,12 +163,16 @@ def test_get_node_health_not_running(org_context: OrgContext, mock_session: Magi
     assert record.status == "unknown"
     assert record.last_heartbeat is None
 
+
 def test_get_node_health_not_found(org_context: OrgContext, mock_session: MagicMock) -> None:
     svc = ComputeRuntimeService(mock_session)
     mock_session.scalar.return_value = None
     with pytest.raises(ValueError, match="not found"):
         svc.get_node_health(org_context, uuid.uuid4())
 
+
 @pytest.fixture(autouse=True)
 def mock_quota_service_daily_events(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("xiosync.services.quotas.QuotaService.check_daily_events", lambda self, org_id: None)
+    monkeypatch.setattr(
+        "xiosync.services.quotas.QuotaService.check_daily_events", lambda self, org_id: None
+    )

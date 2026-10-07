@@ -12,11 +12,11 @@ validate_workflow_dag   – validate nodes/edges and data flow in one call
 validate_data_flow      – validate only the data-flow (input_from) wiring
 resolve_node_inputs     – runtime resolution of input_from → concrete dict
 """
+
 from __future__ import annotations
 
 from collections import defaultdict, deque
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -61,9 +61,7 @@ def _topological_order(nodes: list[str], edges: list[tuple[str, str]]) -> list[s
                 queue.append(neighbour)
 
     if len(order) != len(nodes):
-        raise WorkflowCycleError(
-            "workflow spec contains a directed cycle; topological sort failed"
-        )
+        raise WorkflowCycleError("workflow spec contains a directed cycle; topological sort failed")
     return order
 
 
@@ -78,9 +76,7 @@ def _validate_input_from(
     if isinstance(input_from, str):
         upstream = input_from
         if upstream not in node_ids:
-            raise DataFlowError(
-                f"node {node_id!r} input_from references unknown node {upstream!r}"
-            )
+            raise DataFlowError(f"node {node_id!r} input_from references unknown node {upstream!r}")
         if upstream not in predecessors[node_id]:
             raise DataFlowError(
                 f"node {node_id!r} input_from {upstream!r}: "

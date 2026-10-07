@@ -108,7 +108,7 @@ def _context() -> OrgContext:
 # own sandbox view (environment + working directory) back over stdio as JSON.
 # ---------------------------------------------------------------------------
 
-_DUMMY_PLUGIN_SOURCE = '''\
+_DUMMY_PLUGIN_SOURCE = """\
 #!{interpreter}
 import json
 import os
@@ -138,7 +138,7 @@ report = {{
     "cwd_entries": sorted(os.listdir(".")),
 }}
 sys.stdout.write(json.dumps(report))
-'''
+"""
 
 
 def _write_dummy_plugin(directory: Path) -> str:
@@ -173,9 +173,7 @@ class TestNoAmbientAccess:
         monkeypatch.setenv("LANG", "en_US.UTF-8")
 
         entrypoint = _write_dummy_plugin(tmp_path)
-        result = run_in_sandbox(
-            [entrypoint], timeout_seconds=15, stdin_payload=_rpc_payload()
-        )
+        result = run_in_sandbox([entrypoint], timeout_seconds=15, stdin_payload=_rpc_payload())
 
         assert result.returncode == 0, result.stderr
         report = json.loads(result.stdout)
@@ -200,14 +198,10 @@ class TestNoAmbientAccess:
             "__CF_USER_TEXT_ENCODING",  # Injected by macOS CoreFoundation/posix_spawn
         }
 
-    def test_child_runs_in_fresh_empty_jail_not_the_repo_tree(
-        self, tmp_path: Path
-    ) -> None:
+    def test_child_runs_in_fresh_empty_jail_not_the_repo_tree(self, tmp_path: Path) -> None:
         """The plugin's cwd is a private, empty jail — not the caller's working tree."""
         entrypoint = _write_dummy_plugin(tmp_path)
-        result = run_in_sandbox(
-            [entrypoint], timeout_seconds=15, stdin_payload=_rpc_payload()
-        )
+        result = run_in_sandbox([entrypoint], timeout_seconds=15, stdin_payload=_rpc_payload())
 
         assert result.returncode == 0, result.stderr
         report = json.loads(result.stdout)
@@ -313,7 +307,8 @@ class TestEmptyAllowlistDeniesAll:
         assert network_allows([rule], "api.internal", 443, "http") is False
 
     @pytest.mark.parametrize(
-        "sentinel", ["*", "0.0.0.0", "0.0.0.0/0", "::", "::/0", "any", "all", ""]  # noqa: S104
+        "sentinel",
+        ["*", "0.0.0.0", "0.0.0.0/0", "::", "::/0", "any", "all", ""],  # noqa: S104
     )
     def test_allow_all_sentinels_are_rejected_at_construction(self, sentinel: str) -> None:
         """INV-PLUGIN-4: no single rule may smuggle in an 'allow everything' policy."""
@@ -410,9 +405,7 @@ class TestApprovalGateOverHttp:
         holder["session"] = _FakeSession(scalar_results=[_installation_ns(state=state)])
 
         def _must_not_spawn(*_args: Any, **_kwargs: Any) -> SandboxResult:
-            raise AssertionError(
-                "run_in_sandbox must never be called for a non-active install"
-            )
+            raise AssertionError("run_in_sandbox must never be called for a non-active install")
 
         monkeypatch.setattr(plugins_module, "run_in_sandbox", _must_not_spawn)
 
@@ -716,9 +709,7 @@ class TestSandboxAgainstRealSchema:
         self, migrated_database_url: str, app_role_database_url: str
     ) -> None:
         """A persisted concrete rule opens exactly one triple; everything else denied."""
-        ids = _seed_plugin(
-            migrated_database_url, allow_rules=[("api.internal", 443, "https")]
-        )
+        ids = _seed_plugin(migrated_database_url, allow_rules=[("api.internal", 443, "https")])
         ctx = _db_context(ids)
         engine = create_engine(app_role_database_url)
         try:

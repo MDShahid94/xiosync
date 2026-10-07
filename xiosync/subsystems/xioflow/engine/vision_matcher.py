@@ -7,6 +7,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+
 class VisionMatcher:
     """OpenCV template matching for Tier 9."""
 

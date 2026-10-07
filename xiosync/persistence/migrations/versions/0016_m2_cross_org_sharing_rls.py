@@ -26,9 +26,7 @@ down_revision: str | None = "0015"
 branch_labels = None
 depends_on = None
 
-_ORG_ISOLATION = (
-    "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
-)
+_ORG_ISOLATION = "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
 
 # Tables that support cross-org sharing via resource_shares.
 _SHAREABLE_TABLES = ("capabilities", "artifacts", "workflows", "plugins")
@@ -90,7 +88,4 @@ def downgrade() -> None:
         op.execute(f"DROP POLICY IF EXISTS org_write_isolation ON {table}")
 
         # Restore original simple org isolation
-        op.execute(
-            f"CREATE POLICY org_isolation ON {table} "
-            f"USING ({_ORG_ISOLATION})"
-        )
+        op.execute(f"CREATE POLICY org_isolation ON {table} USING ({_ORG_ISOLATION})")

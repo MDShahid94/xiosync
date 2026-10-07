@@ -35,10 +35,11 @@ from xiosync.domain.event_registry import event_registry
 from xiosync.persistence.database import validated_psycopg_url
 from xiosync.services.bootstrap import _CORE_EVENT_TYPES
 
+
 def create_engine(*args: Any, **kwargs: Any) -> Any:
     """Patch create_engine to use NullPool by default for integration tests.
-    
-    Tests often create engines for `app_role` but fail to dispose them. 
+
+    Tests often create engines for `app_role` but fail to dispose them.
     A normal connection pool keeps these connections alive. When the fixture
     teardown runs DROP DATABASE WITH (FORCE), Postgres attempts to kill these
     connections, but `xiosync_test` lacks privileges to kill connections owned
@@ -46,6 +47,7 @@ def create_engine(*args: Any, **kwargs: Any) -> Any:
     """
     kwargs.setdefault("poolclass", NullPool)
     return _sqlalchemy_create_engine(*args, **kwargs)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = REPO_ROOT / "alembic.ini"

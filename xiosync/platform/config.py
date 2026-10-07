@@ -38,34 +38,36 @@ _KEY_CORS_ALLOWED_ORIGINS = "CORS_ALLOWED_ORIGINS"
 # rendered as text is the operational floor (doc 05 §2.2; L4 — no default).
 _MIN_AUTH_SECRET_LENGTH = 32
 
-_KNOWN_PREFIXED_KEYS = frozenset({
-    _KEY_ENVIRONMENT,
-    _KEY_LOG_LEVEL,
-    _KEY_AUTH_SECRET,
-    # Wave 3 — P-4 API governance
-    "XIOSYNC_API_DEPRECATION_CONFIG",
-    # Wave 3 — M-2 cross-org sharing
-    "XIOSYNC_ENABLE_CROSS_ORG_SHARING",
-    "XIOSYNC_SHARING_ENABLED",
-    # Genesis Phase 0 — bootstrap token for API-based genesis
-    "XIOSYNC_BOOTSTRAP_TOKEN",
-    # Worker self-enroll — shared secret for autonomous Colab/VM worker enrollment
-    "XIOSYNC_WORKER_ORG_SECRET",
-    # XIORUN internal callbacks — Colab agent → XIOSYNC (proxy-lost, browser-crashed)
-    "XIOSYNC_INTERNAL_SECRET",
-    # Public-facing base URL — embedded in worker bootstrap URLs
-    "XIOSYNC_PUBLIC_URL",
-    # ── CIPI / Session cascade / HITL / Network binding ──────────────
-    "XIOSYNC_CIPI_INJECTION_ENABLED",       # Feature flag: cookie injection mode (default: false)
-    "XIOSYNC_COOKIE_HEALTH_SWEEP_HOURS",    # Cookie health sweep interval via heartbeat
-    "XIOSYNC_PATCHRIGHT_BINARY_PATH",       # Override Patchright Chromium binary path
-    "XIOSYNC_SESSION_CASCADE_TIMEOUT",      # Max seconds for Phase 0 cascade
-    "XIOSYNC_HITL_TIMEOUT",                 # Max seconds to wait for HITL resume
-    "XIOSYNC_TOTP_MIN_REMAINING_SEC",       # Min seconds left in TOTP window before waiting
-    "XIOSYNC_TOTP_MAX_RETRIES",             # TOTP submission retry count
-    "XIOSYNC_MIN_COOKIE_COUNT",             # Minimum cookies for profile push acceptance
-    "XIOSYNC_WORKFLOW_SLOT_POLICY",         # Default slot acquisition: exclusive/shared/profile_bound
-})
+_KNOWN_PREFIXED_KEYS = frozenset(
+    {
+        _KEY_ENVIRONMENT,
+        _KEY_LOG_LEVEL,
+        _KEY_AUTH_SECRET,
+        # Wave 3 — P-4 API governance
+        "XIOSYNC_API_DEPRECATION_CONFIG",
+        # Wave 3 — M-2 cross-org sharing
+        "XIOSYNC_ENABLE_CROSS_ORG_SHARING",
+        "XIOSYNC_SHARING_ENABLED",
+        # Genesis Phase 0 — bootstrap token for API-based genesis
+        "XIOSYNC_BOOTSTRAP_TOKEN",
+        # Worker self-enroll — shared secret for autonomous Colab/VM worker enrollment
+        "XIOSYNC_WORKER_ORG_SECRET",
+        # XIORUN internal callbacks — Colab agent → XIOSYNC (proxy-lost, browser-crashed)
+        "XIOSYNC_INTERNAL_SECRET",
+        # Public-facing base URL — embedded in worker bootstrap URLs
+        "XIOSYNC_PUBLIC_URL",
+        # ── CIPI / Session cascade / HITL / Network binding ──────────────
+        "XIOSYNC_CIPI_INJECTION_ENABLED",  # Feature flag: cookie injection mode (default: false)
+        "XIOSYNC_COOKIE_HEALTH_SWEEP_HOURS",  # Cookie health sweep interval via heartbeat
+        "XIOSYNC_PATCHRIGHT_BINARY_PATH",  # Override Patchright Chromium binary path
+        "XIOSYNC_SESSION_CASCADE_TIMEOUT",  # Max seconds for Phase 0 cascade
+        "XIOSYNC_HITL_TIMEOUT",  # Max seconds to wait for HITL resume
+        "XIOSYNC_TOTP_MIN_REMAINING_SEC",  # Min seconds left in TOTP window before waiting
+        "XIOSYNC_TOTP_MAX_RETRIES",  # TOTP submission retry count
+        "XIOSYNC_MIN_COOKIE_COUNT",  # Minimum cookies for profile push acceptance
+        "XIOSYNC_WORKFLOW_SLOT_POLICY",  # Default slot acquisition: exclusive/shared/profile_bound
+    }
+)
 
 _ALLOWED_DATABASE_SCHEMES = frozenset({"postgresql", "postgresql+psycopg"})
 
@@ -172,7 +174,6 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
             raise ConfigError(f"{key} must be positive")
         return value
 
-
     redis_url = source.get(_KEY_REDIS_URL, "").strip() or None
     if environment in (Environment.STAGING, Environment.PRODUCTION) and not redis_url:
         raise ConfigError(
@@ -186,9 +187,7 @@ def load_config(env: Mapping[str, str] | None = None) -> Config:
     raw_cors = source.get(_KEY_CORS_ALLOWED_ORIGINS, "").strip()
     cors_allowed_origins = [o.strip() for o in raw_cors.split(",") if o.strip()] if raw_cors else []
     if "*" in cors_allowed_origins:
-        raise ConfigError(
-            "Wildcard '*' is forbidden in CORS_ALLOWED_ORIGINS (INV-CORS-1 / C4)."
-        )
+        raise ConfigError("Wildcard '*' is forbidden in CORS_ALLOWED_ORIGINS (INV-CORS-1 / C4).")
     if environment in (Environment.STAGING, Environment.PRODUCTION) and not cors_allowed_origins:
         raise ConfigError(
             f"CORS_ALLOWED_ORIGINS must be set in the {environment.value!r} environment "

@@ -8,6 +8,7 @@ Priority (highest to lowest):
 
 No I/O. No framework imports (RULE-ARCH-1; enforced by import-linter).
 """
+
 from __future__ import annotations
 
 import uuid
@@ -80,10 +81,10 @@ def resolve_effective_proxy(
     workflow_scope: WorkflowNetworkScope | None,
     profile_binding: ProfileExitBinding | None,
     domain_rules: list[DomainProxyRule] | None,
-    runtime_default: str | None
+    runtime_default: str | None,
 ) -> str:
     """Resolve the effective proxy URL by walking the 4-layer hierarchy."""
-    
+
     # Layer 4: Workflow Binding
     if workflow_scope:
         if domain and workflow_scope.domain_overrides:
@@ -114,16 +115,18 @@ def resolve_effective_proxy(
     return "DIRECT"
 
 
-def build_subprocess_env(proxy_url: str, no_proxy: str = "localhost,127.0.0.1,100.64.0.0/10") -> dict[str, str]:
+def build_subprocess_env(
+    proxy_url: str, no_proxy: str = "localhost,127.0.0.1,100.64.0.0/10"
+) -> dict[str, str]:
     """Build environment variables dict for subprocess isolation."""
     if proxy_url == "DIRECT":
         return {}
-        
+
     url = proxy_url
     if proxy_url.startswith("socks5://"):
         # Upgrade to socks5h to resolve DNS through proxy
         url = proxy_url.replace("socks5://", "socks5h://", 1)
-        
+
     return {
         "ALL_PROXY": url,
         "HTTP_PROXY": url,

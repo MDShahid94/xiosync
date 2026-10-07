@@ -18,9 +18,7 @@ down_revision: str | None = "0014"
 branch_labels = None
 depends_on = None
 
-_ORG_ISOLATION = (
-    "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
-)
+_ORG_ISOLATION = "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
 
 
 def upgrade() -> None:
@@ -157,9 +155,7 @@ def upgrade() -> None:
     # RLS
     op.execute("ALTER TABLE usage_meters ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE usage_meters FORCE ROW LEVEL SECURITY")
-    op.execute(
-        f"CREATE POLICY org_isolation ON usage_meters USING ({_ORG_ISOLATION})"
-    )
+    op.execute(f"CREATE POLICY org_isolation ON usage_meters USING ({_ORG_ISOLATION})")
 
 
 def downgrade() -> None:

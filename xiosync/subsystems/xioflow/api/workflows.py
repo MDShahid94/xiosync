@@ -4,6 +4,7 @@ Endpoints:
   POST /xioflow/workflows/generate     Generate a workflow script from description
   GET  /xioflow/workflows/providers    List available AI providers
 """
+
 from __future__ import annotations
 
 import logging
@@ -22,25 +23,29 @@ router = APIRouter(prefix="/xioflow/workflows", tags=["XIOFLOW Workflows"])
 
 # ── Request / Response models ─────────────────────────────────────────────────
 
+
 class GenerateRequest(BaseModel):
     """Generate a workflow script from a human description."""
-    description: str                          # e.g. "Sign in to Slack with Google SSO"
-    target_domain: str = ""                   # e.g. "slack.com"
-    params: dict[str, str] | None = None      # Expected input params
-    reference_script: str | None = None       # Existing script to use as reference
-    provider: str | None = None               # Override AI provider (agy, gemini, openai, custom)
-    save: bool = False                        # Save to tools/workflows/generated/
-    timeout: int = 120                        # Generation timeout in seconds
+
+    description: str  # e.g. "Sign in to Slack with Google SSO"
+    target_domain: str = ""  # e.g. "slack.com"
+    params: dict[str, str] | None = None  # Expected input params
+    reference_script: str | None = None  # Existing script to use as reference
+    provider: str | None = None  # Override AI provider (agy, gemini, openai, custom)
+    save: bool = False  # Save to tools/workflows/generated/
+    timeout: int = 120  # Generation timeout in seconds
     model_config = ConfigDict(from_attributes=True)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _ctx(request: Request) -> OrgContext:
     return cast(OrgContext, request.state.org_context)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
 
 @router.post("/generate", summary="Generate a workflow script from description")
 async def generate_workflow(request: Request, body: GenerateRequest) -> dict[str, Any]:
@@ -101,6 +106,7 @@ async def generate_workflow(request: Request, body: GenerateRequest) -> dict[str
 async def list_providers() -> dict[str, Any]:
     """List all available AI generation providers and their status."""
     import shutil
+
     from xiosync.subsystems.xioai.gateway import _PROVIDER_REGISTRY
 
     providers = []
@@ -134,11 +140,13 @@ async def list_providers() -> dict[str, Any]:
             else:
                 detail = "Set XIOSYNC_AI_CUSTOM_URL"
 
-        providers.append({
-            "name": name,
-            "status": status,
-            "detail": detail,
-        })
+        providers.append(
+            {
+                "name": name,
+                "status": status,
+                "detail": detail,
+            }
+        )
 
     # Detect which would be auto-selected
     auto = os.environ.get("XIOSYNC_AI_PROVIDER", "")

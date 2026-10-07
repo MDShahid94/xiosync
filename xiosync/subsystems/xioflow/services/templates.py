@@ -20,6 +20,7 @@ Two execution models coexist under one table (workflow_templates):
 Both types are equal citizens. Conversion between them is optional and
 non-destructive — both templates coexist and can be compared.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -51,7 +52,7 @@ class WorkflowTemplateRecord:
     slug: str
     description: str | None
     script_ref: str
-    template_type: str          # 'script' | 'xioflow_dag' | extensible
+    template_type: str  # 'script' | 'xioflow_dag' | extensible
     dag_domain: str | None
     dag_root_intent: str | None
     category: str | None
@@ -94,6 +95,7 @@ class WorkflowTemplateService:
     @staticmethod
     def _model() -> Any:
         from xiosync.subsystems.xioflow.models.templates import WorkflowTemplate
+
         return WorkflowTemplate
 
     # ── write ────────────────────────────────────────────────────────────────
@@ -177,8 +179,7 @@ class WorkflowTemplateService:
     ) -> list[WorkflowTemplateRecord]:
         M = self._model()
         conditions = [
-            (M.organization_id == ctx.organization_id)
-            | (M.is_platform_global == True)  # noqa: E712
+            (M.organization_id == ctx.organization_id) | (M.is_platform_global == True)  # noqa: E712
         ]
         if project_id is not None:
             conditions.append((M.project_id == project_id) | (M.project_id.is_(None)))

@@ -8,6 +8,7 @@ A ProfileIdentity is a virtual identity container that:
 
 No I/O. No framework imports (RULE-ARCH-1; enforced by import-linter).
 """
+
 from __future__ import annotations
 
 import uuid
@@ -118,8 +119,8 @@ def evict_domain(
     profile: ProfileIdentity, domain_pattern: str, cascade_to_dependents: bool = True
 ) -> ProfileIdentity:
     """Returns a new ProfileIdentity with domain_pattern removed.
-    
-    If cascade_to_dependents is True, dependents (parent_domain == domain_pattern) 
+
+    If cascade_to_dependents is True, dependents (parent_domain == domain_pattern)
     are kept but marked is_valid = False.
     """
     new_domain_sets = dict(profile.domain_sets)
@@ -165,8 +166,9 @@ def merge_cookies(
 ) -> ProfileIdentity:
     """TTL-aware merge of cookies into the profile."""
     import time
+
     now_sec = time.time()
-    
+
     skip_google = _is_mid_auth(current_url)
 
     # Flatten all existing cookies by (name, domain, path)
@@ -174,28 +176,28 @@ def merge_cookies(
     for dom, dset in existing.domain_sets.items():
         for cookie in dset.cookies:
             existing_cookies[(cookie.name, cookie.domain, cookie.path)] = (cookie, dom)
-            
+
     incoming_cookies_by_domain: dict[str, dict[tuple[str, str, str], BrowserCookie]] = {}
-    
+
     for cookie in incoming:
         is_google = _is_google_domain(cookie.domain)
         if is_google and skip_google:
             continue
-            
+
         key = (cookie.name, cookie.domain, cookie.path)
         inc_ttl = _cookie_remaining_ttl(cookie, now_sec)
-        
+
         # Determine the target domain_pattern (simple heuristic: use the cookie's domain)
         # Ideally, this should map back to the logical domain_pattern in domain_sets.
         # For simplicity, if it was already in a domain set, keep it there.
         # If not, map it to the cookie.domain.
         target_domain_pattern = cookie.domain
-        
+
         if key in existing_cookies:
             exist_cookie, dom_pattern = existing_cookies[key]
             target_domain_pattern = dom_pattern
             exist_ttl = _cookie_remaining_ttl(exist_cookie, now_sec)
-            
+
             if is_google and cookie.name in GOOGLE_SID_NAMES:
                 if not is_safe_google_update(exist_ttl, inc_ttl, SID_TTL_THRESHOLD_SEC):
                     # Reject unsafe update, keep existing
@@ -203,28 +205,31 @@ def merge_cookies(
                         incoming_cookies_by_domain[target_domain_pattern] = {}
                     incoming_cookies_by_domain[target_domain_pattern][key] = exist_cookie
                     continue
-                    
+
             if exist_ttl > inc_ttl:
                 # Keep existing if it has longer TTL
                 if target_domain_pattern not in incoming_cookies_by_domain:
                     incoming_cookies_by_domain[target_domain_pattern] = {}
                 incoming_cookies_by_domain[target_domain_pattern][key] = exist_cookie
                 continue
-                
+
         if target_domain_pattern not in incoming_cookies_by_domain:
             incoming_cookies_by_domain[target_domain_pattern] = {}
         incoming_cookies_by_domain[target_domain_pattern][key] = cookie
-        
+
     # Reconstruct domain_sets
     new_domain_sets = dict(existing.domain_sets)
-    
+
     # Fill with kept existing ones that weren't touched by incoming
     for key, (exist_cookie, dom_pattern) in existing_cookies.items():
-        if dom_pattern not in incoming_cookies_by_domain or key not in incoming_cookies_by_domain[dom_pattern]:
+        if (
+            dom_pattern not in incoming_cookies_by_domain
+            or key not in incoming_cookies_by_domain[dom_pattern]
+        ):
             if dom_pattern not in incoming_cookies_by_domain:
                 incoming_cookies_by_domain[dom_pattern] = {}
             incoming_cookies_by_domain[dom_pattern][key] = exist_cookie
-            
+
     for dom_pattern, cookies_dict in incoming_cookies_by_domain.items():
         new_cookies = tuple(cookies_dict.values())
         if dom_pattern in new_domain_sets:
@@ -238,7 +243,7 @@ def merge_cookies(
                 local_storage={},
                 health=CookieHealthUrgency.NONE,
                 last_verified_at=None,
-                is_valid=True
+                is_valid=True,
             )
-            
+
     return replace(existing, domain_sets=new_domain_sets)

@@ -3,8 +3,7 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
-
-from xiosync.domain.context import OrgContext, MembershipRole, PlatformRole
+from xiosync.domain.context import MembershipRole, OrgContext, PlatformRole
 from xiosync.persistence.models.projects import Project
 from xiosync.services.projects import (
     ProjectNotFoundError,
@@ -111,9 +110,23 @@ def test_list_projects(
     org_context: OrgContext,
     mock_session: MagicMock,
 ) -> None:
-    p1 = Project(id=uuid.uuid4(), organization_id=org_context.organization_id, name="P1", slug="p1", state="active", created_at=datetime.now(UTC))
-    p2 = Project(id=uuid.uuid4(), organization_id=org_context.organization_id, name="P2", slug="p2", state="active", created_at=datetime.now(UTC))
-    
+    p1 = Project(
+        id=uuid.uuid4(),
+        organization_id=org_context.organization_id,
+        name="P1",
+        slug="p1",
+        state="active",
+        created_at=datetime.now(UTC),
+    )
+    p2 = Project(
+        id=uuid.uuid4(),
+        organization_id=org_context.organization_id,
+        name="P2",
+        slug="p2",
+        state="active",
+        created_at=datetime.now(UTC),
+    )
+
     mock_scalars = MagicMock()
     mock_scalars.all.return_value = [p1, p2]
     mock_session.scalars.return_value = mock_scalars
@@ -139,9 +152,9 @@ def test_update_project_success(
         state="active",
         created_at=datetime.now(UTC),
     )
-    
+
     mock_session.scalar.return_value = mock_project
-    
+
     updated = project_service.update_project(
         org_context,
         project_id,
@@ -178,7 +191,7 @@ def test_archive_project_success(
         created_at=datetime.now(UTC),
     )
     mock_session.scalar.return_value = mock_project
-    
+
     archived = project_service.archive_project(org_context, project_id)
     assert mock_session.execute.call_count == 1
 
@@ -198,7 +211,7 @@ def test_archive_project_already_archived(
         created_at=datetime.now(UTC),
     )
     mock_session.scalar.return_value = mock_project
-    
+
     archived = project_service.archive_project(org_context, project_id)
     assert mock_session.execute.call_count == 0
 

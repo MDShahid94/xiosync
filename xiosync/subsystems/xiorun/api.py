@@ -10,6 +10,7 @@ Routes:
     GET  /xiorun/sessions/{session_id}    — single session detail + CDP URL
     POST /xiorun/sessions/{session_id}/terminate — graceful teardown
 """
+
 from __future__ import annotations
 
 import logging
@@ -45,6 +46,7 @@ def _check_internal_secret(authorization: str | None) -> None:
 
 # ── Pydantic models ────────────────────────────────────────────────────────────
 
+
 class ProxyLostPayload(BaseModel):
     session_id: str
     node: str = ""
@@ -58,10 +60,11 @@ class BrowserCrashedPayload(BaseModel):
 
 # ── Internal endpoints (Colab → XIOSYNC) ──────────────────────────────────────
 
+
 @router.post(
     "/internal/xiorun/proxy-lost",
     summary="Colab agent notifies XIOSYNC that exit-node proxy is lost",
-    include_in_schema=False,   # hide from public OpenAPI docs
+    include_in_schema=False,  # hide from public OpenAPI docs
 )
 def proxy_lost(
     payload: ProxyLostPayload,
@@ -77,14 +80,18 @@ def proxy_lost(
     _check_internal_secret(authorization)
 
     session_id = payload.session_id
-    logger.error("xiorun.api.proxy_lost", extra={
-        "session_id": session_id,
-        "node":       payload.node,
-    })
+    logger.error(
+        "xiorun.api.proxy_lost",
+        extra={
+            "session_id": session_id,
+            "node": payload.node,
+        },
+    )
 
     # Mark session failed in DB
     try:
         from sqlalchemy import text  # noqa: PLC0415
+
         session = request.state.org_session
         session.execute(
             text("""
@@ -101,10 +108,12 @@ def proxy_lost(
     # Cancel any running DAG task via runtime_pool (best-effort)
     try:
         from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+
         pool = get_runtime_pool()
         launcher = pool.get_launcher(session_id)
         if launcher:
             import asyncio  # noqa: PLC0415
+
             loop = asyncio.get_event_loop()
             if loop.is_running() and launcher._run_task and not launcher._run_task.done():
                 launcher._run_task.cancel()
@@ -129,14 +138,18 @@ def browser_crashed(
     _check_internal_secret(authorization)
 
     session_id = payload.session_id
-    logger.error("xiorun.api.browser_crashed", extra={
-        "session_id": session_id,
-        "node":       payload.node,
-        "reason":     payload.reason,
-    })
+    logger.error(
+        "xiorun.api.browser_crashed",
+        extra={
+            "session_id": session_id,
+            "node": payload.node,
+            "reason": payload.reason,
+        },
+    )
 
     try:
         from sqlalchemy import text  # noqa: PLC0415
+
         session = request.state.org_session
         session.execute(
             text("""
@@ -152,6 +165,7 @@ def browser_crashed(
 
     try:
         from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+
         get_runtime_pool()._unregister(session_id)
     except Exception:
         pass
@@ -160,6 +174,7 @@ def browser_crashed(
 
 
 # ── Session management endpoints ───────────────────────────────────────────────
+
 
 @router.get(
     "/xiorun/sessions",
@@ -172,13 +187,15 @@ def list_xiorun_sessions(request: Request) -> dict[str, Any]:
     Suitable for XIOVIEW session picker and pool utilization dashboards.
     """
     from sqlalchemy import text  # noqa: PLC0415
+
     from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
 
     session = request.state.org_session
-    org_ctx  = request.state.org_context
+    org_ctx = request.state.org_context
 
-    rows = session.execute(
-        text("""
+    rows = (
+        session.execute(
+            text("""
             SELECT
                 bs.id::text             AS session_id,
                 bs.state,
@@ -198,32 +215,37 @@ def list_xiorun_sessions(request: Request) -> dict[str, Any]:
             ORDER BY bs.created_at DESC
             LIMIT 100
         """),
-        {"org": str(org_ctx.organization_id)},
-    ).mappings().all()
+            {"org": str(org_ctx.organization_id)},
+        )
+        .mappings()
+        .all()
+    )
 
     pool = get_runtime_pool()
     live = {e["session_id"]: e for e in pool.list_sessions()}
 
     sessions = []
     for row in rows:
-        sid   = row["session_id"]
+        sid = row["session_id"]
         entry = live.get(sid)
-        sessions.append({
-            "session_id":    sid,
-            "state":         row["state"],
-            "worker_ts_ip":  row["worker_ts_ip"],
-            "proxy_url":     row["proxy_url"],
-            "pool_id":       row["pool_id"],
-            "pool_name":     row["pool_name"],
-            "max_instances": row["max_instances"],
-            "exit_node_id":  row["exit_node_id"],
-            "public_ip":     row["public_ip"],
-            "created_at":    row["created_at"].isoformat() if row["created_at"] else None,
-            "updated_at":    row["updated_at"].isoformat() if row["updated_at"] else None,
-            # Live runtime data (None if not in pool — session is suspended or pool restarted)
-            "cdp_live":      entry is not None,
-            "page_closed":   entry["page_closed"] if entry else None,
-        })
+        sessions.append(
+            {
+                "session_id": sid,
+                "state": row["state"],
+                "worker_ts_ip": row["worker_ts_ip"],
+                "proxy_url": row["proxy_url"],
+                "pool_id": row["pool_id"],
+                "pool_name": row["pool_name"],
+                "max_instances": row["max_instances"],
+                "exit_node_id": row["exit_node_id"],
+                "public_ip": row["public_ip"],
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+                # Live runtime data (None if not in pool — session is suspended or pool restarted)
+                "cdp_live": entry is not None,
+                "page_closed": entry["page_closed"] if entry else None,
+            }
+        )
 
     # Pool utilization summary
     pool_stats: dict[str, dict] = {}
@@ -231,18 +253,18 @@ def list_xiorun_sessions(request: Request) -> dict[str, Any]:
         pid = s["pool_id"]
         if pid not in pool_stats:
             pool_stats[pid] = {
-                "pool_id":       pid,
-                "pool_name":     s["pool_name"],
+                "pool_id": pid,
+                "pool_name": s["pool_name"],
                 "max_instances": s["max_instances"],
-                "active":        0,
-                "initializing":  0,
-                "suspended":     0,
+                "active": 0,
+                "initializing": 0,
+                "suspended": 0,
             }
         pool_stats[pid][s["state"]] = pool_stats[pid].get(s["state"], 0) + 1
 
     return {
-        "sessions":   sessions,
-        "total":      len(sessions),
+        "sessions": sessions,
+        "total": len(sessions),
         "live_count": sum(1 for s in sessions if s["cdp_live"]),
         "pool_stats": list(pool_stats.values()),
     }
@@ -255,13 +277,15 @@ def list_xiorun_sessions(request: Request) -> dict[str, Any]:
 def get_xiorun_session(session_id: str, request: Request) -> dict[str, Any]:
     """Returns full detail for one session including live CDP WebSocket URL if active."""
     from sqlalchemy import text  # noqa: PLC0415
+
     from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
 
     session = request.state.org_session
-    org_ctx  = request.state.org_context
+    org_ctx = request.state.org_context
 
-    row = session.execute(
-        text("""
+    row = (
+        session.execute(
+            text("""
             SELECT
                 bs.id::text             AS session_id,
                 bs.state,
@@ -282,14 +306,17 @@ def get_xiorun_session(session_id: str, request: Request) -> dict[str, Any]:
             WHERE bs.id = :sid
               AND bs.organization_id = :org
         """),
-        {"sid": session_id, "org": str(org_ctx.organization_id)},
-    ).mappings().first()
+            {"sid": session_id, "org": str(org_ctx.organization_id)},
+        )
+        .mappings()
+        .first()
+    )
 
     if not row:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
 
-    pool    = get_runtime_pool()
-    page    = pool.get_page(session_id)
+    pool = get_runtime_pool()
+    page = pool.get_page(session_id)
     launcher = pool.get_launcher(session_id)
 
     # Derive CDP WS URL from worker_ts_ip if launcher is alive
@@ -301,22 +328,22 @@ def get_xiorun_session(session_id: str, request: Request) -> dict[str, Any]:
             pass
 
     return {
-        "session_id":   row["session_id"],
-        "state":        row["state"],
+        "session_id": row["session_id"],
+        "state": row["state"],
         "worker_ts_ip": row["worker_ts_ip"],
-        "proxy_url":    row["proxy_url"],
-        "pool_id":      row["pool_id"],
-        "pool_name":    row["pool_name"],
+        "proxy_url": row["proxy_url"],
+        "pool_id": row["pool_id"],
+        "pool_name": row["pool_name"],
         "max_instances": row["max_instances"],
-        "engine_type":  row["engine_type"],
+        "engine_type": row["engine_type"],
         "stealth_config": dict(row["stealth_config"] or {}),
         "exit_node_id": row["exit_node_id"],
-        "public_ip":    row["public_ip"],
+        "public_ip": row["public_ip"],
         "session_data": dict(row["session_data"] or {}),
-        "created_at":   row["created_at"].isoformat() if row["created_at"] else None,
-        "updated_at":   row["updated_at"].isoformat() if row["updated_at"] else None,
-        "cdp_live":     page is not None,
-        "cdp_ws_url":   cdp_ws_url,
+        "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        "cdp_live": page is not None,
+        "cdp_ws_url": cdp_ws_url,
     }
 
 
@@ -328,8 +355,8 @@ async def terminate_xiorun_session(session_id: str, request: Request) -> dict[st
     """Triggers graceful teardown: profile save → Chromium terminate → state=suspended."""
     from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
 
-    org_ctx  = request.state.org_context
-    pool     = get_runtime_pool()
+    org_ctx = request.state.org_context
+    pool = get_runtime_pool()
     launcher = pool.get_launcher(session_id)
 
     if launcher is None:

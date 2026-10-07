@@ -105,15 +105,11 @@ class Plugin(Base):
     cpu_millis: Mapped[int] = mapped_column(Integer, nullable=False)
     memory_mb: Mapped[int] = mapped_column(Integer, nullable=False)
     timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
-    filesystem_jail: Mapped[str] = mapped_column(
-        Text, nullable=False
-    )  # jail root (INV-PLUGIN-1)
+    filesystem_jail: Mapped[str] = mapped_column(Text, nullable=False)  # jail root (INV-PLUGIN-1)
     manifest_hash: Mapped[str] = mapped_column(
         Text, nullable=False
     )  # integrity hash of the canonicalized manifest
-    state: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'registered'")
-    )
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'registered'"))
     created_at: Mapped[datetime] = mapped_column(
         _timestamptz, nullable=False, server_default=text("now()")
     )  # IMM
@@ -284,9 +280,7 @@ class PluginNetworkAllowRule(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
     )  # IMM
-    installation_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )  # IMM
+    installation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)  # IMM
     host: Mapped[str] = mapped_column(Text, nullable=False)  # concrete host/IP; no wildcards
     port: Mapped[int] = mapped_column(Integer, nullable=False)
     protocol: Mapped[str] = mapped_column(Text, nullable=False)

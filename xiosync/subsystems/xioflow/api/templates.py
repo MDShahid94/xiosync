@@ -1,4 +1,5 @@
 """XIOFLOW workflow template API."""
+
 from __future__ import annotations
 
 import uuid
@@ -19,6 +20,7 @@ router = APIRouter(prefix="/xioflow/templates", tags=["xioflow-templates"])
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 
+
 def _ctx(request: Request) -> OrgContext:
     return cast(OrgContext, request.state.org_context)
 
@@ -29,6 +31,7 @@ def _svc(request: Request) -> WorkflowTemplateService:
 
 
 # ── Request models ───────────────────────────────────────────────────────────
+
 
 class TemplateCreate(BaseModel):
     name: str
@@ -44,6 +47,7 @@ class TemplateCreate(BaseModel):
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────────
+
 
 @router.get("", summary="List workflow templates")
 def list_templates(
@@ -89,8 +93,12 @@ def create_template(request: Request, body: TemplateCreate) -> dict[str, Any]:
         project_id=body.project_id,
         is_platform_global=body.is_platform_global,
     )
-    return {"id": str(record.id), "name": record.name, "slug": record.slug,
-            "template_type": record.template_type}
+    return {
+        "id": str(record.id),
+        "name": record.name,
+        "slug": record.slug,
+        "template_type": record.template_type,
+    }
 
 
 @router.get("/{template_id}", summary="Get a workflow template")
@@ -101,9 +109,14 @@ def get_template(request: Request, template_id: uuid.UUID) -> dict[str, Any]:
         record = svc.get_template(ctx, template_id)
     except WorkflowTemplateNotFoundError:
         raise HTTPException(status_code=404, detail="template_not_found")
-    return {"id": str(record.id), "name": record.name, "slug": record.slug,
-            "template_type": record.template_type, "script_ref": record.script_ref,
-            "config": record.config}
+    return {
+        "id": str(record.id),
+        "name": record.name,
+        "slug": record.slug,
+        "template_type": record.template_type,
+        "script_ref": record.script_ref,
+        "config": record.config,
+    }
 
 
 @router.delete("/{template_id}", summary="Delete a workflow template", status_code=204)

@@ -6,10 +6,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 class SSEEmitter:
     """Server-Sent Events emitter using in-memory pub-sub."""
 
-    CHANNELS = ['system', 'workers', 'memory', 'workflows', 'dlq']
+    CHANNELS = ["system", "workers", "memory", "workflows", "dlq"]
 
     def __init__(self):
         self._subscribers: dict[str, set[asyncio.Queue]] = {
@@ -35,10 +36,7 @@ class SSEEmitter:
         if channel not in self._subscribers:
             return
 
-        message = {
-            'event': event_type,
-            'data': data
-        }
+        message = {"event": event_type, "data": data}
 
         for queue in list(self._subscribers[channel]):
             try:

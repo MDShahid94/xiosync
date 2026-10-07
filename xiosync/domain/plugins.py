@@ -38,9 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 #: (name, version) row, never an in-place edit of a registered one.
 PLUGIN_STATE_REGISTERED = "registered"
 PLUGIN_STATE_DEPRECATED = "deprecated"
-PLUGIN_STATES: frozenset[str] = frozenset(
-    {PLUGIN_STATE_REGISTERED, PLUGIN_STATE_DEPRECATED}
-)
+PLUGIN_STATES: frozenset[str] = frozenset({PLUGIN_STATE_REGISTERED, PLUGIN_STATE_DEPRECATED})
 
 
 # ---------------------------------------------------------------------------
@@ -148,9 +146,7 @@ class NetworkAllowRule(_Strict):
     def _known_protocol(cls, value: str) -> str:
         normalized = value.strip().lower()
         if normalized not in ALLOWED_PROTOCOLS:
-            raise ValueError(
-                f"protocol {value!r} is not one of {sorted(ALLOWED_PROTOCOLS)}"
-            )
+            raise ValueError(f"protocol {value!r} is not one of {sorted(ALLOWED_PROTOCOLS)}")
         return normalized
 
     def matches(self, host: str, port: int, protocol: str) -> bool:
@@ -214,9 +210,7 @@ class PluginManifest(_Strict):
 
     @field_validator("rpc_methods")
     @classmethod
-    def _unique_method_names(
-        cls, methods: list[RpcMethodContract]
-    ) -> list[RpcMethodContract]:
+    def _unique_method_names(cls, methods: list[RpcMethodContract]) -> list[RpcMethodContract]:
         names = [method.name for method in methods]
         if len(names) != len(set(names)):
             raise ValueError("rpc method names must be unique within a plugin manifest")
@@ -228,9 +222,7 @@ class PluginManifest(_Strict):
         for rule in self.network_allowlist:
             key = (rule.host, rule.port, rule.protocol)
             if key in seen:
-                raise ValueError(
-                    f"duplicate network allow rule {key!r} in plugin manifest"
-                )
+                raise ValueError(f"duplicate network allow rule {key!r} in plugin manifest")
             seen.add(key)
         return self
 

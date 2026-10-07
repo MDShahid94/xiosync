@@ -11,13 +11,13 @@ Protocol: newline-delimited JSON
   Response: {"id": "<uuid>", "text": "...", "success": true}
             {"id": "<uuid>", "error": "...", "success": false}
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import os
-import shlex
 import shutil
 import signal
 import sys
@@ -31,13 +31,15 @@ logging.basicConfig(
 logger = logging.getLogger("agy-sidecar")
 
 SOCKET_PATH = "/tmp/xioai-agy-sidecar.sock"
-AGY_BIN = os.environ.get("XIOAI_AGY_BIN") or shutil.which("agy") or "/Users/karmareturns/.local/bin/agy"
+AGY_BIN = (
+    os.environ.get("XIOAI_AGY_BIN") or shutil.which("agy") or "/Users/karmareturns/.local/bin/agy"
+)
 
 
 async def run_agy(req: dict) -> dict:
     rid = req.get("id", str(uuid.uuid4()))
     prompt = req.get("prompt", "")
-    timeout = int(req.get("timeout", 180))   # bumped: creative tasks need ~2min
+    timeout = int(req.get("timeout", 180))  # bumped: creative tasks need ~2min
     model = req.get("model", os.environ.get("XIOAI_AGY_MODEL", ""))
     output_format = req.get("output_format", "text")
     json_schema = req.get("json_schema")
@@ -80,18 +82,20 @@ async def run_agy(req: dict) -> dict:
 
         # ── Clean PTY output ────────────────────────────────────────────────────
         import re as _re
+
         # 1. ANSI escape sequences
         raw = _re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])").sub("", raw)
         # 2. Backspace sequences: any char followed by \x08 (collapses to nothing)
         while "\x08" in raw:
             raw = _re.compile(r"[^\x08]\x08").sub("", raw)
-            raw = raw.replace("\x08", "")   # leading backspaces with no preceding char
+            raw = raw.replace("\x08", "")  # leading backspaces with no preceding char
         # 3. Other PTY control chars: ^D (EOF), ^@ (null), carriage returns
         raw = _re.compile(r"[\x00\x04]").sub("", raw)
         raw = raw.replace("\r\n", "\n").replace("\r", "\n")
         # 4. Strip agy internal status / progress lines
         lines = [
-            l for l in raw.splitlines()
+            l
+            for l in raw.splitlines()
             if not _re.match(r"^\s*(\[agy\]|✦|Script (started|done))", l)
         ]
         text = "\n".join(lines).strip()
@@ -100,21 +104,34 @@ async def run_agy(req: dict) -> dict:
             text = text[1:].lstrip()
         err = ""  # already merged into stdout
 
-        auth_fail = any(m in text or m in err for m in [
-            "authentication timed out", "authentication failed", "Waiting for authentication"
-        ])
+        auth_fail = any(
+            m in text or m in err
+            for m in [
+                "authentication timed out",
+                "authentication failed",
+                "Waiting for authentication",
+            ]
+        )
         if auth_fail:
             logger.error("agy auth failure for %s", rid)
-            return {"id": rid, "success": False, "error": "agy not authenticated. Run 'agy' interactively."}
+            return {
+                "id": rid,
+                "success": False,
+                "error": "agy not authenticated. Run 'agy' interactively.",
+            }
 
         if proc.returncode != 0 and not text:
             logger.error("agy exit %d for %s: %s", proc.returncode, rid, err[:200])
-            return {"id": rid, "success": False, "error": f"agy exit {proc.returncode}: {err[:200]}"}
+            return {
+                "id": rid,
+                "success": False,
+                "error": f"agy exit {proc.returncode}: {err[:200]}",
+            }
 
         logger.info("agy success for %s: %d chars", rid, len(text))
         return {"id": rid, "success": True, "text": text}
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return {"id": rid, "success": False, "error": f"agy timeout ({timeout}s)"}
     except Exception as exc:
         return {"id": rid, "success": False, "error": str(exc)}
@@ -131,14 +148,16 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             try:
                 req = json.loads(line.decode())
             except json.JSONDecodeError as e:
-                writer.write(json.dumps({"success": False, "error": f"bad JSON: {e}"}).encode() + b"\n")
+                writer.write(
+                    json.dumps({"success": False, "error": f"bad JSON: {e}"}).encode() + b"\n"
+                )
                 await writer.drain()
                 continue
 
             result = await run_agy(req)
             writer.write(json.dumps(result).encode() + b"\n")
             await writer.drain()
-    except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionResetError):
+    except (TimeoutError, asyncio.IncompleteReadError, ConnectionResetError):
         pass
     finally:
         writer.close()

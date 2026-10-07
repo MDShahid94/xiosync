@@ -9,6 +9,7 @@ worker_enrollments:
 Revision ID: 0031
 Revises: 0030
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -22,16 +23,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("worker_enrollments",
-        sa.Column("last_seen_at", pg.TIMESTAMP(timezone=True), nullable=True))
-    op.add_column("worker_enrollments",
-        sa.Column("tailscale_ip", sa.Text, nullable=True))
-    op.add_column("worker_enrollments",
-        sa.Column("reported_caps", pg.JSONB, nullable=True))
-    op.add_column("worker_enrollments",
-        sa.Column("runtime_type", sa.Text, nullable=True))
-    op.create_index("ix_worker_enrollments_last_seen",
-        "worker_enrollments", ["last_seen_at"])
+    op.add_column(
+        "worker_enrollments", sa.Column("last_seen_at", pg.TIMESTAMP(timezone=True), nullable=True)
+    )
+    op.add_column("worker_enrollments", sa.Column("tailscale_ip", sa.Text, nullable=True))
+    op.add_column("worker_enrollments", sa.Column("reported_caps", pg.JSONB, nullable=True))
+    op.add_column("worker_enrollments", sa.Column("runtime_type", sa.Text, nullable=True))
+    op.create_index("ix_worker_enrollments_last_seen", "worker_enrollments", ["last_seen_at"])
 
 
 def downgrade() -> None:

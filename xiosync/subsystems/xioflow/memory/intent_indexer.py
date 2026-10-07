@@ -5,6 +5,7 @@ Production use requires a running Qdrant instance pointed to by the
 falls back to a bounded in-memory list with substring matching and logs a
 startup warning so the gap is visible in logs rather than silently degraded.
 """
+
 from __future__ import annotations
 
 import logging
@@ -29,15 +30,16 @@ class IntentIndexer:
         qdrant_url: str | None = None,
         collection_name: str = "xioflow_intents",
     ) -> None:
-        self.qdrant_url      = qdrant_url or os.environ.get("QDRANT_URL", "")
+        self.qdrant_url = qdrant_url or os.environ.get("QDRANT_URL", "")
         self.collection_name = collection_name
-        self._client         = None
+        self._client = None
         self._memory_index: list[dict] = []
         self._qdrant_ok = False
 
         if self.qdrant_url:
             try:
                 from qdrant_client import QdrantClient  # noqa: PLC0415
+
                 self._client = QdrantClient(url=self.qdrant_url)
                 self._qdrant_ok = True
                 logger.info(
@@ -56,8 +58,8 @@ class IntentIndexer:
                 logger.warning(
                     "intent_indexer.qdrant_unreachable",
                     extra={
-                        "url":      self.qdrant_url,
-                        "error":    str(exc),
+                        "url": self.qdrant_url,
+                        "error": str(exc),
                         "fallback": "in-memory substring matching — semantic accuracy degraded",
                     },
                 )
@@ -65,7 +67,7 @@ class IntentIndexer:
             logger.warning(
                 "intent_indexer.no_qdrant_url",
                 extra={
-                    "advice":   "Set QDRANT_URL env var to enable Qdrant-backed semantic search.",
+                    "advice": "Set QDRANT_URL env var to enable Qdrant-backed semantic search.",
                     "fallback": "in-memory substring matching — NOT suitable for production scale.",
                 },
             )
@@ -85,9 +87,13 @@ class IntentIndexer:
             try:
                 # Minimal Qdrant upsert — embedding is deferred to a background
                 # embedding job; here we store raw text payload only.
-                from qdrant_client.models import PointStruct  # noqa: PLC0415
                 import hashlib  # noqa: PLC0415
-                point_id = int(hashlib.md5(f"{org_id}:{node_id}".encode()).hexdigest(), 16) % (2**63)
+
+                from qdrant_client.models import PointStruct  # noqa: PLC0415
+
+                point_id = int(hashlib.md5(f"{org_id}:{node_id}".encode()).hexdigest(), 16) % (
+                    2**63
+                )
                 self._client.upsert(
                     collection_name=self.collection_name,
                     points=[
@@ -95,10 +101,10 @@ class IntentIndexer:
                             id=point_id,
                             vector=[0.0] * 384,  # placeholder — real embedding added by indexer job
                             payload={
-                                "intent":  intent,
-                                "domain":  domain,
-                                "org_id":  org_id,
-                                "tier":    tier,
+                                "intent": intent,
+                                "domain": domain,
+                                "org_id": org_id,
+                                "tier": tier,
                                 "node_id": node_id,
                             },
                         )
@@ -113,13 +119,15 @@ class IntentIndexer:
         # In-memory fallback — bounded to avoid unbounded growth
         if len(self._memory_index) >= _MEM_INDEX_MAX:
             self._memory_index.pop(0)
-        self._memory_index.append({
-            "intent":  intent,
-            "domain":  domain,
-            "org_id":  org_id,
-            "tier":    tier,
-            "node_id": node_id,
-        })
+        self._memory_index.append(
+            {
+                "intent": intent,
+                "domain": domain,
+                "org_id": org_id,
+                "tier": tier,
+                "node_id": node_id,
+            }
+        )
 
     # ── Search ─────────────────────────────────────────────────────────────────
 
@@ -132,7 +140,8 @@ class IntentIndexer:
         if self._qdrant_ok and self._client:
             try:
                 # Payload-filter search (no embedding yet — text filter only).
-                from qdrant_client.models import Filter, FieldCondition, MatchValue  # noqa: PLC0415
+                from qdrant_client.models import FieldCondition, Filter, MatchValue  # noqa: PLC0415
+
                 results = self._client.scroll(
                     collection_name=self.collection_name,
                     scroll_filter=Filter(
@@ -144,7 +153,7 @@ class IntentIndexer:
                     with_payload=True,
                 )
                 hits = []
-                for point in (results[0] if results else []):
+                for point in results[0] if results else []:
                     payload = point.payload or {}
                     if query.lower() in payload.get("intent", "").lower():
                         score = len(query) / max(len(payload.get("intent", query)), 1)

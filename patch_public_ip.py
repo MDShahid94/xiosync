@@ -1,4 +1,4 @@
-with open("scripts/xio_signin_flow.py", "r") as f:
+with open("scripts/xio_signin_flow.py") as f:
     code = f.read()
 
 replacement = """    try:

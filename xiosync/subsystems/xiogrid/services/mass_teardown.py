@@ -28,6 +28,7 @@ Usage in XIOSYNC API
 Call ``graceful_teardown_all(host, session)`` instead of ever running
 ``killall pppd`` or destroying all slots in a tight loop.
 """
+
 from __future__ import annotations
 
 import logging
@@ -70,6 +71,7 @@ PROVISION_INTER_BATCH_PAUSE_S: float = 5.0
 
 # ── PROMISC guard ───────────────────────────────────────────────────────────
 
+
 def promisc_guard(host: PPPoEHost) -> bool:
     """Ensure PROMISC is enabled on the VM's PPPoE parent interface.
 
@@ -99,6 +101,7 @@ def promisc_guard(host: PPPoEHost) -> bool:
 
 
 # ── Teardown ────────────────────────────────────────────────────────────────
+
 
 @dataclass
 class TeardownResult:
@@ -139,8 +142,12 @@ def graceful_teardown_batch(
         batch = slots[batch_idx * batch_size : (batch_idx + 1) * batch_size]
         logger.info(
             "teardown_batch_start",
-            extra={"host": host.name, "batch": batch_idx + 1,
-                   "total_batches": batches, "slots": batch},
+            extra={
+                "host": host.name,
+                "batch": batch_idx + 1,
+                "total_batches": batches,
+                "slots": batch,
+            },
         )
 
         for slot in batch:
@@ -164,8 +171,11 @@ def graceful_teardown_batch(
                     failed += 1
                     logger.warning(
                         "destroy_slot_failed",
-                        extra={"host": host.name, "slot": slot,
-                               "stderr": (result.stderr or "")[:200]},
+                        extra={
+                            "host": host.name,
+                            "slot": slot,
+                            "stderr": (result.stderr or "")[:200],
+                        },
                     )
             except Exception as exc:
                 failed += 1
@@ -180,8 +190,11 @@ def graceful_teardown_batch(
         if batch_idx < batches - 1:
             logger.info(
                 "teardown_batch_pause",
-                extra={"host": host.name, "pause_s": inter_batch_pause_s,
-                       "next_batch": batch_idx + 2},
+                extra={
+                    "host": host.name,
+                    "pause_s": inter_batch_pause_s,
+                    "next_batch": batch_idx + 2,
+                },
             )
             time.sleep(inter_batch_pause_s)
 
@@ -235,15 +248,18 @@ def graceful_teardown_all(
     if not nodes:
         logger.info("teardown_all_no_nodes", extra={"host": host.name})
         return TeardownResult(
-            host_name=host.name, total_slots=0,
-            destroyed=0, failed=0, batches=0, elapsed_s=0.0,
+            host_name=host.name,
+            total_slots=0,
+            destroyed=0,
+            failed=0,
+            batches=0,
+            elapsed_s=0.0,
         )
 
     slots = [n.ppp_slot for n in nodes]
     logger.info(
         "teardown_all_start",
-        extra={"host": host.name, "total": len(slots),
-               "batch_size": TEARDOWN_BATCH_SIZE},
+        extra={"host": host.name, "total": len(slots), "batch_size": TEARDOWN_BATCH_SIZE},
     )
 
     result = graceful_teardown_batch(host, slots, session)
@@ -278,6 +294,7 @@ def graceful_teardown_all(
 
 # ── BRAS Lockout Recovery Protocol ─────────────────────────────────────────
 
+
 def bras_recovery_probe(host: PPPoEHost, *, timeout_s: int = 12) -> bool:
     """Probe the BRAS to confirm it's responding to PADI before mass provision.
 
@@ -305,8 +322,7 @@ def bras_recovery_probe(host: PPPoEHost, *, timeout_s: int = 12) -> bool:
     responding = result.ok and (result.stdout or "").strip() != "0"
     logger.info(
         "bras_probe",
-        extra={"host": host.name, "responding": responding,
-               "output": (result.stdout or "")[:100]},
+        extra={"host": host.name, "responding": responding, "output": (result.stdout or "")[:100]},
     )
     return responding
 

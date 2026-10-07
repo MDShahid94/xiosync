@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement_func = """    # Deterministic path convention
@@ -21,7 +21,7 @@ code = re.sub(
     r'    # Deterministic path convention\n.*?    logger\.info\(f"run-uc-login-start: using profile_dir=\{_profile_dir\}"\)',
     replacement_func,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

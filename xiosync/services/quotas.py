@@ -15,7 +15,7 @@ An empty ``resource_quotas`` dict means unlimited (no enforcement).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -31,10 +31,7 @@ class QuotaExceededError(Exception):
     """Raised when an org has exceeded a resource quota."""
 
     def __init__(self, resource_type: str, current: int, limit: int) -> None:
-        super().__init__(
-            f"quota exceeded for {resource_type}: "
-            f"current={current}, limit={limit}"
-        )
+        super().__init__(f"quota exceeded for {resource_type}: current={current}, limit={limit}")
         self.resource_type = resource_type
         self.current = current
         self.limit = limit
@@ -49,9 +46,7 @@ class QuotaService:
     def _get_quotas(self, organization_id: uuid.UUID) -> dict[str, int]:
         """Load the org's resource_quotas dict."""
         row = self._session.scalar(
-            select(Organization.resource_quotas).where(
-                Organization.id == organization_id
-            )
+            select(Organization.resource_quotas).where(Organization.id == organization_id)
         )
         return row if row else {}
 
@@ -61,12 +56,15 @@ class QuotaService:
         limit = quotas.get("max_workers")
         if limit is None:
             return
-        current = self._session.scalar(
-            select(func.count()).where(
-                WorkerEnrollment.organization_id == organization_id,
-                WorkerEnrollment.enrollment_state.in_(["pending", "approved"]),
+        current = (
+            self._session.scalar(
+                select(func.count()).where(
+                    WorkerEnrollment.organization_id == organization_id,
+                    WorkerEnrollment.enrollment_state.in_(["pending", "approved"]),
+                )
             )
-        ) or 0
+            or 0
+        )
         if current >= limit:
             raise QuotaExceededError("workers", current, limit)
 
@@ -76,13 +74,16 @@ class QuotaService:
         limit = quotas.get("max_queued_tasks")
         if limit is None:
             return
-        current = self._session.scalar(
-            text(
-                "SELECT COUNT(*) FROM xioflow_tasks "
-                "WHERE organization_id = :org_id AND state = 'queued'"
-            ),
-            {"org_id": str(organization_id)},
-        ) or 0
+        current = (
+            self._session.scalar(
+                text(
+                    "SELECT COUNT(*) FROM xioflow_tasks "
+                    "WHERE organization_id = :org_id AND state = 'queued'"
+                ),
+                {"org_id": str(organization_id)},
+            )
+            or 0
+        )
         if current >= limit:
             raise QuotaExceededError("queued_tasks", current, limit)
 
@@ -92,13 +93,16 @@ class QuotaService:
         limit = quotas.get("max_concurrent_runs")
         if limit is None:
             return
-        current = self._session.scalar(
-            text(
-                "SELECT COUNT(*) FROM xioflow_runs "
-                "WHERE organization_id = :org_id AND state = 'running'"
-            ),
-            {"org_id": str(organization_id)},
-        ) or 0
+        current = (
+            self._session.scalar(
+                text(
+                    "SELECT COUNT(*) FROM xioflow_runs "
+                    "WHERE organization_id = :org_id AND state = 'running'"
+                ),
+                {"org_id": str(organization_id)},
+            )
+            or 0
+        )
         if current >= limit:
             raise QuotaExceededError("concurrent_runs", current, limit)
 
@@ -108,14 +112,15 @@ class QuotaService:
         limit = quotas.get("max_daily_events")
         if limit is None:
             return
-        today_start = datetime.now(UTC).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        current = self._session.scalar(
-            select(func.count()).where(
-                Event.organization_id == organization_id,
-                Event.created_at >= today_start,
+        today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        current = (
+            self._session.scalar(
+                select(func.count()).where(
+                    Event.organization_id == organization_id,
+                    Event.created_at >= today_start,
+                )
             )
-        ) or 0
+            or 0
+        )
         if current >= limit:
             raise QuotaExceededError("daily_events", current, limit)

@@ -13,6 +13,7 @@ Integration point:
     ``run_dispatcher.py`` wraps ``ctx.page`` with ``PageProxy`` when
     ``trace_mode=True``.  The proxy delegates every call to the real Page.
 """
+
 from __future__ import annotations
 
 import logging
@@ -66,8 +67,7 @@ class PageProxy:
         locators, face = await self._capture(selector)
         t0 = time.monotonic()
         result = await self._page.fill(selector, value, **kwargs)
-        self._record("fill", selector, locators, face, t0,
-                      action_params={"text": value})
+        self._record("fill", selector, locators, face, t0, action_params={"text": value})
         return result
 
     async def type(self, selector: str, text: str, **kwargs: Any) -> Any:
@@ -75,34 +75,44 @@ class PageProxy:
         locators, face = await self._capture(selector)
         t0 = time.monotonic()
         result = await self._page.type(selector, text, **kwargs)
-        self._record("fill", selector, locators, face, t0,
-                      action_params={"text": text})
+        self._record("fill", selector, locators, face, t0, action_params={"text": text})
         return result
 
     async def goto(self, url: str, **kwargs: Any) -> Any:
         """Intercept navigation."""
         t0 = time.monotonic()
         result = await self._page.goto(url, **kwargs)
-        self._record("navigate", None, None, None, t0,
-                      action_params={"url": url})
+        self._record("navigate", None, None, None, t0, action_params={"url": url})
         return result
 
     async def wait_for_selector(self, selector: str, **kwargs: Any) -> Any:
         """Intercept wait_for_selector — record as a control action."""
         t0 = time.monotonic()
         result = await self._page.wait_for_selector(selector, **kwargs)
-        self._record("wait_for_selector", selector, None, None, t0,
-                      action_params={"selector": selector},
-                      category="control")
+        self._record(
+            "wait_for_selector",
+            selector,
+            None,
+            None,
+            t0,
+            action_params={"selector": selector},
+            category="control",
+        )
         return result
 
     async def wait_for_load_state(self, state: str = "load", **kwargs: Any) -> Any:
         """Passthrough but record as control action."""
         t0 = time.monotonic()
         result = await self._page.wait_for_load_state(state, **kwargs)
-        self._record("wait_for_load_state", None, None, None, t0,
-                      action_params={"state": state},
-                      category="control")
+        self._record(
+            "wait_for_load_state",
+            None,
+            None,
+            None,
+            t0,
+            action_params={"state": state},
+            category="control",
+        )
         return result
 
     async def press(self, selector: str, key: str, **kwargs: Any) -> Any:
@@ -110,8 +120,7 @@ class PageProxy:
         locators, face = await self._capture(selector)
         t0 = time.monotonic()
         result = await self._page.press(selector, key, **kwargs)
-        self._record("press", selector, locators, face, t0,
-                      action_params={"key": key})
+        self._record("press", selector, locators, face, t0, action_params={"key": key})
         return result
 
     async def select_option(self, selector: str, values: Any = None, **kwargs: Any) -> Any:
@@ -119,8 +128,9 @@ class PageProxy:
         locators, face = await self._capture(selector)
         t0 = time.monotonic()
         result = await self._page.select_option(selector, values, **kwargs)
-        self._record("select_option", selector, locators, face, t0,
-                      action_params={"values": values})
+        self._record(
+            "select_option", selector, locators, face, t0, action_params={"values": values}
+        )
         return result
 
     async def check(self, selector: str, **kwargs: Any) -> Any:
@@ -152,8 +162,9 @@ class PageProxy:
         locators, face = await self._capture(selector)
         t0 = time.monotonic()
         result = await self._page.text_content(selector, **kwargs)
-        self._record("extract_data", selector, locators, face, t0,
-                      action_params={"extracted": result})
+        self._record(
+            "extract_data", selector, locators, face, t0, action_params={"extracted": result}
+        )
         return result
 
     async def evaluate(self, expression: str, *args: Any, **kwargs: Any) -> Any:
@@ -206,16 +217,18 @@ class PageProxy:
         params = action_params or {}
         if selector:
             params["original_selector"] = selector
-        self._trace.record(TraceAction(
-            category=category,
-            action_type=action_type,
-            place_value=locators,
-            face_value=face,
-            action_params=params,
-            url=url,
-            domain=domain,
-            duration_ms=round((time.monotonic() - t0) * 1000, 1),
-        ))
+        self._trace.record(
+            TraceAction(
+                category=category,
+                action_type=action_type,
+                place_value=locators,
+                face_value=face,
+                action_params=params,
+                url=url,
+                domain=domain,
+                duration_ms=round((time.monotonic() - t0) * 1000, 1),
+            )
+        )
 
     # ── Passthrough for all other attributes ──────────────────────────
 

@@ -14,7 +14,9 @@ Usage::
     from xiosync.platform.engine_ref import get_engine
     engine = get_engine()   # None if not yet initialized
 """
+
 from __future__ import annotations
+
 from typing import Any
 
 __all__ = ["set_engine", "get_engine"]

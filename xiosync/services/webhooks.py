@@ -173,15 +173,11 @@ class WebhookService:
         event_type: str,
     ) -> list[WebhookRecord]:
         """Find all active subscriptions that listen for ``event_type``."""
-        stmt = (
-            select(WebhookSubscription)
-            .where(
-                WebhookSubscription.organization_id == context.organization_id,
-                WebhookSubscription.state == "active",
-            )
+        stmt = select(WebhookSubscription).where(
+            WebhookSubscription.organization_id == context.organization_id,
+            WebhookSubscription.state == "active",
         )
         rows = self._session.scalars(stmt).all()
         return [
-            _record(row) for row in rows
-            if event_type in row.event_types or "*" in row.event_types
+            _record(row) for row in rows if event_type in row.event_types or "*" in row.event_types
         ]

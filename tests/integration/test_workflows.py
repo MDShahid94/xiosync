@@ -134,9 +134,7 @@ def _state(engine: Engine, context: OrgContext, table: str, row_id: uuid.UUID) -
     return str(state)
 
 
-def test_publish_valid_dag_succeeds(
-    migrated_database_url: str, app_role_database_url: str
-) -> None:
+def test_publish_valid_dag_succeeds(migrated_database_url: str, app_role_database_url: str) -> None:
     """INV-WF-1: a workflow with an acyclic spec publishes cleanly."""
     organization_id, actor_id, _ = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
@@ -214,9 +212,7 @@ def test_failed_task_lands_in_dlq_open(
     migrated_database_url: str, app_role_database_url: str
 ) -> None:
     """INV-DLQ-1: a dead-lettered task lands 'open' and the task goes terminal."""
-    organization_id, actor_id, capability_id = _seed_org_actor_capability(
-        migrated_database_url
-    )
+    organization_id, actor_id, capability_id = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
     engine = create_engine(app_role_database_url)
     try:
@@ -283,9 +279,7 @@ def test_lease_task_queued_to_leased(
     migrated_database_url: str, app_role_database_url: str
 ) -> None:
     """INV-EXEC-1: lease_task transitions queued→leased and populates lease fields."""
-    organization_id, actor_id, capability_id = _seed_org_actor_capability(
-        migrated_database_url
-    )
+    organization_id, actor_id, capability_id = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
     engine = create_engine(app_role_database_url)
     try:
@@ -315,9 +309,7 @@ def test_lease_task_not_leaseable_raises(
     migrated_database_url: str, app_role_database_url: str
 ) -> None:
     """INV-EXEC-1: leasing an already-leased task raises UnleaseableError."""
-    organization_id, actor_id, capability_id = _seed_org_actor_capability(
-        migrated_database_url
-    )
+    organization_id, actor_id, capability_id = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
     engine = create_engine(app_role_database_url)
     try:
@@ -352,13 +344,9 @@ def test_lease_task_not_leaseable_raises(
         engine.dispose()
 
 
-def test_heartbeat_extends_lease(
-    migrated_database_url: str, app_role_database_url: str
-) -> None:
+def test_heartbeat_extends_lease(migrated_database_url: str, app_role_database_url: str) -> None:
     """Heartbeat with the correct lease_id pushes lease_expires_at forward."""
-    organization_id, actor_id, capability_id = _seed_org_actor_capability(
-        migrated_database_url
-    )
+    organization_id, actor_id, capability_id = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
     engine = create_engine(app_role_database_url)
     try:
@@ -399,9 +387,7 @@ def test_heartbeat_wrong_lease_id_raises(
     migrated_database_url: str, app_role_database_url: str
 ) -> None:
     """Heartbeat with a mismatched lease_id raises InactiveLeaseError."""
-    organization_id, actor_id, capability_id = _seed_org_actor_capability(
-        migrated_database_url
-    )
+    organization_id, actor_id, capability_id = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
     engine = create_engine(app_role_database_url)
     try:
@@ -433,13 +419,9 @@ def test_heartbeat_wrong_lease_id_raises(
         engine.dispose()
 
 
-def test_complete_task_normal_path(
-    migrated_database_url: str, app_role_database_url: str
-) -> None:
+def test_complete_task_normal_path(migrated_database_url: str, app_role_database_url: str) -> None:
     """INV-EXEC-2: completing a leased task returns duplicate=False and state='completed'."""
-    organization_id, actor_id, capability_id = _seed_org_actor_capability(
-        migrated_database_url
-    )
+    organization_id, actor_id, capability_id = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
     engine = create_engine(app_role_database_url)
     try:
@@ -479,13 +461,9 @@ def test_complete_task_normal_path(
         engine.dispose()
 
 
-def test_complete_task_idempotent(
-    migrated_database_url: str, app_role_database_url: str
-) -> None:
+def test_complete_task_idempotent(migrated_database_url: str, app_role_database_url: str) -> None:
     """INV-EXEC-2: completing an already-completed task returns duplicate=True."""
-    organization_id, actor_id, capability_id = _seed_org_actor_capability(
-        migrated_database_url
-    )
+    organization_id, actor_id, capability_id = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
     engine = create_engine(app_role_database_url)
     try:
@@ -507,7 +485,10 @@ def test_complete_task_idempotent(
         with org_scoped_session(engine, context) as session:
             service = WorkflowService(session)
             first = service.complete_task(
-                context, task_id, lease_id=lease_id, now=now  # type: ignore[arg-type]
+                context,
+                task_id,
+                lease_id=lease_id,
+                now=now,  # type: ignore[arg-type]
             )
         assert first.duplicate is False
 
@@ -515,7 +496,10 @@ def test_complete_task_idempotent(
         with org_scoped_session(engine, context) as session:
             service = WorkflowService(session)
             second = service.complete_task(
-                context, task_id, lease_id=lease_id, now=now  # type: ignore[arg-type]
+                context,
+                task_id,
+                lease_id=lease_id,
+                now=now,  # type: ignore[arg-type]
             )
         assert second.duplicate is True
     finally:
@@ -526,9 +510,7 @@ def test_complete_task_wrong_lease_id_raises(
     migrated_database_url: str, app_role_database_url: str
 ) -> None:
     """complete_task with a mismatched lease_id raises InactiveLeaseError."""
-    organization_id, actor_id, capability_id = _seed_org_actor_capability(
-        migrated_database_url
-    )
+    organization_id, actor_id, capability_id = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
     engine = create_engine(app_role_database_url)
     try:
@@ -549,9 +531,7 @@ def test_complete_task_wrong_lease_id_raises(
         with pytest.raises(InactiveLeaseError):
             with org_scoped_session(engine, context) as session:
                 service = WorkflowService(session)
-                service.complete_task(
-                    context, task_id, lease_id=wrong_lease_id, now=now
-                )
+                service.complete_task(context, task_id, lease_id=wrong_lease_id, now=now)
     finally:
         engine.dispose()
 
@@ -560,9 +540,7 @@ def test_expire_leases_reclaims_task(
     migrated_database_url: str, app_role_database_url: str
 ) -> None:
     """expire_leases reclaims an expired task back to 'queued' and clears lease fields."""
-    organization_id, actor_id, capability_id = _seed_org_actor_capability(
-        migrated_database_url
-    )
+    organization_id, actor_id, capability_id = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
     engine = create_engine(app_role_database_url)
     try:
@@ -620,9 +598,7 @@ def _enqueue_and_dead_letter(
     _, _, task_id = _create_and_enqueue(engine, context, actor_id, capability_id)
     with org_scoped_session(engine, context) as session:
         service = WorkflowService(session)
-        dead_letter_id = service.dead_letter_task(
-            context, task_id, failure_reason="test failure"
-        )
+        dead_letter_id = service.dead_letter_task(context, task_id, failure_reason="test failure")
     return task_id, dead_letter_id
 
 
@@ -630,15 +606,11 @@ def test_propose_dlq_correction_advances_state(
     migrated_database_url: str, app_role_database_url: str
 ) -> None:
     """INV-DLQ-2: propose_dlq_correction advances open→investigating and stores diagnosis."""
-    organization_id, actor_id, capability_id = _seed_org_actor_capability(
-        migrated_database_url
-    )
+    organization_id, actor_id, capability_id = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
     engine = create_engine(app_role_database_url)
     try:
-        _, dead_letter_id = _enqueue_and_dead_letter(
-            engine, context, actor_id, capability_id
-        )
+        _, dead_letter_id = _enqueue_and_dead_letter(engine, context, actor_id, capability_id)
 
         with org_scoped_session(engine, context) as session:
             service = WorkflowService(session)
@@ -665,15 +637,11 @@ def test_propose_dlq_correction_non_open_raises(
     migrated_database_url: str, app_role_database_url: str
 ) -> None:
     """INV-DLQ-2: proposing a correction when state='investigating' raises ValueError."""
-    organization_id, actor_id, capability_id = _seed_org_actor_capability(
-        migrated_database_url
-    )
+    organization_id, actor_id, capability_id = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
     engine = create_engine(app_role_database_url)
     try:
-        _, dead_letter_id = _enqueue_and_dead_letter(
-            engine, context, actor_id, capability_id
-        )
+        _, dead_letter_id = _enqueue_and_dead_letter(engine, context, actor_id, capability_id)
 
         # First proposal advances to 'investigating'.
         with org_scoped_session(engine, context) as session:
@@ -701,15 +669,11 @@ def test_resolve_dead_letter_requires_explicit_approval(
     migrated_database_url: str, app_role_database_url: str
 ) -> None:
     """INV-DLQ-3: resolve_dead_letter with explicit_approval=False raises ValueError."""
-    organization_id, actor_id, capability_id = _seed_org_actor_capability(
-        migrated_database_url
-    )
+    organization_id, actor_id, capability_id = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
     engine = create_engine(app_role_database_url)
     try:
-        _, dead_letter_id = _enqueue_and_dead_letter(
-            engine, context, actor_id, capability_id
-        )
+        _, dead_letter_id = _enqueue_and_dead_letter(engine, context, actor_id, capability_id)
 
         with org_scoped_session(engine, context) as session:
             service = WorkflowService(session)
@@ -722,9 +686,7 @@ def test_resolve_dead_letter_requires_explicit_approval(
         with pytest.raises(ValueError):
             with org_scoped_session(engine, context) as session:
                 service = WorkflowService(session)
-                service.resolve_dead_letter(
-                    context, dead_letter_id, explicit_approval=False
-                )
+                service.resolve_dead_letter(context, dead_letter_id, explicit_approval=False)
     finally:
         engine.dispose()
 
@@ -733,15 +695,11 @@ def test_resolve_dead_letter_explicit_approval(
     migrated_database_url: str, app_role_database_url: str
 ) -> None:
     """INV-DLQ-3: resolve_dead_letter with explicit_approval=True resolves the record."""
-    organization_id, actor_id, capability_id = _seed_org_actor_capability(
-        migrated_database_url
-    )
+    organization_id, actor_id, capability_id = _seed_org_actor_capability(migrated_database_url)
     context = _context(organization_id, actor_id)
     engine = create_engine(app_role_database_url)
     try:
-        _, dead_letter_id = _enqueue_and_dead_letter(
-            engine, context, actor_id, capability_id
-        )
+        _, dead_letter_id = _enqueue_and_dead_letter(engine, context, actor_id, capability_id)
 
         with org_scoped_session(engine, context) as session:
             service = WorkflowService(session)
@@ -754,9 +712,7 @@ def test_resolve_dead_letter_explicit_approval(
         # Must not raise.
         with org_scoped_session(engine, context) as session:
             service = WorkflowService(session)
-            service.resolve_dead_letter(
-                context, dead_letter_id, explicit_approval=True
-            )
+            service.resolve_dead_letter(context, dead_letter_id, explicit_approval=True)
 
         with org_scoped_session(engine, context) as session:
             service = WorkflowService(session)

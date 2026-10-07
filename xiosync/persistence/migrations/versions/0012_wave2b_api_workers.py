@@ -20,9 +20,7 @@ down_revision: str | None = "0011"
 branch_labels = None
 depends_on = None
 
-_ORG_ISOLATION = (
-    "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
-)
+_ORG_ISOLATION = "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
 
 
 def upgrade() -> None:
@@ -139,7 +137,9 @@ def downgrade() -> None:
     op.execute("ALTER TABLE worker_network_allow_rules NO FORCE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE worker_network_allow_rules DISABLE ROW LEVEL SECURITY")
     op.drop_index("ix_worker_net_rules_org_enrollment", table_name="worker_network_allow_rules")
-    op.drop_index("ix_worker_network_allow_rules_organization_id", table_name="worker_network_allow_rules")
+    op.drop_index(
+        "ix_worker_network_allow_rules_organization_id", table_name="worker_network_allow_rules"
+    )
     op.drop_table("worker_network_allow_rules")
 
     # M-1

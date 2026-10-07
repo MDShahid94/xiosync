@@ -188,98 +188,134 @@ _DEFAULT_CAPABILITY_GROUPS: list[dict[str, Any]] = [
         "name": "org.manage",
         "description": "Organization management operations",
         "operations": [
-            "org.read", "org.update", "org.configure",
+            "org.read",
+            "org.update",
+            "org.configure",
         ],
     },
     {
         "name": "actor.manage",
         "description": "Actor lifecycle management",
         "operations": [
-            "actor.create", "actor.read", "actor.list",
-            "actor.transition", "actor.suspend", "actor.terminate",
+            "actor.create",
+            "actor.read",
+            "actor.list",
+            "actor.transition",
+            "actor.suspend",
+            "actor.terminate",
         ],
     },
     {
         "name": "workflow.manage",
         "description": "Workflow creation, publishing, and execution",
         "operations": [
-            "workflow.create", "workflow.read", "workflow.list",
-            "workflow.publish", "workflow.start_run", "workflow.enqueue_task",
+            "workflow.create",
+            "workflow.read",
+            "workflow.list",
+            "workflow.publish",
+            "workflow.start_run",
+            "workflow.enqueue_task",
         ],
     },
     {
         "name": "task.execute",
         "description": "Task leasing, heartbeat, completion, and checkpoint",
         "operations": [
-            "task.lease", "task.heartbeat", "task.complete",
-            "task.checkpoint", "task.claim_next",
+            "task.lease",
+            "task.heartbeat",
+            "task.complete",
+            "task.checkpoint",
+            "task.claim_next",
         ],
     },
     {
         "name": "plugin.admin",
         "description": "Plugin installation, approval, and execution",
         "operations": [
-            "plugin.install", "plugin.approve", "plugin.activate",
-            "plugin.rpc", "plugin.read",
+            "plugin.install",
+            "plugin.approve",
+            "plugin.activate",
+            "plugin.rpc",
+            "plugin.read",
         ],
     },
     {
         "name": "event.manage",
         "description": "Event creation and reading",
         "operations": [
-            "event.append", "event.read", "event.list", "event.stream",
+            "event.append",
+            "event.read",
+            "event.list",
+            "event.stream",
         ],
     },
     {
         "name": "artifact.manage",
         "description": "Artifact creation and reading",
         "operations": [
-            "artifact.create", "artifact.read", "artifact.list",
+            "artifact.create",
+            "artifact.read",
+            "artifact.list",
         ],
     },
     {
         "name": "secret.manage",
         "description": "Secret reference lifecycle management",
         "operations": [
-            "secret.create", "secret.read", "secret.list",
-            "secret.rotate", "secret.revoke",
+            "secret.create",
+            "secret.read",
+            "secret.list",
+            "secret.rotate",
+            "secret.revoke",
         ],
     },
     {
         "name": "share.manage",
         "description": "Cross-org resource sharing management",
         "operations": [
-            "share.create", "share.revoke", "share.list",
+            "share.create",
+            "share.revoke",
+            "share.list",
         ],
     },
     {
         "name": "worker.manage",
         "description": "Worker fleet lifecycle management",
         "operations": [
-            "worker.register", "worker.approve", "worker.suspend",
-            "worker.revoke", "worker.credential.issue",
+            "worker.register",
+            "worker.approve",
+            "worker.suspend",
+            "worker.revoke",
+            "worker.credential.issue",
         ],
     },
     {
         "name": "dlq.manage",
         "description": "Dead letter queue triage and resolution",
         "operations": [
-            "dlq.read", "dlq.propose", "dlq.resolve",
+            "dlq.read",
+            "dlq.propose",
+            "dlq.resolve",
         ],
     },
     {
         "name": "trigger.manage",
         "description": "Workflow trigger management",
         "operations": [
-            "trigger.create", "trigger.read", "trigger.list",
-            "trigger.pause", "trigger.resume",
+            "trigger.create",
+            "trigger.read",
+            "trigger.list",
+            "trigger.pause",
+            "trigger.resume",
         ],
     },
     {
         "name": "webhook.manage",
         "description": "Webhook subscription management",
         "operations": [
-            "webhook.create", "webhook.read", "webhook.list",
+            "webhook.create",
+            "webhook.read",
+            "webhook.list",
             "webhook.pause",
         ],
     },
@@ -287,15 +323,21 @@ _DEFAULT_CAPABILITY_GROUPS: list[dict[str, Any]] = [
         "name": "ontology.manage",
         "description": "Ontology graph edge and memory management",
         "operations": [
-            "edge.create", "edge.read", "edge.list",
-            "memory.create", "memory.update", "memory.read",
+            "edge.create",
+            "edge.read",
+            "edge.list",
+            "memory.create",
+            "memory.update",
+            "memory.read",
         ],
     },
     {
         "name": "capability.manage",
         "description": "Capability blueprint management",
         "operations": [
-            "capability.create", "capability.read", "capability.list",
+            "capability.create",
+            "capability.read",
+            "capability.list",
             "capability.deprecate",
         ],
     },
@@ -303,39 +345,55 @@ _DEFAULT_CAPABILITY_GROUPS: list[dict[str, Any]] = [
         "name": "metering.read",
         "description": "Usage metering read access",
         "operations": [
-            "metering.summary", "metering.history",
-            "project.read", "project.list",
+            "metering.summary",
+            "metering.history",
+            "project.read",
+            "project.list",
         ],
     },
     {
         "name": "project.read",
         "description": "Read-only access to project list and detail",
         "operations": [
-            "project.list", "project.get",
+            "project.list",
+            "project.get",
         ],
     },
     {
         "name": "project.manage",
         "description": "Project management operations",
         "operations": [
-            "project.create", "project.read", "project.list", "project.update", "project.archive",
+            "project.create",
+            "project.read",
+            "project.list",
+            "project.update",
+            "project.archive",
         ],
     },
     {
         "name": "readonly",
         "description": "Read-only access to all list/get endpoints",
         "operations": [
-            "workflow.read", "workflow.list",
-            "task.read", "task.list",
-            "event.read", "event.list",
-            "artifact.read", "artifact.list",
-            "capability.read", "capability.list",
-            "worker.read", "worker.list",
+            "workflow.read",
+            "workflow.list",
+            "task.read",
+            "task.list",
+            "event.read",
+            "event.list",
+            "artifact.read",
+            "artifact.list",
+            "capability.read",
+            "capability.list",
+            "worker.read",
+            "worker.list",
             "dlq.read",
-            "trigger.read", "trigger.list",
+            "trigger.read",
+            "trigger.list",
             "share.list",
-            "metering.summary", "metering.history",
-            "project.read", "project.list",
+            "metering.summary",
+            "metering.history",
+            "project.read",
+            "project.list",
         ],
     },
 ]
@@ -465,9 +523,7 @@ class BootstrapService:
         # 5. Create admin identity if password provided
         auth_identity_id: uuid.UUID | None = None
         if admin_password:
-            auth_identity_id = self._create_admin_identity(
-                admin_email, admin_password, now
-            )
+            auth_identity_id = self._create_admin_identity(admin_email, admin_password, now)
 
         # 6. Record genesis as the first Operation + Event
         genesis_op_id = new_id()
@@ -612,14 +668,16 @@ class BootstrapService:
         # Populate in-process domain registries so validators work immediately
         # in this process without a DB round-trip.
         from xiosync.domain.event_registry import event_registry
+
         event_registry.register([value for value, _ in _CORE_EVENT_TYPES])
 
         from xiosync.domain.trigger_registry import trigger_registry
+
         trigger_registry.register([value for value, _ in _CORE_TRIGGER_TYPES])
 
         from xiosync.domain.lifecycle_registry import lifecycle_registry
-        lifecycle_registry.register([value for value, _ in _CORE_LIFECYCLE_STATES])
 
+        lifecycle_registry.register([value for value, _ in _CORE_LIFECYCLE_STATES])
 
     def _seed_capability_groups(self, now: datetime) -> None:
         """Create default capability groups for RBAC."""

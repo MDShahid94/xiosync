@@ -15,6 +15,7 @@ Sharing model (consistent with vault + workflow_templates):
 Workers (Colab, VM, etc.) upload/download blobs directly to the configured provider,
 then call POST /storage/objects to register the object in XIOSYNC's index.
 """
+
 from alembic import op
 
 revision = "0034"
@@ -129,11 +130,15 @@ def upgrade() -> None:
         ON storage_objects USING GIN (metadata)
     """)
 
-    op.execute("COMMENT ON TABLE storage_providers IS "
-               "'Universal org-configurable blob storage backends. "
-               "organization_id=NULL = platform-global shared provider.'")
-    op.execute("COMMENT ON TABLE storage_objects IS "
-               "'Object index: XIOSYNC tracks what exists where. Actual blobs live in the provider.'")
+    op.execute(
+        "COMMENT ON TABLE storage_providers IS "
+        "'Universal org-configurable blob storage backends. "
+        "organization_id=NULL = platform-global shared provider.'"
+    )
+    op.execute(
+        "COMMENT ON TABLE storage_objects IS "
+        "'Object index: XIOSYNC tracks what exists where. Actual blobs live in the provider.'"
+    )
 
 
 def downgrade() -> None:

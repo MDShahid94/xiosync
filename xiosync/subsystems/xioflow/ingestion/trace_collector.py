@@ -10,6 +10,7 @@ Ontology compliance:
   - ``tier='project_experimental'`` (promoted via ConsensusEngine on success)
   - Graph edges are ``GRAPH_CLASS_WORKFLOW`` (acyclic, doc 03 §3)
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,12 +31,12 @@ class TraceAction:
 
     # Classification
     category: str = "browser"  # browser | http | system | compute | control
-    step_name: str = "root"    # from ctx.step() boundary
-    action_type: str = ""      # click, fill, navigate, http_request, ssh_command, ...
+    step_name: str = "root"  # from ctx.step() boundary
+    action_type: str = ""  # click, fill, navigate, http_request, ssh_command, ...
 
     # Locator data (browser actions only)
     place_value: dict[str, Any] | None = None  # 9-tier locators
-    face_value: dict[str, Any] | None = None   # visual signature
+    face_value: dict[str, Any] | None = None  # visual signature
 
     # Action parameters
     action_params: dict[str, Any] = field(default_factory=dict)
@@ -102,7 +103,10 @@ class TraceCollector:
         self.actions.append(action)
         logger.debug(
             "trace.record: %s [%s] step=%s intent=%s",
-            action.action_type, action.category, action.step_name, action.intent,
+            action.action_type,
+            action.category,
+            action.step_name,
+            action.intent,
         )
 
     def record_browser_action(
@@ -118,17 +122,20 @@ class TraceCollector:
     ) -> None:
         """Convenience method to record a browser action."""
         from urllib.parse import urlparse
-        self.record(TraceAction(
-            category="browser",
-            action_type=action_type,
-            place_value=place_value,
-            face_value=face_value,
-            action_params=action_params or {},
-            url=url,
-            domain=urlparse(url).netloc if url else self.domain,
-            duration_ms=duration_ms,
-            output_var=output_var,
-        ))
+
+        self.record(
+            TraceAction(
+                category="browser",
+                action_type=action_type,
+                place_value=place_value,
+                face_value=face_value,
+                action_params=action_params or {},
+                url=url,
+                domain=urlparse(url).netloc if url else self.domain,
+                duration_ms=duration_ms,
+                output_var=output_var,
+            )
+        )
 
     def record_non_browser_action(
         self,
@@ -140,14 +147,16 @@ class TraceCollector:
         duration_ms: float = 0,
     ) -> None:
         """Convenience method to record a non-browser action (HTTP, SSH, etc.)."""
-        self.record(TraceAction(
-            category="http" if action_type == "http_request" else "system",
-            action_type=action_type,
-            action_params=action_params or {},
-            output=output,
-            output_var=output_var,
-            duration_ms=duration_ms,
-        ))
+        self.record(
+            TraceAction(
+                category="http" if action_type == "http_request" else "system",
+                action_type=action_type,
+                action_params=action_params or {},
+                output=output,
+                output_var=output_var,
+                duration_ms=duration_ms,
+            )
+        )
 
     def _auto_intent(self, action: TraceAction) -> str:
         """Generate a human-readable intent string from step + action."""

@@ -17,6 +17,7 @@ Usage:
     python3 xio_warmpool_cron.py
     WARM_TARGET=10 python3 xio_warmpool_cron.py
 """
+
 from __future__ import annotations
 
 import json
@@ -25,16 +26,16 @@ import os
 import sys
 import urllib.request
 
-LOG_FILE     = "/tmp/xio_warmpool.log"
-XIOSYNC      = os.environ.get("XIOSYNC_URL",        "http://localhost:8000")
-ADMIN_PASS   = os.environ.get("XIOSYNC_ADMIN_PASS", "Xiogrid2026!Admin")
-ADMIN_USER   = os.environ.get("XIOSYNC_ADMIN_EMAIL","admin@xiogrid.dev")
-ORG_ID       = os.environ.get("XIOSYNC_ORG_ID",     "00000000-0000-7000-8000-000000000000")
-WARM_TARGET  = int(os.environ.get("WARM_TARGET",    "5"))   # keep at least 5 idle slots
+LOG_FILE = "/tmp/xio_warmpool.log"
+XIOSYNC = os.environ.get("XIOSYNC_URL", "http://localhost:8000")
+ADMIN_PASS = os.environ.get("XIOSYNC_ADMIN_PASS", "Xiogrid2026!Admin")
+ADMIN_USER = os.environ.get("XIOSYNC_ADMIN_EMAIL", "admin@xiogrid.dev")
+ORG_ID = os.environ.get("XIOSYNC_ORG_ID", "00000000-0000-7000-8000-000000000000")
+WARM_TARGET = int(os.environ.get("WARM_TARGET", "5"))  # keep at least 5 idle slots
 
 logging.basicConfig(
-    level   = logging.INFO,
-    format  = "%(asctime)s  %(levelname)-7s %(message)s",
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-7s %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
         logging.FileHandler(LOG_FILE, mode="a"),
@@ -44,7 +45,7 @@ log = logging.getLogger("warmpool")
 
 
 def _post(path: str, body: dict | None = None, token: str | None = None) -> dict:
-    url  = f"{XIOSYNC}{path}"
+    url = f"{XIOSYNC}{path}"
     data = json.dumps(body or {}).encode()
     hdrs: dict[str, str] = {"Content-Type": "application/json"}
     if token:
@@ -64,11 +65,14 @@ def _get(path: str, token: str) -> dict:
 
 
 def get_token() -> str:
-    resp = _post("/api/v1/auth/login", {
-        "organization_id": ORG_ID,
-        "email": ADMIN_USER,
-        "password": ADMIN_PASS,
-    })
+    resp = _post(
+        "/api/v1/auth/login",
+        {
+            "organization_id": ORG_ID,
+            "email": ADMIN_USER,
+            "password": ADMIN_PASS,
+        },
+    )
     return resp["access_token"]
 
 
@@ -82,19 +86,20 @@ def run() -> None:
 
     # Count current idle slots
     try:
-        data  = _get("/api/v1/pppoe/nodes", token)
+        data = _get("/api/v1/pppoe/nodes", token)
         nodes = data.get("nodes", data if isinstance(data, list) else [])
     except Exception as e:
         log.error("Failed to fetch nodes: %s", e)
         return
 
-    idle_count    = sum(1 for n in nodes if n.get("state") == "idle")
-    total_count   = len(nodes)
+    idle_count = sum(1 for n in nodes if n.get("state") == "idle")
+    total_count = len(nodes)
     log.info("Current: %d total slots, %d idle", total_count, idle_count)
 
     if idle_count >= WARM_TARGET:
-        log.info("Pool is warm (idle=%d >= target=%d) ✅ — no action needed",
-                 idle_count, WARM_TARGET)
+        log.info(
+            "Pool is warm (idle=%d >= target=%d) ✅ — no action needed", idle_count, WARM_TARGET
+        )
         return
 
     deficit = WARM_TARGET - idle_count
@@ -116,7 +121,7 @@ def run() -> None:
     # Trigger warm-up on each host (endpoint runs async, returns immediately)
     new_target = total_count + deficit
     for host in active_hosts:
-        host_id   = host["id"]
+        host_id = host["id"]
         host_name = host.get("name", host_id)
         try:
             resp = _post(
@@ -124,8 +129,12 @@ def run() -> None:
                 body={"warm_pool_target": new_target},
                 token=token,
             )
-            log.info("  Host %s: warm-up triggered (target=%d) — %s",
-                     host_name, new_target, resp.get("status", "?"))
+            log.info(
+                "  Host %s: warm-up triggered (target=%d) — %s",
+                host_name,
+                new_target,
+                resp.get("status", "?"),
+            )
         except Exception as e:
             log.error("  Host %s: warm-up failed: %s", host_name, e)
 

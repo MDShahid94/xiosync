@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement_stay = """        # "Stay signed in?" prompt — CDP native click
@@ -15,7 +15,7 @@ code = re.sub(
     r"        # \"Stay signed in\?\" prompt — JS multi-event \(XIOBR pattern\)\n        try:\n            _stay_clicked = cdp_eval\(\"\"\"\n\(function\(\)\{\n  var dispatch=function\(el\)\{el\.scrollIntoView\(\{block:'center'\}\);\n    \['pointerdown','mousedown','pointerup','mouseup','click'\]\.forEach\(function\(ev\)\{\n      el\.dispatchEvent\(new MouseEvent\(ev,\{bubbles:true,cancelable:true,view:window\}\)\);\}\);\};\n  var b=document\.querySelector\('#confirm-button,\[data-action=\"confirm\"\],button\[jsname=\"LgbsSe\"\]'\);\n  if\(b\)\{dispatch\(b\);return true;\} return false;\n\}\)\(\)\"\"\"\)\n            if _stay_clicked is True:\n                logger\.info\(\"uc-login: 'Stay signed in' confirmed\"\)\n                time\.sleep\(1\)\n        except Exception:\n            pass",
     replacement_stay,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 replacement_skip = """                if any(x in _ps for x in _prompt_keywords):
@@ -57,7 +57,7 @@ code = re.sub(
     r"                if any\(x in _ps for x in _prompt_keywords\):\n                    logger\.info\(f\"uc-login: post-login prompt detected \(iter \{_pl_i\+1\}\) — clicking Skip/Cancel\"\)\n                    try:\n                        from selenium\.webdriver\.support\.ui import WebDriverWait as _WDW\n                        from selenium\.webdriver\.support import expected_conditions as _EC\n                        _skip = _WDW\(driver, 4\)\.until\(_EC\.element_to_be_clickable\(\(\n                            By\.XPATH,\n                            \"//button\[contains\(translate\(\.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'\),'cancel'\)\"\n                            \" or contains\(translate\(\.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'\),'not now'\)\"\n                            \" or contains\(translate\(\.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'\),'skip'\)\"\n                            \" or contains\(translate\(\.,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'\),'no thanks'\)\]\"\n                        \)\)\)\n                        _skip\.send_keys\(_PostKeys\.RETURN\)\n                        logger\.info\(\"uc-login: post-login prompt dismissed \(Skip/Cancel\)\"\)\n                        uc_sleep\(2\.0, 3\.0\)\n                    except Exception as _ske:\n                        logger\.warning\(f\"uc-login: post-login Skip/Cancel failed: \{_ske\}\"\)\n                        break\n                else:\n                    break",
     replacement_skip,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

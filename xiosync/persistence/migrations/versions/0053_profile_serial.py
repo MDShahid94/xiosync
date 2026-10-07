@@ -17,6 +17,7 @@ The backfill extracts the numeric serial from existing filenames so that
 pre-existing profiles keep their PRFL-NNN number.  Any identity with no
 ``storage_object_key`` yet receives the next value from the sequence.
 """
+
 from __future__ import annotations
 
 from alembic import op

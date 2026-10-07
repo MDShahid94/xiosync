@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 auth_block = """from fastapi.security import APIKeyHeader
@@ -19,11 +19,7 @@ from fastapi import Depends
 app = FastAPI(title="XIOSYNC Colab Agent", dependencies=[Depends(verify_worker_secret)])
 """
 
-code = re.sub(
-    r"app = FastAPI\(title=\"XIOSYNC Colab Agent\"\)",
-    auth_block,
-    code
-)
+code = re.sub(r"app = FastAPI\(title=\"XIOSYNC Colab Agent\"\)", auth_block, code)
 
 with open("colab/xiorun_agent.py", "w") as f:
     f.write(code)

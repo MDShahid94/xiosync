@@ -4,6 +4,7 @@ Loads the viewer template from static/viewer.html and performs variable
 substitution for session ID and WebSocket URL. The HTML is cached after
 first load for zero file I/O on subsequent requests.
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,9 +26,13 @@ def _load_template() -> str:
             "Ensure xiosync/subsystems/xioview/static/viewer.html exists."
         )
     text = template_path.read_text(encoding="utf-8")
-    logger.info("xioview.viewer_template_loaded", extra={
-        "path": str(template_path), "size_bytes": len(text),
-    })
+    logger.info(
+        "xioview.viewer_template_loaded",
+        extra={
+            "path": str(template_path),
+            "size_bytes": len(text),
+        },
+    )
     return text
 
 
@@ -52,9 +57,9 @@ def render_viewer(
     """
     template = _load_template()
     import json as _json
+
     result = (
-        template
-        .replace("{{SESSION_ID}}", session_id)
+        template.replace("{{SESSION_ID}}", session_id)
         .replace("{{WS_URL}}", ws_url)
         .replace("{{NOVNC_URL}}", novnc_url or "")
         .replace("{{PROFILE_ID}}", profile_id or "")

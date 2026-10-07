@@ -182,9 +182,10 @@ class TestStartupLogging:
                                         create_production_app()
 
                                         # Should log environment
-                                        calls = [str(call) for call in mock_logger.info.call_args_list]  # noqa: E501
+                                        calls = [
+                                            str(call) for call in mock_logger.info.call_args_list
+                                        ]  # noqa: E501
                                         assert any("staging" in call for call in calls)
-
 
     def test_startup_logs_success(self) -> None:
         """Startup logs success message when all checks pass."""
@@ -211,8 +212,12 @@ class TestStartupLogging:
                                         create_production_app()
 
                                         # Should log success
-                                        calls = [str(call) for call in mock_logger.info.call_args_list]  # noqa: E501
-                                        assert any("startup checks passed" in call for call in calls)  # noqa: E501
+                                        calls = [
+                                            str(call) for call in mock_logger.info.call_args_list
+                                        ]  # noqa: E501
+                                        assert any(
+                                            "startup checks passed" in call for call in calls
+                                        )  # noqa: E501
 
     def test_startup_logs_failure_reasons(self) -> None:
         """Startup logs helpful error messages on failure."""

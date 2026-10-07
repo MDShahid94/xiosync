@@ -28,6 +28,7 @@ Usage:
     # Auto-discover all enrolled workers from XIOSYNC:
     python3 xio_proxy_daemon.py --workers-from-xiosync --vm 100.106.81.15
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,16 +41,15 @@ import subprocess
 import threading
 import time
 import urllib.request
-from typing import Any
 
-PROXY_HOST   = "127.0.0.1"
-PROXY_PORT   = 19056         # Mac SOCKS5 exit port on worker (19056 avoids tailscaled range 1055-10xxx)
-PPPOE_BASE   = 19100         # worker port 19100+slot → VM:10000+slot  (away from tailscaled 10100/10101)
-SSH_KEY      = os.path.expanduser("~/.ssh/id_ed25519")
-XIOSYNC      = os.environ.get("XIOSYNC_URL",        "http://localhost:8000")
-ADMIN_PASS   = os.environ.get("XIOSYNC_ADMIN_PASS", "Xiogrid2026!Admin")
-ADMIN_USER   = os.environ.get("XIOSYNC_ADMIN_EMAIL","admin@xiogrid.dev")
-ORG_ID       = os.environ.get("XIOSYNC_ORG_ID",     "00000000-0000-7000-8000-000000000000")
+PROXY_HOST = "127.0.0.1"
+PROXY_PORT = 19056  # Mac SOCKS5 exit port on worker (19056 avoids tailscaled range 1055-10xxx)
+PPPOE_BASE = 19100  # worker port 19100+slot → VM:10000+slot  (away from tailscaled 10100/10101)
+SSH_KEY = os.path.expanduser("~/.ssh/id_ed25519")
+XIOSYNC = os.environ.get("XIOSYNC_URL", "http://localhost:8000")
+ADMIN_PASS = os.environ.get("XIOSYNC_ADMIN_PASS", "Xiogrid2026!Admin")
+ADMIN_USER = os.environ.get("XIOSYNC_ADMIN_EMAIL", "admin@xiogrid.dev")
+ORG_ID = os.environ.get("XIOSYNC_ORG_ID", "00000000-0000-7000-8000-000000000000")
 
 # {(worker_ip, label): Popen}  — label e.g. "mac" or "slot:0"
 _tunnels: dict[tuple[str, str], subprocess.Popen] = {}
@@ -57,6 +57,7 @@ _lock = threading.Lock()
 
 
 # ── SOCKS5 server ────────────────────────────────────────────────────────────
+
 
 def _relay(src: socket.socket, dst: socket.socket) -> None:
     try:
@@ -83,10 +84,10 @@ def _handle_client(conn: socket.socket) -> None:
         hdr = conn.recv(256)
         if not hdr or hdr[0] != 5:
             return
-        conn.send(b"\x05\x00")          # no-auth
+        conn.send(b"\x05\x00")  # no-auth
 
         req = conn.recv(4)
-        if len(req) < 4 or req[1] != 0x01:   # only CONNECT
+        if len(req) < 4 or req[1] != 0x01:  # only CONNECT
             return
         atype = req[3]
         if atype == 0x01:
@@ -130,8 +131,10 @@ def _start_socks5_server() -> None:
 
 # ── Reverse tunnel management ────────────────────────────────────────────────
 
-def _ssh_reverse(worker_ip: str, remote_port: int, local_host: str, local_port: int,
-                 label: str) -> None:
+
+def _ssh_reverse(
+    worker_ip: str, remote_port: int, local_host: str, local_port: int, label: str
+) -> None:
     """Push ssh -R remote_port:local_host:local_port to worker (idempotent)."""
     key = (worker_ip, label)
     with _lock:
@@ -141,14 +144,22 @@ def _ssh_reverse(worker_ip: str, remote_port: int, local_host: str, local_port: 
 
     cmd = [
         "ssh",
-        "-i", SSH_KEY,
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "ServerAliveInterval=20",
-        "-o", "ServerAliveCountMax=5",
-        "-o", "ExitOnForwardFailure=yes",
-        "-o", "BatchMode=yes",
-        "-R", f"{remote_port}:{local_host}:{local_port}",
-        "-N", f"root@{worker_ip}",
+        "-i",
+        SSH_KEY,
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "ServerAliveInterval=20",
+        "-o",
+        "ServerAliveCountMax=5",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-o",
+        "BatchMode=yes",
+        "-R",
+        f"{remote_port}:{local_host}:{local_port}",
+        "-N",
+        f"root@{worker_ip}",
     ]
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -156,11 +167,12 @@ def _ssh_reverse(worker_ip: str, remote_port: int, local_host: str, local_port: 
         if proc.poll() is None:
             with _lock:
                 _tunnels[key] = proc
-            print(f"  ✅ [{label}] worker:{remote_port} → {local_host}:{local_port} "
-                  f"(PID {proc.pid})", flush=True)
+            print(
+                f"  ✅ [{label}] worker:{remote_port} → {local_host}:{local_port} (PID {proc.pid})",
+                flush=True,
+            )
         else:
-            print(f"  ⚠️  [{label}] tunnel to {worker_ip} failed (rc={proc.returncode})",
-                  flush=True)
+            print(f"  ⚠️  [{label}] tunnel to {worker_ip} failed (rc={proc.returncode})", flush=True)
     except Exception as e:
         print(f"  ❌ [{label}] error: {e}", flush=True)
 
@@ -174,20 +186,24 @@ def _push_all_tunnels(worker_ip: str, vm_ip: str | None, active_slots: list[int]
     if vm_ip:
         for slot in active_slots:
             worker_port = PPPOE_BASE + slot
-            vm_port     = 10000 + slot
+            vm_port = 10000 + slot
             _ssh_reverse(worker_ip, worker_port, vm_ip, vm_port, f"pppoe-slot{slot}")
 
 
 # ── XIOSYNC API helpers ──────────────────────────────────────────────────────
 
+
 def _xiosync_token() -> str:
-    body = json.dumps({
-        "organization_id": ORG_ID,
-        "email": ADMIN_USER,
-        "password": ADMIN_PASS,
-    }).encode()
+    body = json.dumps(
+        {
+            "organization_id": ORG_ID,
+            "email": ADMIN_USER,
+            "password": ADMIN_PASS,
+        }
+    ).encode()
     req = urllib.request.Request(
-        f"{XIOSYNC}/api/v1/auth/login", data=body,
+        f"{XIOSYNC}/api/v1/auth/login",
+        data=body,
         headers={"Content-Type": "application/json"},
     )
     with urllib.request.urlopen(req, timeout=8) as r:
@@ -205,8 +221,9 @@ def _active_pppoe_slots() -> list[int]:
         with urllib.request.urlopen(req, timeout=8) as r:
             data = json.load(r)
             nodes = data.get("nodes", data if isinstance(data, list) else [])
-            return [n["slot"] for n in nodes
-                    if n.get("state") in ("idle", "assigned") and "slot" in n]
+            return [
+                n["slot"] for n in nodes if n.get("state") in ("idle", "assigned") and "slot" in n
+            ]
     except Exception as e:
         print(f"  ⚠️  PPPoE slot discovery failed: {e}", flush=True)
         return []
@@ -235,11 +252,13 @@ def _enrolled_worker_ips() -> list[str]:
 
 # ── Watchdog ─────────────────────────────────────────────────────────────────
 
-def _watchdog(static_workers: list[str], auto_discover: bool,
-              vm_ip: str | None, static_slots: list[int]) -> None:
+
+def _watchdog(
+    static_workers: list[str], auto_discover: bool, vm_ip: str | None, static_slots: list[int]
+) -> None:
     while True:
         targets = list(static_workers)
-        slots   = list(static_slots)
+        slots = list(static_slots)
 
         if auto_discover:
             for ip in _enrolled_worker_ips():
@@ -268,19 +287,31 @@ def _watchdog(static_workers: list[str], auto_discover: bool,
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="XIOSYNC Mac proxy daemon")
-    parser.add_argument("--worker", action="append", default=[], metavar="TS_IP",
-                        help="Worker TS IP (repeatable)")
-    parser.add_argument("--vm", default=None, metavar="VM_TS_IP",
-                        help="PPPoE VM Tailscale IP (e.g. 100.106.81.15)")
-    parser.add_argument("--slots", default="", metavar="0,1,2",
-                        help="Comma-separated PPPoE slot numbers to relay (default: auto from XIOSYNC)")
-    parser.add_argument("--workers-from-xiosync", action="store_true",
-                        help="Auto-discover enrolled workers from XIOSYNC")
+    parser.add_argument(
+        "--worker", action="append", default=[], metavar="TS_IP", help="Worker TS IP (repeatable)"
+    )
+    parser.add_argument(
+        "--vm", default=None, metavar="VM_TS_IP", help="PPPoE VM Tailscale IP (e.g. 100.106.81.15)"
+    )
+    parser.add_argument(
+        "--slots",
+        default="",
+        metavar="0,1,2",
+        help="Comma-separated PPPoE slot numbers to relay (default: auto from XIOSYNC)",
+    )
+    parser.add_argument(
+        "--workers-from-xiosync",
+        action="store_true",
+        help="Auto-discover enrolled workers from XIOSYNC",
+    )
     args = parser.parse_args()
 
-    static_slots = [int(s) for s in args.slots.split(",") if s.strip().isdigit()] if args.slots else []
+    static_slots = (
+        [int(s) for s in args.slots.split(",") if s.strip().isdigit()] if args.slots else []
+    )
 
     # Start SOCKS5 server
     threading.Thread(target=_start_socks5_server, daemon=True).start()

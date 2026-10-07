@@ -111,9 +111,7 @@ def _make_app(mock_service: MagicMock) -> FastAPI:
 def plugins_client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, MagicMock]:
     """TestClient with a MagicMock PluginService wired into the router."""
     mock_service = MagicMock()
-    monkeypatch.setattr(
-        "xiosync.api.routers.plugins.PluginService", lambda _session: mock_service
-    )
+    monkeypatch.setattr("xiosync.api.routers.plugins.PluginService", lambda _session: mock_service)
     app = _make_app(mock_service)
     return TestClient(app, raise_server_exceptions=True), mock_service
 
@@ -293,9 +291,7 @@ def test_activate_installation_success(
     http, svc = plugins_client
     svc.activate_installation.return_value = _ACTIVE_INSTALL
 
-    resp = http.post(
-        f"/api/v1/plugins/installations/{_INSTALLATION_ID}/activate"
-    )
+    resp = http.post(f"/api/v1/plugins/installations/{_INSTALLATION_ID}/activate")
 
     assert resp.status_code == 200
     assert resp.json()["state"] == "active"
@@ -310,9 +306,7 @@ def test_activate_installation_not_found_returns_404(
     http, svc = plugins_client
     svc.activate_installation.side_effect = InstallationNotFoundError(_INSTALLATION_ID)
 
-    resp = http.post(
-        f"/api/v1/plugins/installations/{_INSTALLATION_ID}/activate"
-    )
+    resp = http.post(f"/api/v1/plugins/installations/{_INSTALLATION_ID}/activate")
 
     assert resp.status_code == 404
     assert resp.json()["code"] == "installation_not_found"
@@ -327,9 +321,7 @@ def test_activate_installation_wrong_state_returns_409(
         _INSTALLATION_ID, "pending_approval", "activate"
     )
 
-    resp = http.post(
-        f"/api/v1/plugins/installations/{_INSTALLATION_ID}/activate"
-    )
+    resp = http.post(f"/api/v1/plugins/installations/{_INSTALLATION_ID}/activate")
 
     assert resp.status_code == 409
     body = resp.json()
@@ -536,9 +528,7 @@ def test_execute_rpc_value_error_returns_400(
 ) -> None:
     """A service-raised ValueError surfaces as 400 invalid_rpc_params."""
     http, svc = plugins_client
-    svc.execute_plugin_rpc.side_effect = ValueError(
-        "params must be a JSON object (INV-PLUGIN-2)"
-    )
+    svc.execute_plugin_rpc.side_effect = ValueError("params must be a JSON object (INV-PLUGIN-2)")
 
     resp = http.post(
         f"/api/v1/plugins/installations/{_INSTALLATION_ID}/rpc",

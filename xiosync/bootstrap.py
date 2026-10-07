@@ -47,7 +47,8 @@ def main() -> None:
         help="PostgreSQL URL (default: DATABASE_URL env var)",
     )
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Enable verbose logging",
     )

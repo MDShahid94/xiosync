@@ -72,6 +72,7 @@ class ArtifactItem(BaseModel):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _paginate(
     request: Request,
     model: Any,
@@ -100,18 +101,12 @@ def _paginate(
         if order_desc:
             stmt = stmt.where(
                 (model.created_at < params.cursor_created_at)
-                | (
-                    (model.created_at == params.cursor_created_at)
-                    & (model.id < params.cursor_id)
-                )
+                | ((model.created_at == params.cursor_created_at) & (model.id < params.cursor_id))
             )
         else:
             stmt = stmt.where(
                 (model.created_at > params.cursor_created_at)
-                | (
-                    (model.created_at == params.cursor_created_at)
-                    & (model.id > params.cursor_id)
-                )
+                | ((model.created_at == params.cursor_created_at) & (model.id > params.cursor_id))
             )
 
     if order_desc:
@@ -154,13 +149,18 @@ def list_workers(
     if pool_type:
         filters.append(WorkerEnrollment.pool_type == pool_type)
 
-    rows, next_cursor = _paginate(request, WorkerEnrollment, limit=limit, cursor=cursor, filters=filters)
+    rows, next_cursor = _paginate(
+        request, WorkerEnrollment, limit=limit, cursor=cursor, filters=filters
+    )
     return PaginatedResponse(
         items=[
             WorkerItem(
-                id=r.id, organization_id=r.organization_id,
-                worker_id=str(r.worker_id), enrollment_state=r.enrollment_state,
-                pool_type=r.pool_type, software_version=r.software_version,
+                id=r.id,
+                organization_id=r.organization_id,
+                worker_id=str(r.worker_id),
+                enrollment_state=r.enrollment_state,
+                pool_type=r.pool_type,
+                software_version=r.software_version,
                 created_at=r.created_at,
             )
             for r in rows
@@ -198,9 +198,12 @@ def list_events(
     return PaginatedResponse(
         items=[
             EventItem(
-                id=r.id, organization_id=r.organization_id,
-                event_type=r.event_type, severity=r.severity,
-                entity_type=r.entity_type, entity_id=r.entity_id,
+                id=r.id,
+                organization_id=r.organization_id,
+                event_type=r.event_type,
+                severity=r.severity,
+                entity_type=r.entity_type,
+                entity_id=r.entity_id,
                 created_at=r.created_at,
             )
             for r in rows
@@ -229,9 +232,13 @@ def list_capabilities(
     return PaginatedResponse(
         items=[
             CapabilityItem(
-                id=r.id, organization_id=r.organization_id,
-                name=r.name, execution_mode=r.execution_mode,
-                state=r.state, version=r.version, created_at=r.created_at,
+                id=r.id,
+                organization_id=r.organization_id,
+                name=r.name,
+                execution_mode=r.execution_mode,
+                state=r.state,
+                version=r.version,
+                created_at=r.created_at,
             )
             for r in rows
         ],
@@ -259,9 +266,12 @@ def list_artifacts(
     return PaginatedResponse(
         items=[
             ArtifactItem(
-                id=r.id, organization_id=r.organization_id,
-                provider_type=r.provider_type, uri=r.uri,
-                content_type=r.content_type, size_bytes=r.size_bytes,
+                id=r.id,
+                organization_id=r.organization_id,
+                provider_type=r.provider_type,
+                uri=r.uri,
+                content_type=r.content_type,
+                size_bytes=r.size_bytes,
                 created_at=r.created_at,
             )
             for r in rows
@@ -269,11 +279,13 @@ def list_artifacts(
         cursor=next_cursor,
     )
 
-from xiosync.api.router_registry import register_router
+
 from xiosync.api.middleware.rbac import require_capability
+from xiosync.api.router_registry import register_router
+
 register_router(
     router,
-    prefix='/api/v1',
+    prefix="/api/v1",
     tags=["listings"],
     dependencies=[require_capability("readonly")],
 )

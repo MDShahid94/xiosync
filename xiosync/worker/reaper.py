@@ -10,6 +10,7 @@ Expiry detection uses lease_expires_at when set (preferred — set by worker on
 claim) or falls back to claimed_at + _STALE_MINUTES for tasks claimed before
 migration 0044.
 """
+
 from __future__ import annotations
 
 import json

@@ -85,14 +85,10 @@ _RESTORE: list[tuple[str, str, str]] = [
 
 def upgrade() -> None:
     for table, constraint in _STATE_CONSTRAINTS:
-        op.execute(
-            f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {constraint}"
-        )
+        op.execute(f"ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {constraint}")
 
 
 def downgrade() -> None:
     for table, constraint, clause in _RESTORE:
         # Re-add constraint only if it doesn't already exist (idempotent).
-        op.execute(
-            f"ALTER TABLE {table} ADD CONSTRAINT {constraint} CHECK ({clause})"
-        )
+        op.execute(f"ALTER TABLE {table} ADD CONSTRAINT {constraint} CHECK ({clause})")

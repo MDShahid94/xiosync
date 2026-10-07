@@ -17,7 +17,6 @@ once per pytest session (cheap), and the registry is stable for the whole run.
 from __future__ import annotations
 
 import pytest
-
 from xiosync.domain.event_registry import event_registry
 from xiosync.services.bootstrap import _CORE_EVENT_TYPES
 from xiosync.subsystems.xiogrid.bootstrap import _EVENT_TYPES as _XIOGRID_EVENT_TYPES
@@ -30,8 +29,7 @@ def populate_event_registry() -> None:
     Runs once per pytest session, before any test.  Safe to call even when
     the DB is not available — no I/O is performed.
     """
-    all_event_types: list[str] = (
-        [value for value, _ in _CORE_EVENT_TYPES]
-        + [value for value, _ in _XIOGRID_EVENT_TYPES]
-    )
+    all_event_types: list[str] = [value for value, _ in _CORE_EVENT_TYPES] + [
+        value for value, _ in _XIOGRID_EVENT_TYPES
+    ]
     event_registry.register(all_event_types)

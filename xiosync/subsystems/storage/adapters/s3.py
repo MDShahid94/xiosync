@@ -8,6 +8,7 @@ Config keys:
 Credential (vault):
     'ACCESS_KEY_ID:SECRET_ACCESS_KEY'
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -16,11 +17,10 @@ from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
-from xiosync.subsystems.storage.adapters.base import StorageAdapter, AccessInfo
+from xiosync.subsystems.storage.adapters.base import AccessInfo, StorageAdapter
 
 
 class S3Adapter(StorageAdapter):
-
     def validate_config(self) -> None:
         for key in ("endpoint", "bucket"):
             if key not in self.config:
@@ -35,16 +35,16 @@ class S3Adapter(StorageAdapter):
             raise ValueError("S3 credential must be 'ACCESS_KEY_ID:SECRET_ACCESS_KEY'")
 
         endpoint = self.config["endpoint"].rstrip("/")
-        bucket   = self.config["bucket"]
-        region   = self.config.get("region", "us-east-1")
-        service  = "s3"
+        bucket = self.config["bucket"]
+        region = self.config.get("region", "us-east-1")
+        service = "s3"
 
-        now       = datetime.now(UTC)
-        date_str  = now.strftime("%Y%m%d")
-        time_str  = now.strftime("%Y%m%dT%H%M%SZ")
+        now = datetime.now(UTC)
+        date_str = now.strftime("%Y%m%d")
+        time_str = now.strftime("%Y%m%dT%H%M%SZ")
 
         credential_scope = f"{date_str}/{region}/{service}/aws4_request"
-        credential_str   = f"{access_key}/{credential_scope}"
+        credential_str = f"{access_key}/{credential_scope}"
         host = endpoint.replace("https://", "").replace("http://", "")
         canonical_uri = f"/{bucket}/{quote(object_key, safe='/')}"
 
@@ -56,8 +56,7 @@ class S3Adapter(StorageAdapter):
             f"&X-Amz-SignedHeaders=host"
         )
         canonical_request = (
-            f"{method}\n{canonical_uri}\n{query}\n"
-            f"host:{host}\n\nhost\nUNSIGNED-PAYLOAD"
+            f"{method}\n{canonical_uri}\n{query}\nhost:{host}\n\nhost\nUNSIGNED-PAYLOAD"
         )
         string_to_sign = (
             f"AWS4-HMAC-SHA256\n{time_str}\n{credential_scope}\n"
@@ -83,8 +82,11 @@ class S3Adapter(StorageAdapter):
             operation=operation,
             url=url,
             method=http_method,
-            metadata={"bucket": self.config["bucket"], "object_key": object_key,
-                      "endpoint": self.config["endpoint"]},
+            metadata={
+                "bucket": self.config["bucket"],
+                "object_key": object_key,
+                "endpoint": self.config["endpoint"],
+            },
         )
 
     def list_objects(self, prefix: str = "") -> list[dict[str, Any]]:

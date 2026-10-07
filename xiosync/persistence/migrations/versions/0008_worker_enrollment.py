@@ -28,9 +28,7 @@ branch_labels = None
 depends_on = None
 
 # Standard tenant isolation GUC check (mirrors revisions 0004–0007).
-_ORG_ISOLATION = (
-    "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
-)
+_ORG_ISOLATION = "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
 
 _WORKER_TABLES = ("worker_credentials", "worker_enrollments")
 
@@ -130,9 +128,7 @@ def upgrade() -> None:
     )
 
     # RLS policy (mirrors 0004/0005/0007 pattern).
-    op.execute(
-        "ALTER TABLE worker_enrollments ENABLE ROW LEVEL SECURITY"
-    )
+    op.execute("ALTER TABLE worker_enrollments ENABLE ROW LEVEL SECURITY")
     op.execute(
         f"""
         CREATE POLICY worker_enrollments_org_isolation
@@ -211,9 +207,7 @@ def upgrade() -> None:
     )
 
     # RLS policy.
-    op.execute(
-        "ALTER TABLE worker_credentials ENABLE ROW LEVEL SECURITY"
-    )
+    op.execute("ALTER TABLE worker_credentials ENABLE ROW LEVEL SECURITY")
     op.execute(
         f"""
         CREATE POLICY worker_credentials_org_isolation
@@ -228,16 +222,10 @@ def downgrade() -> None:
     op.execute("DROP POLICY IF EXISTS worker_credentials_org_isolation ON worker_credentials")
     op.drop_index("ix_worker_credentials_org_expires_active", table_name="worker_credentials")
     op.drop_index("ix_worker_credentials_org_enrollment", table_name="worker_credentials")
-    op.drop_index(
-        op.f("ix_worker_credentials_organization_id"), table_name="worker_credentials"
-    )
+    op.drop_index(op.f("ix_worker_credentials_organization_id"), table_name="worker_credentials")
     op.drop_table("worker_credentials")
 
-    op.execute(
-        "DROP POLICY IF EXISTS worker_enrollments_org_isolation ON worker_enrollments"
-    )
+    op.execute("DROP POLICY IF EXISTS worker_enrollments_org_isolation ON worker_enrollments")
     op.drop_index("ix_worker_enrollments_org_state", table_name="worker_enrollments")
-    op.drop_index(
-        op.f("ix_worker_enrollments_organization_id"), table_name="worker_enrollments"
-    )
+    op.drop_index(op.f("ix_worker_enrollments_organization_id"), table_name="worker_enrollments")
     op.drop_table("worker_enrollments")

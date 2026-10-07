@@ -19,6 +19,7 @@ Design decisions:
   - New executor types can be added by registering in _EXECUTOR_DISPATCH
     without changing the main loop
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -52,6 +53,7 @@ async def get_active_page(session_id: str) -> Any | None:
     """Return the live Playwright page for `session_id`, or None if not found."""
     try:
         from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+
         return get_runtime_pool().get_page(session_id)
     except Exception:  # noqa: BLE001
         return None
@@ -63,6 +65,7 @@ def _register_page(session_id: str | None, page: Any) -> None:
         return
     try:
         from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+
         pool = get_runtime_pool()
         # _register is the internal registration path — page is already launched,
         # we just need to make sure the pool knows about it.
@@ -78,6 +81,7 @@ def _unregister_page(session_id: str | None) -> None:
         return
     try:
         from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+
         get_runtime_pool()._pages.pop(session_id, None)
     except Exception:  # noqa: BLE001
         pass
@@ -87,6 +91,7 @@ def _publish(org_id: str, event: dict) -> None:
     """Fire-and-forget SSE publish — never raises, never blocks the worker."""
     try:
         from xiosync.subsystems.xioflow.api.events import publish_event
+
         publish_event(org_id, event)
     except Exception:  # noqa: BLE001
         pass  # SSE broker may not be loaded in worker-only mode
@@ -96,6 +101,7 @@ def _register_active_run(session_id: str, run_id: str, template_type: str) -> No
     """Register an active run so XIOVIEW can detect it (both script + DAG)."""
     try:
         from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+
         get_runtime_pool().register_active_run(session_id, run_id, template_type)
     except Exception:  # noqa: BLE001
         pass
@@ -105,6 +111,7 @@ def _unregister_active_run(session_id: str) -> None:
     """Remove the active run marker when execution completes."""
     try:
         from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+
         get_runtime_pool().unregister_active_run(session_id)
     except Exception:  # noqa: BLE001
         pass
@@ -144,15 +151,22 @@ def dispatch_pending_runs(session: Session, *, max_per_tick: int = 3) -> int:
                 "dag_root_intent": dag_root_intent,
             },
         )
-        _publish(organization_id, {
-            "type": "run.started",
-            "run_id": run_id,
-            "template_type": template_type,
-        })
+        _publish(
+            organization_id,
+            {
+                "type": "run.started",
+                "run_id": run_id,
+                "template_type": template_type,
+            },
+        )
 
         task_id = str(new_id())
-        _create_task(session, task_id=task_id, run_id=run_id,
-                     node_intent=script_ref or dag_root_intent or "dag_root")
+        _create_task(
+            session,
+            task_id=task_id,
+            run_id=run_id,
+            node_intent=script_ref or dag_root_intent or "dag_root",
+        )
 
         # Register active run in runtime_pool so XIOVIEW can detect it
         # and block manual interactions for BOTH script and DAG paradigms.
@@ -181,7 +195,8 @@ def dispatch_pending_runs(session: Session, *, max_per_tick: int = 3) -> int:
             elif template_type == "xioflow_dag":
                 if not dag_domain or not dag_root_intent:
                     result = {
-                        "success": False, "status": "error",
+                        "success": False,
+                        "status": "error",
                         "error": "xioflow_dag template missing dag_domain or dag_root_intent",
                     }
                 else:
@@ -197,24 +212,31 @@ def dispatch_pending_runs(session: Session, *, max_per_tick: int = 3) -> int:
                         session=session,
                     )
             else:
-                result = {"success": False, "status": "error",
-                          "error": f"unknown template_type={template_type!r} or missing script_ref"}
+                result = {
+                    "success": False,
+                    "status": "error",
+                    "error": f"unknown template_type={template_type!r} or missing script_ref",
+                }
         finally:
             _unregister_active_run(_view_session_id)
 
         _finalise(session, run_id=run_id, task_id=task_id, result=result)
         session.commit()
-        _publish(organization_id, {
-            "type": "run.completed" if result.get("success") else "run.failed",
-            "run_id": run_id,
-            "state": "SUCCESS" if result.get("success") else "FAILED",
-        })
+        _publish(
+            organization_id,
+            {
+                "type": "run.completed" if result.get("success") else "run.failed",
+                "run_id": run_id,
+                "state": "SUCCESS" if result.get("success") else "FAILED",
+            },
+        )
         processed += 1
 
     return processed
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
+
 
 def _claim_next_pending(session: Session) -> dict[str, Any] | None:
     """Atomically claim one PENDING run. Returns None if queue is empty."""
@@ -299,13 +321,14 @@ def _schedule_trace_deploy(
     affect the script run's success status.
     """
     try:
+        from urllib.parse import urlparse
+
+        from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
         from xiosync.subsystems.xioflow.ingestion.trace_collector import (
             TraceAction,
             TraceCollector,
         )
-        from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
         from xiosync.subsystems.xioflow.memory.memory_graph import MemoryGraph
-        from urllib.parse import urlparse
 
         # Derive domain from script context
         domain = context.get("dag_domain", "")
@@ -323,56 +346,65 @@ def _schedule_trace_deploy(
                 step_name = step_data.get("name", "unknown")
                 trace.enter_step(step_name)
                 for act in step_data.get("actions", []):
-                    trace.record(TraceAction(
-                        category=act.get("category", "browser"),
-                        action_type=act.get("action_type", "unknown"),
-                        action_params=act.get("action_params", {}),
-                        url=act.get("url", ""),
-                        domain=urlparse(act.get("url", "")).netloc or domain,
-                        place_value=act.get("place_value"),
-                        face_value=act.get("face_value"),
-                    ))
+                    trace.record(
+                        TraceAction(
+                            category=act.get("category", "browser"),
+                            action_type=act.get("action_type", "unknown"),
+                            action_params=act.get("action_params", {}),
+                            url=act.get("url", ""),
+                            domain=urlparse(act.get("url", "")).netloc or domain,
+                            place_value=act.get("place_value"),
+                            face_value=act.get("face_value"),
+                        )
+                    )
                 trace.exit_step(step_name)
         else:
             # Minimal trace: record the script execution itself as a single node
             trace.enter_step("script_execution")
-            trace.record(TraceAction(
-                category="system",
-                action_type="script",
-                action_params={
-                    "script_ref": script_ref,
-                    "result_status": result.get("status", "success"),
-                },
-            ))
+            trace.record(
+                TraceAction(
+                    category="system",
+                    action_type="script",
+                    action_params={
+                        "script_ref": script_ref,
+                        "result_status": result.get("status", "success"),
+                    },
+                )
+            )
             trace.exit_step("script_execution")
 
         if trace.actions:
             dag_spec = DAGGraphBuilder().build(
-                trace, context, template_name=script_ref,
+                trace,
+                context,
+                template_name=script_ref,
             )
             nodes = dag_spec.get("nodes", [])
             if nodes:
                 import asyncio
+
                 mg = MemoryGraph(session)
                 node_ids = []
                 dag_domain = dag_spec.get("dag_domain", domain)
                 ctx_hash = dag_spec.get("metadata", {}).get("context_hash", "default")
                 for node in nodes:
-                    node_id = asyncio.run(mg.asave_new_action(
-                        org_id=org_id,
-                        domain=dag_domain,
-                        intent=node.get("intent"),
-                        face_value=node.get("face_value") or {},
-                        place_value=node.get("place_value") or {},
-                        action_type=node.get("action_type"),
-                        action_params=node.get("action_params", {}),
-                        previous_intent=node.get("previous_node_id"),
-                        recorded_by="auto_trace",
-                        recording_method="auto_trace",
-                        context_hash=ctx_hash,
-                        output_var=node.get("output_var"),
-                        execution_mode=node.get("execution_mode", "sequential"),
-                    ))
+                    node_id = asyncio.run(
+                        mg.asave_new_action(
+                            org_id=org_id,
+                            domain=dag_domain,
+                            intent=node.get("intent"),
+                            face_value=node.get("face_value") or {},
+                            place_value=node.get("place_value") or {},
+                            action_type=node.get("action_type"),
+                            action_params=node.get("action_params", {}),
+                            previous_intent=node.get("previous_node_id"),
+                            recorded_by="auto_trace",
+                            recording_method="auto_trace",
+                            context_hash=ctx_hash,
+                            output_var=node.get("output_var"),
+                            execution_mode=node.get("execution_mode", "sequential"),
+                        )
+                    )
                     node_ids.append(str(node_id))
 
                 # ── Consensus voting: +1.0 for each successfully traced node ──
@@ -380,6 +412,7 @@ def _schedule_trace_deploy(
                 #   project_experimental → project_ground_truth → organization_shared
                 try:
                     from xiosync.subsystems.xioflow.memory.consensus_engine import ConsensusEngine
+
                     consensus = ConsensusEngine(session)
                     voter_id = f"auto_trace:{run_id}"
                     for nid in node_ids:
@@ -471,13 +504,15 @@ class _MockPage:
     that log a warning — they should never be reached for correctly authored
     headless DAGs, but if they are the run still completes instead of crashing.
     """
+
     def __init__(self, dag_domain: str) -> None:
-        self.url   = f"https://{dag_domain}/"
+        self.url = f"https://{dag_domain}/"
         self.mouse = _MockMouse()
 
     async def goto(self, url: str, **_kw) -> None:
-        logger.warning("_MockPage.goto called on headless DAG — node type mismatch",
-                       extra={"url": url})
+        logger.warning(
+            "_MockPage.goto called on headless DAG — node type mismatch", extra={"url": url}
+        )
 
     async def wait_for_load_state(self, *_a, **_kw) -> None:
         pass
@@ -487,6 +522,7 @@ class _MockPage:
 
     async def wait_for_timeout(self, timeout: float, **_kw) -> None:
         import asyncio as _asyncio
+
         await _asyncio.sleep(timeout / 1000)
 
     async def evaluate(self, expression: str, *_a, **_kw):
@@ -593,10 +629,10 @@ async def _execute_dag_async(
       execute_workflow(intent: str, org_id: str, context: dict,
                        execution_context: dict | None = None) -> bool
     """
-    from xiosync.subsystems.xioflow.engine.dag_executor import DAGExecutor
     from xiosync.subsystems.xioflow.engine.branch_evaluator import BranchEvaluator
     from xiosync.subsystems.xioflow.engine.circuit_breaker import CircuitBreaker
     from xiosync.subsystems.xioflow.engine.context_hash_router import ContextHashRouter
+    from xiosync.subsystems.xioflow.engine.dag_executor import DAGExecutor
     from xiosync.subsystems.xioflow.engine.locator_cascade import LocatorCascade
     from xiosync.subsystems.xioflow.memory.memory_graph import MemoryGraph
 
@@ -614,8 +650,8 @@ async def _execute_dag_async(
 
     # ── Page acquisition ────────────────────────────────────────────────────
     # Extract XIORUN-relevant fields from context (caller may inject identity_id)
-    session_id   = context.get("session_id")
-    identity_id  = context.get("identity_id")   # caller-supplied; None = blank session
+    session_id = context.get("session_id")
+    identity_id = context.get("identity_id")  # caller-supplied; None = blank session
 
     # XIOVIEW key: prefer session_id (stable), fallback to run_id
     _view_session_id = session_id or run_id
@@ -625,8 +661,9 @@ async def _execute_dag_async(
 
     if proxy_url and worker_ts_ip and session_id:
         # Real browser session — launch patchright on Colab via XIORUN
-        from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
         from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
+        from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+
         pool = get_runtime_pool()
         page = await pool.get_or_launch(
             session_id=session_id,
@@ -688,8 +725,7 @@ async def _execute_dag_async(
             "workflow_vars": getattr(executor, "workflow_vars", {}),
         },
         "error": (
-            None if success
-            else "DAG execution failed — see xioflow_tasks for per-node detail"
+            None if success else "DAG execution failed — see xioflow_tasks for per-node detail"
         ),
     }
 
@@ -750,7 +786,12 @@ def _finalise(
                 "id": dlq_id,
                 "run_id": run_id,
                 "task_id": task_id,
-                "payload": json.dumps({"script_ref": result.get("status"), "stdout_tail": result.get("stdout_tail", "")}),
+                "payload": json.dumps(
+                    {
+                        "script_ref": result.get("status"),
+                        "stdout_tail": result.get("stdout_tail", ""),
+                    }
+                ),
                 "error": str(result.get("error", ""))[:500],
             },
         )

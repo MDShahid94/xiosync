@@ -1,6 +1,6 @@
 import re
 
-with open("tools/workflows/google-signin.mjs", "r") as f:
+with open("tools/workflows/google-signin.mjs") as f:
     code = f.read()
 
 replacement = """  const httpPost = async (baseUrl, path, data, timeoutMs = 60000) => {
@@ -24,7 +24,7 @@ code = re.sub(
     r"  const httpPost = async \(baseUrl, path, data, timeoutMs = 60000\) => \{\n    const fullUrl = new URL\(`\$\{baseUrl\}\$\{path\}`\);\n    const isHttps = fullUrl\.protocol === 'https:';\n    const \{ request \} = await import\(isHttps \? 'node:https' : 'node:http'\);\n    return new Promise\(\(resolve, reject\) => \{\n      const req = request\(\{\n        hostname: fullUrl\.hostname,\n        port:     fullUrl\.port \|\| \(isHttps \? 443 : 80\),\n        path:     fullUrl\.pathname,\n        method:   'POST',\n        headers:  \{ 'Content-Type': 'application/json' \},\n        timeout:  timeoutMs,\n      \}, res => \{",
     replacement,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("tools/workflows/google-signin.mjs", "w") as f:

@@ -1,10 +1,9 @@
 """Unit tests for xiosync.domain.profile_identity (CIPI core domain)."""
+
 from __future__ import annotations
 
 import time
 import uuid
-
-import pytest
 
 from xiosync.domain.profile_identity import (
     BrowserCookie,
@@ -13,21 +12,30 @@ from xiosync.domain.profile_identity import (
     DomainCookieSet,
     MaterializationMode,
     ProfileIdentity,
+    _cookie_remaining_ttl,
+    _is_google_domain,
+    _is_mid_auth,
     evict_domain,
     is_safe_google_update,
     merge_cookies,
-    _is_mid_auth,
-    _is_google_domain,
-    _cookie_remaining_ttl,
 )
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 
-def _cookie(name: str, domain: str = ".google.com", expires: float = -1, value: str = "v") -> BrowserCookie:
+
+def _cookie(
+    name: str, domain: str = ".google.com", expires: float = -1, value: str = "v"
+) -> BrowserCookie:
     return BrowserCookie(
-        name=name, value=value, domain=domain, path="/",
-        expires=expires, httpOnly=True, secure=True, sameSite="Lax", size=None,
+        name=name,
+        value=value,
+        domain=domain,
+        path="/",
+        expires=expires,
+        httpOnly=True,
+        secure=True,
+        sameSite="Lax",
+        size=None,
     )
 
 
@@ -46,15 +54,21 @@ def _profile(domain_sets: dict | None = None, serial: int = 1) -> ProfileIdentit
 
 def _domain_set(domain: str = "google.com", cookies: tuple = (), **kwargs) -> DomainCookieSet:
     defaults = dict(
-        domain_pattern=domain, cookies=cookies, local_storage={},
-        health=CookieHealthUrgency.NONE, last_verified_at=None,
-        is_valid=True, auth_method="direct", parent_domain=None,
+        domain_pattern=domain,
+        cookies=cookies,
+        local_storage={},
+        health=CookieHealthUrgency.NONE,
+        last_verified_at=None,
+        is_valid=True,
+        auth_method="direct",
+        parent_domain=None,
     )
     defaults.update(kwargs)
     return DomainCookieSet(**defaults)
 
 
 # ── Tests: ProfileIdentity properties ────────────────────────────────
+
 
 class TestProfileIdentityProperties:
     def test_canonical_key_format(self):
@@ -79,6 +93,7 @@ class TestProfileIdentityProperties:
 
 
 # ── Tests: Mid-auth URL guard ────────────────────────────────────────
+
 
 class TestMidAuthGuard:
     def test_oauth2_url(self):
@@ -105,6 +120,7 @@ class TestMidAuthGuard:
 
 # ── Tests: Google domain detection ───────────────────────────────────
 
+
 class TestGoogleDomain:
     def test_google_com(self):
         assert _is_google_domain(".google.com")
@@ -120,6 +136,7 @@ class TestGoogleDomain:
 
 
 # ── Tests: Cookie TTL ────────────────────────────────────────────────
+
 
 class TestCookieTTL:
     def test_session_cookie_negative_expires(self):
@@ -144,6 +161,7 @@ class TestCookieTTL:
 
 # ── Tests: SID-TTL safety ────────────────────────────────────────────
 
+
 class TestSIDTTLSafety:
     def test_safe_when_incoming_longer(self):
         assert is_safe_google_update(3600.0, 7200.0) is True
@@ -164,6 +182,7 @@ class TestSIDTTLSafety:
 
 
 # ── Tests: Domain eviction ───────────────────────────────────────────
+
 
 class TestEvictDomain:
     def test_evict_removes_domain(self):
@@ -195,6 +214,7 @@ class TestEvictDomain:
 
 # ── Tests: Cookie merge ──────────────────────────────────────────────
 
+
 class TestMergeCookies:
     def test_merge_adds_new_cookie(self):
         p = _profile()
@@ -215,6 +235,7 @@ class TestMergeCookies:
 
 # ── Tests: MaterializationMode enum ──────────────────────────────────
 
+
 class TestMaterializationMode:
     def test_tar_profile_value(self):
         assert MaterializationMode.TAR_PROFILE.value == "TAR_PROFILE"
@@ -224,6 +245,7 @@ class TestMaterializationMode:
 
 
 # ── Tests: CookieTier enum ───────────────────────────────────────────
+
 
 class TestCookieTier:
     def test_all_tiers_exist(self):

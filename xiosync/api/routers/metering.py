@@ -61,10 +61,12 @@ def get_usage_summary(
     until: str | None = Query(None, description="ISO datetime for period end"),
 ) -> UsageSummaryResponse:
     """Get aggregated usage summary for the current organization."""
-    from xiosync.domain.context import OrgContext
-    from sqlalchemy.orm import Session as OrmSession
-    from xiosync.services.metering import MeteringService
     from typing import cast
+
+    from sqlalchemy.orm import Session as OrmSession
+
+    from xiosync.domain.context import OrgContext
+    from xiosync.services.metering import MeteringService
 
     context = cast(OrgContext, request.state.org_context)
     session = cast(OrmSession, request.state.org_session)
@@ -94,10 +96,12 @@ def get_usage_history(
     until: str | None = Query(None),
 ) -> list[UsageRecordResponse]:
     """Get historical usage records with optional filtering."""
-    from xiosync.domain.context import OrgContext
-    from sqlalchemy.orm import Session as OrmSession
-    from xiosync.services.metering import MeteringService
     from typing import cast
+
+    from sqlalchemy.orm import Session as OrmSession
+
+    from xiosync.domain.context import OrgContext
+    from xiosync.services.metering import MeteringService
 
     context = cast(OrgContext, request.state.org_context)
     session = cast(OrmSession, request.state.org_session)
@@ -107,7 +111,10 @@ def get_usage_history(
     until_dt = datetime.fromisoformat(until) if until else None
 
     records = svc.get_usage(
-        context, metric_type=metric_type, since=since_dt, until=until_dt,
+        context,
+        metric_type=metric_type,
+        since=since_dt,
+        until=until_dt,
     )
     return [_to_record_response(r) for r in records]
 
@@ -124,10 +131,12 @@ def get_metric_detail(
     until: str | None = Query(None),
 ) -> list[UsageRecordResponse]:
     """Get detail records for a specific metric type."""
-    from xiosync.domain.context import OrgContext
-    from sqlalchemy.orm import Session as OrmSession
-    from xiosync.services.metering import MeteringService
     from typing import cast
+
+    from sqlalchemy.orm import Session as OrmSession
+
+    from xiosync.domain.context import OrgContext
+    from xiosync.services.metering import MeteringService
 
     context = cast(OrgContext, request.state.org_context)
     session = cast(OrmSession, request.state.org_session)
@@ -137,15 +146,20 @@ def get_metric_detail(
     until_dt = datetime.fromisoformat(until) if until else None
 
     records = svc.get_usage(
-        context, metric_type=metric_type, since=since_dt, until=until_dt,
+        context,
+        metric_type=metric_type,
+        since=since_dt,
+        until=until_dt,
     )
     return [_to_record_response(r) for r in records]
 
-from xiosync.api.router_registry import register_router
+
 from xiosync.api.middleware.rbac import require_capability
+from xiosync.api.router_registry import register_router
+
 register_router(
     router,
-    prefix='/api/v1',
+    prefix="/api/v1",
     tags=["metering"],
     dependencies=[require_capability("metering.read")],
 )

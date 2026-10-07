@@ -1,4 +1,5 @@
 """Compute Runtimes CRUD API endpoints."""
+
 from __future__ import annotations
 
 import uuid
@@ -10,21 +11,28 @@ from pydantic import BaseModel, ConfigDict
 
 router = APIRouter(tags=["compute-runtimes"])
 
+
 class _S(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
 
 class RegisterProviderRequest(_S):
     name: str
     provider: str
     config: dict[str, Any] = {}
 
+
 class ProvisionNodeRequest(_S):
     instance_type: str
     node_metadata: dict[str, Any] = {}
 
+
 @router.post("/compute-runtimes", status_code=201, summary="Register provider", response_model=None)
-def register_provider(payload: RegisterProviderRequest, request: Request) -> dict[str, Any] | JSONResponse:
+def register_provider(
+    payload: RegisterProviderRequest, request: Request
+) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.domain.context import OrgContext
     from xiosync.subsystems.xiogrid.services.compute_runtimes import ComputeRuntimeService
 
@@ -33,7 +41,9 @@ def register_provider(payload: RegisterProviderRequest, request: Request) -> dic
     svc = ComputeRuntimeService(session)
 
     try:
-        provider = svc.register_provider(ctx, name=payload.name, provider=payload.provider, config=payload.config)
+        provider = svc.register_provider(
+            ctx, name=payload.name, provider=payload.provider, config=payload.config
+        )
         return {"id": str(provider.id), "name": provider.name}
     except Exception as exc:
         return JSONResponse(
@@ -47,12 +57,14 @@ def register_provider(payload: RegisterProviderRequest, request: Request) -> dic
             },
         )
 
+
 @router.get("/compute-runtimes", summary="List providers", response_model=None)
 def list_providers(
     request: Request,
     project_id: uuid.UUID | None = Query(default=None, description="Filter providers by project"),
 ) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.domain.context import OrgContext
     from xiosync.subsystems.xiogrid.services.compute_runtimes import ComputeRuntimeService
 
@@ -63,9 +75,18 @@ def list_providers(
     providers = svc.list_providers(ctx, project_id=project_id)
     return {"providers": [{"id": str(p.id), "name": p.name} for p in providers]}
 
-@router.post("/compute-runtimes/{runtime_id}/nodes", status_code=201, summary="Provision node", response_model=None)
-def provision_node(runtime_id: uuid.UUID, payload: ProvisionNodeRequest, request: Request) -> dict[str, Any] | JSONResponse:
+
+@router.post(
+    "/compute-runtimes/{runtime_id}/nodes",
+    status_code=201,
+    summary="Provision node",
+    response_model=None,
+)
+def provision_node(
+    runtime_id: uuid.UUID, payload: ProvisionNodeRequest, request: Request
+) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.domain.context import OrgContext
     from xiosync.subsystems.xiogrid.services.compute_runtimes import ComputeRuntimeService
 
@@ -88,9 +109,11 @@ def provision_node(runtime_id: uuid.UUID, payload: ProvisionNodeRequest, request
             },
         )
 
+
 @router.get("/compute-runtimes/{runtime_id}/nodes", summary="List nodes", response_model=None)
 def list_nodes(runtime_id: uuid.UUID, request: Request) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.domain.context import OrgContext
     from xiosync.subsystems.xiogrid.services.compute_runtimes import ComputeRuntimeService
 
@@ -101,9 +124,11 @@ def list_nodes(runtime_id: uuid.UUID, request: Request) -> dict[str, Any] | JSON
     nodes = svc.list_nodes(ctx, runtime_id=runtime_id)
     return {"nodes": [{"id": str(n.id), "runtime_id": str(n.runtime_id)} for n in nodes]}
 
+
 @router.delete("/compute-runtimes/nodes/{node_id}", summary="Terminate node", response_model=None)
 def terminate_node(node_id: uuid.UUID, request: Request) -> dict[str, Any] | JSONResponse:
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.domain.context import OrgContext
     from xiosync.subsystems.xiogrid.services.compute_runtimes import ComputeRuntimeService
 
@@ -126,11 +151,13 @@ def terminate_node(node_id: uuid.UUID, request: Request) -> dict[str, Any] | JSO
             },
         )
 
-from xiosync.api.router_registry import register_router
+
 from xiosync.api.middleware.rbac import require_capability
+from xiosync.api.router_registry import register_router
+
 register_router(
     router,
-    prefix='/api/v1',
+    prefix="/api/v1",
     tags=["compute-runtimes"],
     dependencies=[require_capability("compute_runtime.manage")],
 )

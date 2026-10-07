@@ -12,6 +12,7 @@ Adds:
   1. Indexes on all 24 unindexed FK columns
   2. xiosync_retention_cleanup() SQL function for scheduled purging
 """
+
 from alembic import op
 from sqlalchemy import text
 
@@ -53,14 +54,13 @@ def upgrade() -> None:
     # ── 1. Add missing FK indexes ─────────────────────────────────────────
     for table, column in _FK_INDEXES:
         idx_name = f"ix_{table}_{column}"
-        conn.execute(text(
-            f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({column})"
-        ))
+        conn.execute(text(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({column})"))
 
     # ── 2. Data retention cleanup function ────────────────────────────────
     # Callable via: SELECT xiosync_retention_cleanup(30, 90, 180);
     # Parameters: runs_days, dead_letters_days, events_days
-    conn.execute(text("""
+    conn.execute(
+        text("""
         CREATE OR REPLACE FUNCTION xiosync_retention_cleanup(
             p_runs_days       INTEGER DEFAULT 90,
             p_dead_letters_days INTEGER DEFAULT 180,
@@ -118,7 +118,8 @@ def upgrade() -> None:
             RETURN NEXT;
         END;
         $$;
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:

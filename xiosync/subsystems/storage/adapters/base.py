@@ -11,6 +11,7 @@ XIOSYNC does NOT proxy large blobs in-process — instead:
 This keeps XIOSYNC lean (no blob traffic through the API server) while still
 providing a unified object index and provider abstraction.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -25,12 +26,13 @@ class AccessInfo:
     Returned by get_access_info() — the worker uses these to upload/download
     without routing through XIOSYNC.
     """
-    provider_type: str          # 'google_drive' | 'cloudflare_r2' | 's3' | 'local'
-    operation: str              # 'upload' | 'download' | 'delete'
+
+    provider_type: str  # 'google_drive' | 'cloudflare_r2' | 's3' | 'local'
+    operation: str  # 'upload' | 'download' | 'delete'
     # Provider-specific fields — all optional, populated by adapter:
-    url: str | None = None      # Presigned URL (R2/S3) or Drive API URL
-    headers: dict[str, str] | None = None   # Auth headers if needed
-    method: str = "PUT"         # HTTP method for presigned URL operations
+    url: str | None = None  # Presigned URL (R2/S3) or Drive API URL
+    headers: dict[str, str] | None = None  # Auth headers if needed
+    method: str = "PUT"  # HTTP method for presigned URL operations
     metadata: dict[str, Any] | None = None  # e.g. Drive folder_id, local path
 
 
@@ -66,19 +68,20 @@ class StorageAdapter(ABC):
         """Validate provider config at registration time. Override to add checks."""
 
 
-def make_adapter(provider_type: str, config: dict[str, Any],
-                 credential: str | None) -> StorageAdapter:
+def make_adapter(
+    provider_type: str, config: dict[str, Any], credential: str | None
+) -> StorageAdapter:
     """Factory — instantiate the correct adapter for provider_type."""
-    from xiosync.subsystems.storage.adapters.google_drive import GoogleDriveAdapter
     from xiosync.subsystems.storage.adapters.cloudflare_r2 import CloudflareR2Adapter
-    from xiosync.subsystems.storage.adapters.s3 import S3Adapter
+    from xiosync.subsystems.storage.adapters.google_drive import GoogleDriveAdapter
     from xiosync.subsystems.storage.adapters.local import LocalAdapter
+    from xiosync.subsystems.storage.adapters.s3 import S3Adapter
 
     _MAP = {
-        "google_drive":      GoogleDriveAdapter,
-        "cloudflare_r2":     CloudflareR2Adapter,
-        "s3":                S3Adapter,
-        "local":             LocalAdapter,
+        "google_drive": GoogleDriveAdapter,
+        "cloudflare_r2": CloudflareR2Adapter,
+        "s3": S3Adapter,
+        "local": LocalAdapter,
     }
     cls = _MAP.get(provider_type)
     if not cls:

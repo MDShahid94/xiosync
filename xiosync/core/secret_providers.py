@@ -112,8 +112,7 @@ class VaultProvider(SecretProvider):
             import hvac  # type: ignore[import-untyped]
         except ImportError:
             raise SecretResolutionError(
-                "vault provider requires 'hvac' package — "
-                "install with: pip install hvac"
+                "vault provider requires 'hvac' package — install with: pip install hvac"
             )
 
         addr = os.environ.get("VAULT_ADDR")
@@ -151,8 +150,7 @@ class AwsSmProvider(SecretProvider):
             import boto3  # type: ignore[import-not-found]
         except ImportError:
             raise SecretResolutionError(
-                "aws-sm provider requires 'boto3' package — "
-                "install with: pip install boto3"
+                "aws-sm provider requires 'boto3' package — install with: pip install boto3"
             )
 
         region = ref_config.get("region", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
@@ -160,9 +158,7 @@ class AwsSmProvider(SecretProvider):
 
         try:
             client = boto3.client("secretsmanager", region_name=region)
-            response = client.get_secret_value(
-                SecretId=secret_id, VersionStage=version
-            )
+            response = client.get_secret_value(SecretId=secret_id, VersionStage=version)
             return str(response["SecretString"])
         except Exception as exc:
             raise SecretResolutionError(f"AWS SM resolution failed: {exc}") from exc
@@ -225,8 +221,7 @@ class AzureKvProvider(SecretProvider):
             from azure.keyvault.secrets import SecretClient  # type: ignore[import-not-found]
         except ImportError:
             raise SecretResolutionError(
-                "azure-kv provider requires 'azure-identity' and "
-                "'azure-keyvault-secrets' packages"
+                "azure-kv provider requires 'azure-identity' and 'azure-keyvault-secrets' packages"
             )
 
         try:
@@ -253,13 +248,13 @@ class CustomProvider(SecretProvider):
         resolver_path = ref_config.get("resolver")
         if not isinstance(resolver_path, str):
             raise SecretResolutionError(
-                "custom provider requires 'resolver' in ref_config "
-                "(dotted path to a callable)"
+                "custom provider requires 'resolver' in ref_config (dotted path to a callable)"
             )
 
         try:
             module_path, _, fn_name = resolver_path.rpartition(".")
             import importlib
+
             module = importlib.import_module(module_path)
             resolver_fn = getattr(module, fn_name)
             return str(resolver_fn(ref_config))
@@ -312,7 +307,5 @@ def resolve(provider: str, ref_config: dict[str, Any]) -> str:
     """
     adapter = get_provider(provider)
     if adapter is None:
-        raise SecretResolutionError(
-            f"no adapter registered for provider {provider!r}"
-        )
+        raise SecretResolutionError(f"no adapter registered for provider {provider!r}")
     return adapter.resolve(ref_config)

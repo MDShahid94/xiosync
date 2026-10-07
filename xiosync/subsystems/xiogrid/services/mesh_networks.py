@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Mapping
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -47,6 +48,7 @@ class MeshNetworkService:
         actor_id: uuid.UUID,
     ) -> uuid.UUID:
         from xiosync.persistence.models.operations import Operation
+
         op_id = new_id()
         self._session.add(
             Operation(
@@ -54,7 +56,7 @@ class MeshNetworkService:
                 organization_id=ctx.organization_id,
                 actor_id=actor_id,
                 operation=operation,
-                trigger="user_command",   # allowed: user_command|schedule|auto|error|system
+                trigger="user_command",  # allowed: user_command|schedule|auto|error|system
                 initiated_by=actor_id,
                 depth_level=0,
             )
@@ -72,7 +74,7 @@ class MeshNetworkService:
     ) -> MeshNetworkRecord:
         network_id = new_id()
         now = datetime.now(tz=UTC)
-        
+
         row = MeshNetwork(
             id=network_id,
             organization_id=ctx.organization_id,
@@ -83,7 +85,7 @@ class MeshNetworkService:
             created_at=now,
         )
         self._session.add(row)
-        
+
         op_id = self._record_op(ctx, "create_network", actor_id=ctx.actor_id or ctx.organization_id)
         self._event_service.append(
             ctx,
@@ -94,7 +96,7 @@ class MeshNetworkService:
             entity_type="mesh_network",
             entity_id=network_id,
         )
-        
+
         self._session.flush()
         return MeshNetworkRecord(
             id=row.id,
@@ -118,11 +120,11 @@ class MeshNetworkService:
         now = datetime.now(tz=UTC)
         network = self._session.scalar(
             select(MeshNetwork).where(
-                MeshNetwork.id == network_id,
-                MeshNetwork.organization_id == ctx.organization_id
+                MeshNetwork.id == network_id, MeshNetwork.organization_id == ctx.organization_id
             )
         )
-        if not network: raise ValueError(f"Network {network_id} not found")
+        if not network:
+            raise ValueError(f"Network {network_id} not found")
 
         row = MeshNode(
             id=new_id(),
@@ -135,7 +137,7 @@ class MeshNetworkService:
             created_at=now,
         )
         self._session.add(row)
-        
+
         op_id = self._record_op(ctx, "add_node", actor_id=ctx.actor_id or ctx.organization_id)
         self._event_service.append(
             ctx,
@@ -164,9 +166,9 @@ class MeshNetworkService:
         )
         if not row:
             raise ValueError(f"Node {node_id} not found in network {network_id}")
-            
+
         self._session.delete(row)
-        
+
         op_id = self._record_op(ctx, "remove_node", actor_id=ctx.actor_id or ctx.organization_id)
         self._event_service.append(
             ctx,
@@ -179,7 +181,9 @@ class MeshNetworkService:
         )
         self._session.flush()
 
-    def list_networks(self, ctx: OrgContext, *, project_id: uuid.UUID | None = None) -> list[MeshNetworkRecord]:
+    def list_networks(
+        self, ctx: OrgContext, *, project_id: uuid.UUID | None = None
+    ) -> list[MeshNetworkRecord]:
         stmt = select(MeshNetwork).where(MeshNetwork.organization_id == ctx.organization_id)
         if project_id is not None:
             stmt = stmt.where(MeshNetwork.project_id == project_id)

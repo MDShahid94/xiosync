@@ -292,9 +292,7 @@ def build_launch_argv(entrypoint: str) -> list[str]:
     return [entrypoint]
 
 
-def network_permits(
-    rules: Sequence[NetworkAllowRule], host: str, port: int, protocol: str
-) -> bool:
+def network_permits(rules: Sequence[NetworkAllowRule], host: str, port: int, protocol: str) -> bool:
     """Thin service-layer alias for the pure allowlist predicate (INV-PLUGIN-4).
 
     Default-deny: an empty ``rules`` sequence permits nothing, and there is no
@@ -367,9 +365,7 @@ class InstallationNotApprovableError(Exception):
     """The installation is not in a state that permits the requested transition."""
 
     def __init__(self, installation_id: uuid.UUID, state: str, action: str) -> None:
-        super().__init__(
-            f"installation {installation_id} is in state {state!r}; cannot {action}"
-        )
+        super().__init__(f"installation {installation_id} is in state {state!r}; cannot {action}")
         self.installation_id = installation_id
         self.state = state
         self.action = action
@@ -686,8 +682,7 @@ class PluginService:
             )
         ).all()
         rules = [
-            NetworkAllowRule(host=row.host, port=row.port, protocol=row.protocol)
-            for row in rows
+            NetworkAllowRule(host=row.host, port=row.port, protocol=row.protocol) for row in rows
         ]
         return network_permits(rules, host, port, protocol)
 

@@ -14,6 +14,7 @@ Creates:
   2. A trigger on xioflow_tasks that auto-inserts into xioflow_dead_letters
      when a task reaches FAILED state and has exhausted retries.
 """
+
 from alembic import op
 from sqlalchemy import text
 
@@ -25,7 +26,8 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     # ── 1. State machine enforcement trigger for xioflow_runs ─────────────
-    conn.execute(text("""
+    conn.execute(
+        text("""
         CREATE OR REPLACE FUNCTION xioflow_runs_state_guard()
         RETURNS TRIGGER AS $$
         BEGIN
@@ -53,23 +55,29 @@ def upgrade() -> None:
             RETURN NEW;
         END;
         $$ LANGUAGE plpgsql;
-    """))
+    """)
+    )
 
-    conn.execute(text("""
+    conn.execute(
+        text("""
         DROP TRIGGER IF EXISTS trg_xioflow_runs_state_guard ON xioflow_runs;
-    """))
+    """)
+    )
 
-    conn.execute(text("""
+    conn.execute(
+        text("""
         CREATE TRIGGER trg_xioflow_runs_state_guard
             BEFORE UPDATE OF state ON xioflow_runs
             FOR EACH ROW
             EXECUTE FUNCTION xioflow_runs_state_guard();
-    """))
+    """)
+    )
 
     # ── 2. DLQ auto-insertion trigger for xioflow_tasks ───────────────────
     # When a task transitions to FAILED and retry_count >= max_retries,
     # automatically insert into xioflow_dead_letters.
-    conn.execute(text("""
+    conn.execute(
+        text("""
         CREATE OR REPLACE FUNCTION xioflow_tasks_dlq_insert()
         RETURNS TRIGGER AS $$
         BEGIN
@@ -90,18 +98,23 @@ def upgrade() -> None:
             RETURN NEW;
         END;
         $$ LANGUAGE plpgsql;
-    """))
+    """)
+    )
 
-    conn.execute(text("""
+    conn.execute(
+        text("""
         DROP TRIGGER IF EXISTS trg_xioflow_tasks_dlq ON xioflow_tasks;
-    """))
+    """)
+    )
 
-    conn.execute(text("""
+    conn.execute(
+        text("""
         CREATE TRIGGER trg_xioflow_tasks_dlq
             AFTER UPDATE OF state ON xioflow_tasks
             FOR EACH ROW
             EXECUTE FUNCTION xioflow_tasks_dlq_insert();
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:

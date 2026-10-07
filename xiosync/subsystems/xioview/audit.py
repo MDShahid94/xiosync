@@ -7,6 +7,7 @@ replay metadata and operator accountability.
 The audit log is buffered in-memory and flushed periodically to reduce
 database write pressure during high-frequency interactions.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -26,6 +27,7 @@ _FLUSH_INTERVAL = 10.0
 
 class AuditEntry:
     """Single audit log entry."""
+
     __slots__ = ("id", "session_id", "org_id", "actor_id", "action", "detail", "ts")
 
     def __init__(
@@ -108,15 +110,28 @@ class XIOViewAuditLog:
                 pass  # no event loop — entries will flush on next cycle
 
     def record_session_start(
-        self, session_id: str, org_id: str, actor_id: str | None, mode: str,
+        self,
+        session_id: str,
+        org_id: str,
+        actor_id: str | None,
+        mode: str,
     ) -> None:
         """Record that an operator started observing a session."""
-        self.record("session_observe_start", session_id, org_id, actor_id, {
-            "mode": mode,
-        })
+        self.record(
+            "session_observe_start",
+            session_id,
+            org_id,
+            actor_id,
+            {
+                "mode": mode,
+            },
+        )
 
     def record_session_end(
-        self, session_id: str, org_id: str, actor_id: str | None,
+        self,
+        session_id: str,
+        org_id: str,
+        actor_id: str | None,
     ) -> None:
         """Record that an operator stopped observing a session."""
         self.record("session_observe_end", session_id, org_id, actor_id)
@@ -147,9 +162,12 @@ class XIOViewAuditLog:
             except asyncio.CancelledError:
                 break
             except Exception as exc:  # noqa: BLE001
-                logger.warning("xioview.audit_flush_error", extra={
-                    "error": str(exc),
-                })
+                logger.warning(
+                    "xioview.audit_flush_error",
+                    extra={
+                        "error": str(exc),
+                    },
+                )
 
     async def _flush(self) -> None:
         """Write buffered entries to PostgreSQL."""
@@ -166,6 +184,7 @@ class XIOViewAuditLog:
 
         try:
             from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
+
             engine = get_engine()
             if engine is None:
                 return
@@ -196,9 +215,13 @@ class XIOViewAuditLog:
             logger.debug("xioview.audit_flushed", extra={"count": len(entries)})
 
         except Exception as exc:  # noqa: BLE001
-            logger.warning("xioview.audit_flush_failed", extra={
-                "count": len(entries), "error": str(exc),
-            })
+            logger.warning(
+                "xioview.audit_flush_failed",
+                extra={
+                    "count": len(entries),
+                    "error": str(exc),
+                },
+            )
             # Re-buffer entries on failure (will retry next cycle)
             for e in reversed(entries):
                 self._buffer.appendleft(e)
@@ -207,13 +230,16 @@ class XIOViewAuditLog:
 def _to_json(entry: AuditEntry) -> str:
     """Serialize an audit entry to JSON for storage."""
     import json
-    return json.dumps({
-        "session_id": entry.session_id,
-        "actor_id": entry.actor_id,
-        "action": entry.action,
-        "detail": entry.detail,
-        "ts": entry.ts,
-    })
+
+    return json.dumps(
+        {
+            "session_id": entry.session_id,
+            "actor_id": entry.actor_id,
+            "action": entry.action,
+            "detail": entry.detail,
+            "ts": entry.ts,
+        }
+    )
 
 
 # ── Singleton ──────────────────────────────────────────────────────────────────

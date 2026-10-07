@@ -16,20 +16,19 @@ Credential (vault):
     Service account JSON key (base64-encoded) OR OAuth refresh token.
     If not set, workers use their own runtime credentials.
 """
+
 from __future__ import annotations
 
 import json
 from typing import Any
 
-from xiosync.subsystems.storage.adapters.base import StorageAdapter, AccessInfo
-
+from xiosync.subsystems.storage.adapters.base import AccessInfo, StorageAdapter
 
 _DRIVE_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files"
-_DRIVE_FILES_URL  = "https://www.googleapis.com/drive/v3/files"
+_DRIVE_FILES_URL = "https://www.googleapis.com/drive/v3/files"
 
 
 class GoogleDriveAdapter(StorageAdapter):
-
     def validate_config(self) -> None:
         if "folder_id" not in self.config:
             raise ValueError("google_drive provider requires config.folder_id")
@@ -45,9 +44,9 @@ class GoogleDriveAdapter(StorageAdapter):
         local_path hint so workers with a mounted filesystem can skip the
         REST API entirely.
         """
-        folder_id       = self.config["folder_id"]
+        folder_id = self.config["folder_id"]
         shared_drive_id = self.config.get("shared_drive_id")
-        mount_path      = self.config.get("worker_mount_path")  # None if not configured
+        mount_path = self.config.get("worker_mount_path")  # None if not configured
 
         headers: dict[str, str] = {}
         if self.credential:
@@ -60,7 +59,7 @@ class GoogleDriveAdapter(StorageAdapter):
                 headers["Authorization"] = f"Bearer {self.credential}"
 
         meta: dict[str, Any] = {
-            "folder_id":  folder_id,
+            "folder_id": folder_id,
             "object_key": object_key,
         }
         if shared_drive_id:
@@ -131,6 +130,7 @@ class GoogleDriveAdapter(StorageAdapter):
         mount_path = self.config.get("worker_mount_path", "")
         if mount_path:
             from pathlib import Path  # noqa: PLC0415
+
             full_path = Path(mount_path.rstrip("/")) / object_key
             full_path.parent.mkdir(parents=True, exist_ok=True)
             # Atomic-ish: write to tmp alongside target, then rename
@@ -168,7 +168,8 @@ class GoogleDriveAdapter(StorageAdapter):
             # Service account — exchange for access token via JWT
             try:
                 import google.auth.transport.requests as _gtr  # noqa: PLC0415
-                import google.oauth2.service_account as _gsa   # noqa: PLC0415
+                import google.oauth2.service_account as _gsa  # noqa: PLC0415
+
                 creds = _gsa.Credentials.from_service_account_info(
                     sa_info,
                     scopes=["https://www.googleapis.com/auth/drive.file"],
@@ -185,7 +186,7 @@ class GoogleDriveAdapter(StorageAdapter):
             access_token = self.credential
 
         folder_id = self.config["folder_id"]
-        file_name  = object_key.split("/")[-1]
+        file_name = object_key.split("/")[-1]
 
         # Check for existing file with this name (to update instead of create)
         q = f"name='{file_name}' and '{folder_id}' in parents and trashed=false"
@@ -203,8 +204,8 @@ class GoogleDriveAdapter(StorageAdapter):
             resp = requests.patch(
                 f"https://www.googleapis.com/upload/drive/v3/files/{file_id}?uploadType=media",
                 headers={
-                    "Authorization":  f"Bearer {access_token}",
-                    "Content-Type":   "application/octet-stream",
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/octet-stream",
                 },
                 data=data,
                 timeout=60,
@@ -215,18 +216,16 @@ class GoogleDriveAdapter(StorageAdapter):
             boundary = b"xiosync_boundary_" + os.urandom(8).hex().encode()
             body = (
                 b"--" + boundary + b"\r\n"
-                b"Content-Type: application/json; charset=UTF-8\r\n\r\n" +
-                meta + b"\r\n"
+                b"Content-Type: application/json; charset=UTF-8\r\n\r\n" + meta + b"\r\n"
                 b"--" + boundary + b"\r\n"
-                b"Content-Type: application/octet-stream\r\n\r\n" +
-                data + b"\r\n"
+                b"Content-Type: application/octet-stream\r\n\r\n" + data + b"\r\n"
                 b"--" + boundary + b"--"
             )
             resp = requests.post(
                 f"{_DRIVE_UPLOAD_URL}?uploadType=multipart",
                 headers={
                     "Authorization": f"Bearer {access_token}",
-                    "Content-Type":  f"multipart/related; boundary={boundary.decode()}",
+                    "Content-Type": f"multipart/related; boundary={boundary.decode()}",
                 },
                 data=body,
                 timeout=60,
@@ -237,4 +236,3 @@ class GoogleDriveAdapter(StorageAdapter):
                 f"google_drive adapter: Drive API upload failed "
                 f"({resp.status_code}): {resp.text[:300]}"
             )
-

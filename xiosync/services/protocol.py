@@ -53,7 +53,9 @@ class EvolutionRecord:
     """A single tracked change in the protocol."""
 
     id: uuid.UUID
-    evolution_type: str  # "schema_migration", "capability_added", "config_change", "protocol_upgrade"
+    evolution_type: (
+        str  # "schema_migration", "capability_added", "config_change", "protocol_upgrade"
+    )
     description: str
     rationale: str | None
     diff: dict[str, Any]  # structured diff of what changed
@@ -157,7 +159,10 @@ class ProtocolService:
 
         logger.info(
             "protocol.evolved: type=%s desc='%s' version=%s actor=%s",
-            evolution_type, description, version, context.actor_id,
+            evolution_type,
+            description,
+            version,
+            context.actor_id,
         )
 
         return EvolutionRecord(
@@ -213,9 +218,7 @@ class ProtocolService:
         )
         if evolution_type:
             # Filter by evolution_type in payload JSONB
-            stmt = stmt.where(
-                Event.payload["evolution_type"].as_string() == evolution_type
-            )
+            stmt = stmt.where(Event.payload["evolution_type"].as_string() == evolution_type)
         rows = self._session.scalars(stmt).all()
         return [
             {

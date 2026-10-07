@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Mapping
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -96,32 +97,35 @@ class BrowserSessionService:
         """Create a new browser session within a pool and record an audit operation."""
         now = datetime.now(UTC)
         from xiosync.persistence.models.browser import BrowserPool
+
         pool = self._session.scalar(
             select(BrowserPool).where(
-                BrowserPool.id == pool_id,
-                BrowserPool.organization_id == context.organization_id
+                BrowserPool.id == pool_id, BrowserPool.organization_id == context.organization_id
             )
         )
-        if not pool: raise ValueError(f"Browser pool {pool_id} not found")
+        if not pool:
+            raise ValueError(f"Browser pool {pool_id} not found")
 
         # Attempt to acquire a residential exit node from the warm pool.
         # Failures are non-fatal — session is created without a proxy in that case.
         pppoe_slot = None
         try:
             from xiosync.subsystems.xiogrid.services.pppoe_nodes import PPPoENodeService
-            pppoe_svc    = PPPoENodeService(self._session)
+
+            pppoe_svc = PPPoENodeService(self._session)
             worker_ts_ip = (config or {}).get("worker_ts_ip", "")
             # Per-account IP pinning: same Google account → same PPPoE slot → same IP
             google_account = (config or {}).get("google_account") or None
             if worker_ts_ip:
                 pppoe_slot = pppoe_svc.acquire_any(
                     context,
-                    session_id    = "pending",
-                    worker_ts_ip  = worker_ts_ip,
-                    google_account= google_account,
+                    session_id="pending",
+                    worker_ts_ip=worker_ts_ip,
+                    google_account=google_account,
                 )
         except Exception as _pppoe_err:
             import logging
+
             logging.getLogger(__name__).warning(
                 "PPPoE acquire failed — session will have no residential IP: %s", _pppoe_err
             )
@@ -146,10 +150,14 @@ class BrowserSessionService:
         # Now that we have the real session ID, backfill it on the PPPoE node record
         if pppoe_slot:
             try:
-                from xiosync.subsystems.xiogrid.services.pppoe_nodes import PPPoENodeService
                 from sqlalchemy import text as _text
+
+                from xiosync.subsystems.xiogrid.services.pppoe_nodes import PPPoENodeService
+
                 self._session.execute(
-                    _text("UPDATE xiogrid_pppoe_exit_nodes SET assigned_session_id = :sid WHERE id = :nid"),
+                    _text(
+                        "UPDATE xiogrid_pppoe_exit_nodes SET assigned_session_id = :sid WHERE id = :nid"
+                    ),
                     {"sid": str(session_row.id), "nid": str(pppoe_slot.id)},
                 )
             except Exception:
@@ -222,9 +230,7 @@ class BrowserSessionService:
             values["worker_ts_ip"] = worker_ts_ip
 
         self._session.execute(
-            update(BrowserSession)
-            .where(BrowserSession.id == session_id)
-            .values(**values)
+            update(BrowserSession).where(BrowserSession.id == session_id).values(**values)
         )
         # No flush/commit — caller owns the transaction boundary
 
@@ -242,7 +248,7 @@ class BrowserSessionService:
         )
         if row is None:
             raise BrowserSessionNotFoundError(session_id)
-        
+
         now = datetime.now(UTC)
 
         # ── Signal 1: ORM state ───────────────────────────────────────────────
@@ -261,7 +267,7 @@ class BrowserSessionService:
             # If the active session hasn't been touched in > 10 minutes → stale
             last_touch = row.updated_at or row.created_at
             idle_secs = (now - last_touch).total_seconds() if last_touch else 0
-            if idle_secs > 600:    # 10 minutes — session is likely zombie
+            if idle_secs > 600:  # 10 minutes — session is likely zombie
                 status = "immediate"
             elif idle_secs > 300:  # 5 minutes — worth checking
                 status = "soon"
@@ -276,6 +282,7 @@ class BrowserSessionService:
             cdp_port = (row.session_data or {}).get("port")
             if ts_ip and cdp_port and status != "dead":
                 import socket as _sock  # noqa: PLC0415
+
                 try:
                     with _sock.create_connection((ts_ip, int(cdp_port)), timeout=1.0):
                         pass  # CDP port reachable — status unchanged
@@ -346,11 +353,13 @@ class BrowserSessionService:
         if row.pppoe_host_id and row.pppoe_slot is not None:
             try:
                 from xiosync.subsystems.xiogrid.services.pppoe_nodes import PPPoENodeService
+
                 PPPoENodeService(self._session).release_from_worker(
                     row.pppoe_host_id, row.pppoe_slot
                 )
             except Exception as _rel_err:
                 import logging
+
                 logging.getLogger(__name__).warning(
                     "PPPoE release failed on session termination %s: %s", session_id, _rel_err
                 )

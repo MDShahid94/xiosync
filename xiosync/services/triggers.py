@@ -16,6 +16,7 @@ Schema (from migration 0029):
     last_fired_at    TIMESTAMPTZ
     created_at       TIMESTAMPTZ DEFAULT now()
 """
+
 from __future__ import annotations
 
 import json
@@ -48,9 +49,9 @@ class TriggerRecord:
     id: uuid.UUID
     organization_id: uuid.UUID
     template_id: uuid.UUID
-    trigger_type: str            # 'cron' | 'event'
-    cron_schedule: str | None    # e.g. '*/5 * * * *'
-    event_name: str | None       # e.g. 'session.expired'
+    trigger_type: str  # 'cron' | 'event'
+    cron_schedule: str | None  # e.g. '*/5 * * * *'
+    event_name: str | None  # e.g. 'session.expired'
     enabled: bool
     context_defaults: dict[str, Any]
     last_fired_at: datetime | None
@@ -198,9 +199,7 @@ class XioflowTriggerService:
     def disable_trigger(self, ctx: OrgContext, trigger_id: uuid.UUID) -> TriggerRecord:
         return self._set_enabled(ctx, trigger_id, False)
 
-    def _set_enabled(
-        self, ctx: OrgContext, trigger_id: uuid.UUID, enabled: bool
-    ) -> TriggerRecord:
+    def _set_enabled(self, ctx: OrgContext, trigger_id: uuid.UUID, enabled: bool) -> TriggerRecord:
         result = self._session.execute(
             text("""
                 UPDATE xioflow_triggers
@@ -245,18 +244,24 @@ class XioflowTriggerService:
         # Snapshot template at dispatch for versioning
         tmpl_snap = None
         if rec.template_id:
-            snap = self._session.execute(text("""
+            snap = self._session.execute(
+                text("""
                 SELECT slug, dag_domain, dag_root_intent, template_type,
                        COALESCE(config, '{}'::jsonb) as config
                 FROM workflow_templates WHERE id = :tid
-            """), {"tid": str(rec.template_id)}).fetchone()
+            """),
+                {"tid": str(rec.template_id)},
+            ).fetchone()
             if snap:
-                tmpl_snap = json.dumps({
-                    "slug": snap.slug, "dag_domain": snap.dag_domain,
-                    "dag_root_intent": snap.dag_root_intent,
-                    "template_type": snap.template_type,
-                    "config": snap.config if isinstance(snap.config, dict) else {},
-                })
+                tmpl_snap = json.dumps(
+                    {
+                        "slug": snap.slug,
+                        "dag_domain": snap.dag_domain,
+                        "dag_root_intent": snap.dag_root_intent,
+                        "template_type": snap.template_type,
+                        "config": snap.config if isinstance(snap.config, dict) else {},
+                    }
+                )
         self._session.execute(
             text("""
                 INSERT INTO xioflow_runs

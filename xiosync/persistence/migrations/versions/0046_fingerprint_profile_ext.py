@@ -21,8 +21,9 @@ then updates the seed profiles to use US East Coast / West Coast timezones.
 Revision ID: 0046
 Revises: 0045
 """
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0046"
 down_revision = "0045"
@@ -34,23 +35,30 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     # 1. Add columns with server defaults (safe for existing rows)
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         ALTER TABLE xiogrid_fingerprint_profiles
         ADD COLUMN IF NOT EXISTS timezone TEXT NOT NULL DEFAULT 'America/New_York'
-    """))
-    conn.execute(sa.text("""
+    """)
+    )
+    conn.execute(
+        sa.text("""
         ALTER TABLE xiogrid_fingerprint_profiles
         ADD COLUMN IF NOT EXISTS battery_level FLOAT NOT NULL DEFAULT 0.72
-    """))
-    conn.execute(sa.text("""
+    """)
+    )
+    conn.execute(
+        sa.text("""
         ALTER TABLE xiogrid_fingerprint_profiles
         ADD COLUMN IF NOT EXISTS connection_type TEXT NOT NULL DEFAULT 'wifi'
-    """))
+    """)
+    )
 
     # 2. Set macOS profiles to realistic US timezone spread
     #    macOS profiles rotate through East/Central/Mountain/West so that
     #    different exit-node IPs get geographically matching timezones.
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         UPDATE xiogrid_fingerprint_profiles
         SET timezone = CASE
             WHEN name ILIKE '%mac%1%' OR name ILIKE '%mac%east%' THEN 'America/New_York'
@@ -63,37 +71,40 @@ def upgrade() -> None:
             WHEN os = 'android' THEN 'America/New_York'
             ELSE 'America/New_York'
         END
-    """))
+    """)
+    )
 
     # 3. Battery level: macOS typically shows ~80%, mobile ~60%, desktop ~72%
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         UPDATE xiogrid_fingerprint_profiles
         SET battery_level = CASE
             WHEN is_mobile THEN 0.61
             WHEN os = 'macos' THEN 0.83
             ELSE 0.72
         END
-    """))
+    """)
+    )
 
     # 4. Connection type: macOS/Windows = wifi, Linux desktop = ethernet, mobile = 4g
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         UPDATE xiogrid_fingerprint_profiles
         SET connection_type = CASE
             WHEN is_mobile THEN '4g'
             WHEN os = 'linux' THEN 'ethernet'
             ELSE 'wifi'
         END
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:
     conn = op.get_bind()
-    conn.execute(sa.text(
-        "ALTER TABLE xiogrid_fingerprint_profiles DROP COLUMN IF EXISTS timezone"
-    ))
-    conn.execute(sa.text(
-        "ALTER TABLE xiogrid_fingerprint_profiles DROP COLUMN IF EXISTS battery_level"
-    ))
-    conn.execute(sa.text(
-        "ALTER TABLE xiogrid_fingerprint_profiles DROP COLUMN IF EXISTS connection_type"
-    ))
+    conn.execute(sa.text("ALTER TABLE xiogrid_fingerprint_profiles DROP COLUMN IF EXISTS timezone"))
+    conn.execute(
+        sa.text("ALTER TABLE xiogrid_fingerprint_profiles DROP COLUMN IF EXISTS battery_level")
+    )
+    conn.execute(
+        sa.text("ALTER TABLE xiogrid_fingerprint_profiles DROP COLUMN IF EXISTS connection_type")
+    )

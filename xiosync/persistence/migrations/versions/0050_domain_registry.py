@@ -7,6 +7,7 @@ Create Date: 2026-09-21
 Org-scoped domain registry for managing main + dependent auth domains.
 Seeded with platform-global defaults for Google, v0, Tailscale, GitHub, Vercel, Proton.
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -15,6 +16,7 @@ revision = "0050"
 down_revision = "0049"
 branch_labels = None
 depends_on = None
+
 
 def upgrade():
     op.execute("""
@@ -39,6 +41,7 @@ def upgrade():
         (NULL, 'vercel.com', 'github_oauth', 'github.com', '[".vercel.com","vercel.com"]'::jsonb, 'Vercel'),
         (NULL, 'proton.me', 'direct', NULL, '[".proton.me","proton.me","protonmail.com",".protonmail.com"]'::jsonb, 'Proton');
     """)
+
 
 def downgrade():
     op.execute("""

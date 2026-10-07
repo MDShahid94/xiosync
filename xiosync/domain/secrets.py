@@ -36,8 +36,7 @@ def validate_provider(provider: str) -> None:
     """Reject unknown provider types."""
     if provider not in PROVIDER_TYPES:
         raise InvalidProviderError(
-            f"unknown secret provider {provider!r}; "
-            f"expected one of {sorted(PROVIDER_TYPES)}"
+            f"unknown secret provider {provider!r}; expected one of {sorted(PROVIDER_TYPES)}"
         )
 
 
@@ -45,6 +44,5 @@ def validate_secret_state(state: str) -> None:
     """Reject invalid secret states."""
     if state not in SECRET_STATES:
         raise InvalidSecretStateError(
-            f"invalid secret state {state!r}; "
-            f"expected one of {sorted(SECRET_STATES)}"
+            f"invalid secret state {state!r}; expected one of {sorted(SECRET_STATES)}"
         )

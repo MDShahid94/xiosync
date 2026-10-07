@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import StreamingResponse
@@ -69,10 +70,12 @@ def push_task_stream(
 
     Authenticated via task credential (lease_id must match).
     """
-    from xiosync.domain.context import OrgContext
-    from sqlalchemy.orm import Session as OrmSession
-    from xiosync.services.events import EventService
     from typing import cast
+
+    from sqlalchemy.orm import Session as OrmSession
+
+    from xiosync.domain.context import OrgContext
+    from xiosync.services.events import EventService
 
     context = cast(OrgContext, request.state.org_context)
     session = cast(OrmSession, request.state.org_session)
@@ -122,11 +125,12 @@ async def tail_task_stream(
 
     async def _generate() -> AsyncGenerator[str]:
         yield "retry: 3000\n\n"
-        yield f"event: stream.connected\ndata: {{\"task_id\": \"{task_id}\"}}\n\n"
+        yield f'event: stream.connected\ndata: {{"task_id": "{task_id}"}}\n\n'
 
         # P5: Subscribe to task-specific event bus channel.
-        from xiosync.core.event_bus import get_event_bus
         import asyncio
+
+        from xiosync.core.event_bus import get_event_bus
 
         bus = get_event_bus()
         try:
@@ -147,11 +151,13 @@ async def tail_task_stream(
         },
     )
 
-from xiosync.api.router_registry import register_router
+
 from xiosync.api.middleware.rbac import require_capability
+from xiosync.api.router_registry import register_router
+
 register_router(
     router,
-    prefix='/api/v1',
+    prefix="/api/v1",
     tags=["task-streams"],
     dependencies=[require_capability("task.execute")],
 )

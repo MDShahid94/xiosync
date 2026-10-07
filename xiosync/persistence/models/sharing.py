@@ -46,20 +46,30 @@ class ResourceShare(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     source_org_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
     )
     target_org_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=True,
     )  # NULL = public/global share
     resource_type: Mapped[str] = mapped_column(Text, nullable=False)
     resource_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     permissions: Mapped[list[str]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'[\"read\"]'::jsonb"),
+        JSONB,
+        nullable=False,
+        server_default=text("'[\"read\"]'::jsonb"),
     )
     state: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'active'"),
+        Text,
+        nullable=False,
+        server_default=text("'active'"),
     )
     created_at: Mapped[datetime] = mapped_column(
-        _ts, nullable=False, server_default=text("now()"),
+        _ts,
+        nullable=False,
+        server_default=text("now()"),
     )
     expires_at: Mapped[datetime | None] = mapped_column(_ts)

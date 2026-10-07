@@ -18,27 +18,40 @@ Usage:
 Run this ONCE on the Colab master node with Drive FUSE mounted.
 Safe to re-run: canonical files are skipped, DB is idempotent (ON CONFLICT DO UPDATE).
 """
+
 from __future__ import annotations
-import argparse, os, re, sys, uuid
+
+import argparse
+import os
+import re
+import sys
 from pathlib import Path
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
 ap = argparse.ArgumentParser()
 ap.add_argument("--dry-run", action="store_true", help="Print actions without executing")
-ap.add_argument("--drive-root", default=os.environ.get("XIO_DRIVE_ROOT",
-                "/content/drive/MyDrive/XIOSYNC-Shared"))
-ap.add_argument("--db-url", default=os.environ.get("DATABASE_URL", ""),
-                help="PostgreSQL DSN — needed to update storage_object_key in DB")
+ap.add_argument(
+    "--drive-root",
+    default=os.environ.get("XIO_DRIVE_ROOT", "/content/drive/MyDrive/XIOSYNC-Shared"),
+)
+ap.add_argument(
+    "--db-url",
+    default=os.environ.get("DATABASE_URL", ""),
+    help="PostgreSQL DSN — needed to update storage_object_key in DB",
+)
 args = ap.parse_args()
 
 DRY = args.dry_run
 DRIVE_ROOT = args.drive_root
 PROFILES_DIR = Path(DRIVE_ROOT) / "chrome_profiles"
 
-def _p(*a): print(*a, flush=True)
+
+def _p(*a):
+    print(*a, flush=True)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
 
 def _normalize_username(identifier: str) -> str:
     """Match profile_store._normalize_username() exactly."""
@@ -54,6 +67,7 @@ def _canonical_name(serial: int, identifier: str) -> str:
 
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
+
 
 def _load_identity_map(conn) -> dict[str, dict]:
     """Load all identities with their serial from the DB.
@@ -75,7 +89,8 @@ def _load_identity_map(conn) -> dict[str, dict]:
 
 
 def _update_db(conn, identity_id: str, new_key: str) -> None:
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO credentials (id, organization_id, identity_id, credential_type,
                                  label, storage_object_key, created_at, updated_at)
         VALUES (gen_random_uuid(), NULL, %s::uuid, 'cookie_state', 'default', %s,
@@ -83,10 +98,13 @@ def _update_db(conn, identity_id: str, new_key: str) -> None:
         ON CONFLICT (identity_id, credential_type, label)
         DO UPDATE SET storage_object_key = EXCLUDED.storage_object_key,
                       updated_at = now()
-    """, (identity_id, new_key))
+    """,
+        (identity_id, new_key),
+    )
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     if not PROFILES_DIR.exists():
@@ -105,9 +123,10 @@ def main() -> None:
     if args.db_url:
         try:
             import psycopg2
+
             conn = psycopg2.connect(args.db_url)
             conn.autocommit = False
-            _p(f"  DB             : connected")
+            _p("  DB             : connected")
         except Exception as e:
             _p(f"  ⚠️  DB connect failed: {e} — will rename files only (no DB update)")
     else:
@@ -119,8 +138,8 @@ def main() -> None:
 
     # Regex patterns
     RE_CANONICAL = re.compile(r"^PRFL-(\d{3})_(.+)\.tar\.gz$")
-    RE_HEX_SLUG  = re.compile(r"^PRFL_([0-9a-f]{16})\.tar\.gz$", re.IGNORECASE)
-    RE_LEGACY    = re.compile(r"^(.+)\.tar\.gz$")
+    RE_HEX_SLUG = re.compile(r"^PRFL_([0-9a-f]{16})\.tar\.gz$", re.IGNORECASE)
+    RE_LEGACY = re.compile(r"^(.+)\.tar\.gz$")
 
     files = sorted(PROFILES_DIR.glob("*.tar.gz"))
     _p(f"  Found {len(files)} .tar.gz files in chrome_profiles/")
@@ -172,7 +191,7 @@ def main() -> None:
             continue
 
         new_path = PROFILES_DIR / new_name
-        new_key  = f"chrome_profiles/{new_name}"
+        new_key = f"chrome_profiles/{new_name}"
 
         if new_path.exists() and new_path != f:
             _p(f"  ⚠️  Target already exists: {new_name} — skipping {name}")

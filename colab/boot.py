@@ -44,10 +44,8 @@ import time
 # Always prefer the bootstrap endpoint — it's the XIOSYNC-native way.
 # Secrets never appear in notebook code or git history.
 
-_BOOTSTRAP_TOKEN = globals().get("BOOTSTRAP_TOKEN") or \
-                   os.environ.get("XIOSYNC_BOOTSTRAP_TOKEN", "")
-_XIOSYNC_BASE_HINT = globals().get("XIOSYNC_BASE") or \
-                     os.environ.get("XIOSYNC_PUBLIC_URL", "")
+_BOOTSTRAP_TOKEN = globals().get("BOOTSTRAP_TOKEN") or os.environ.get("XIOSYNC_BOOTSTRAP_TOKEN", "")
+_XIOSYNC_BASE_HINT = globals().get("XIOSYNC_BASE") or os.environ.get("XIOSYNC_PUBLIC_URL", "")
 
 # ── Robust URL fetcher: handles transient Tailscale Funnel startup lag ───────────────
 # Root cause of intermittent boot failures:
@@ -59,12 +57,11 @@ _XIOSYNC_BASE_HINT = globals().get("XIOSYNC_BASE") or \
 # Fix: if DNS fails, connect directly to the known Tailscale Funnel public IPs
 # with the correct hostname for TLS SNI. Certificate validation passes fully
 # (no security downgrade) because SNI carries the right hostname.
-import ssl as _ssl
-import socket as _socket
 import http.client as _http_client
-import urllib.request as _urq_boot
+import socket as _socket
+import ssl as _ssl
 import urllib.parse as _up_boot
-import re as _re_boot
+import urllib.request as _urq_boot
 
 _FUNNEL_FALLBACK_IPS = ["103.84.155.217", "103.84.155.153"]  # Tailscale Funnel edge IPs
 
@@ -85,9 +82,17 @@ def _fetch_url_with_fallback(url: str, timeout: int = 20, max_attempts: int = 3)
             _last = _exc
             _r = str(_exc).lower()
             # Fast-path to IP fallback on DNS errors (don't waste retry slots)
-            if any(k in _r for k in ("name or service not known", "nodename nor servname",
-                                     "getaddrinfo", "errno -2", "name resolution",
-                                     "failed to resolve")):
+            if any(
+                k in _r
+                for k in (
+                    "name or service not known",
+                    "nodename nor servname",
+                    "getaddrinfo",
+                    "errno -2",
+                    "name resolution",
+                    "failed to resolve",
+                )
+            ):
                 break
             if _att < max_attempts:
                 time.sleep(3)
@@ -106,11 +111,7 @@ def _fetch_url_with_fallback(url: str, timeout: int = 20, max_attempts: int = 3)
             try:
                 _raw = _socket.create_connection((_ip, _port), timeout=timeout)
                 _tls = _ctx.wrap_socket(_raw, server_hostname=_hostname)
-                _req = (
-                    f"GET {_path} HTTP/1.1\r\n"
-                    f"Host: {_hostname}\r\n"
-                    f"Connection: close\r\n\r\n"
-                )
+                _req = f"GET {_path} HTTP/1.1\r\nHost: {_hostname}\r\nConnection: close\r\n\r\n"
                 _tls.sendall(_req.encode())
                 _resp = _http_client.HTTPResponse(_tls)
                 _resp.begin()
@@ -139,11 +140,13 @@ if _BOOTSTRAP_TOKEN and _XIOSYNC_BASE_HINT:
     _MAX_ATTEMPTS = 3
     for _attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            _payload = json.loads(_fetch_url_with_fallback(
-                f"{_XIOSYNC_BASE_HINT}/api/v1/workers/bootstrap/{_BOOTSTRAP_TOKEN}",
-                timeout=20,
-                max_attempts=_MAX_ATTEMPTS,
-            ))
+            _payload = json.loads(
+                _fetch_url_with_fallback(
+                    f"{_XIOSYNC_BASE_HINT}/api/v1/workers/bootstrap/{_BOOTSTRAP_TOKEN}",
+                    timeout=20,
+                    max_attempts=_MAX_ATTEMPTS,
+                )
+            )
             C = _payload.get("config", {})
             _node_from_server = _payload.get("node_name", "")
             if _node_from_server:
@@ -166,39 +169,42 @@ else:
         except Exception:
             pass
     if C:
-        print("ℹ️  Using locally-provided CONFIG (consider using bootstrap token instead)", flush=True)
+        print(
+            "ℹ️  Using locally-provided CONFIG (consider using bootstrap token instead)", flush=True
+        )
     else:
         print("⚠️  No config available — continuing with defaults only", flush=True)
 
-NODE_NAME        = C.get("node_name",          "xiogrid--default--worker-001")
-XIOSYNC_BASE     = C.get("xiosync_url",         "")
-XIOSYNC_TOKEN    = C.get("xiosync_token",        "")
-WORKER_SECRET    = C.get("xiosync_worker_secret","")
-INTERNAL_SECRET  = C.get("xiosync_internal_secret", "")
-GH_PAT           = C.get("gh_pat",               "")
-TS_AUTH_KEY      = C.get("tailscale_auth_key",    "")
-TS_EXIT_NODE_IP  = C.get("default_exit",          "")
-XIORUN_PORT      = int(C.get("xiorun_agent_port", 9300))
-R2_ENDPOINT      = C.get("r2_endpoint",           "")
-R2_BUCKET        = C.get("r2_bucket",             "xio-profiles")
-R2_ACCESS_KEY    = C.get("r2_access_key",          "")
-R2_SECRET_KEY    = C.get("r2_secret_key",          "")
-LOCAL_ROOT       = C.get("local_root",             "/content/xiosync-worker")
+NODE_NAME = C.get("node_name", "xiogrid--default--worker-001")
+XIOSYNC_BASE = C.get("xiosync_url", "")
+XIOSYNC_TOKEN = C.get("xiosync_token", "")
+WORKER_SECRET = C.get("xiosync_worker_secret", "")
+INTERNAL_SECRET = C.get("xiosync_internal_secret", "")
+GH_PAT = C.get("gh_pat", "")
+TS_AUTH_KEY = C.get("tailscale_auth_key", "")
+TS_EXIT_NODE_IP = C.get("default_exit", "")
+XIORUN_PORT = int(C.get("xiorun_agent_port", 9300))
+R2_ENDPOINT = C.get("r2_endpoint", "")
+R2_BUCKET = C.get("r2_bucket", "xio-profiles")
+R2_ACCESS_KEY = C.get("r2_access_key", "")
+R2_SECRET_KEY = C.get("r2_secret_key", "")
+LOCAL_ROOT = C.get("local_root", "/content/xiosync-worker")
 
 # Org/project/role context — delivered by XIOSYNC bootstrap
-ORG_SLUG     = C.get("org_slug",     "xiogrid")
+ORG_SLUG = C.get("org_slug", "xiogrid")
 PROJECT_SLUG = C.get("project_slug", "default")
-ROLE         = C.get("role",         "worker")
+ROLE = C.get("role", "worker")
 
 # Stable identity: no counter suffix — used for TS device name, Drive keys, vault keys.
 # Delivered by XIOSYNC directly; fallback strips -NNN suffix for old tokens.
 import re as _re  # noqa: PLC0415
+
 _NODE_IDENTITY = C.get("node_identity") or _re.sub(r"-\d{3,}$", "", NODE_NAME)
 
 # Drive FUSE mount config (delivered by XIOSYNC bootstrap)
-DRIVE_FOLDER_ID     = C.get("drive_folder_id",     "19k79lkPzg1gBM7IhIhE-35rfiAyVfCsK")
+DRIVE_FOLDER_ID = C.get("drive_folder_id", "19k79lkPzg1gBM7IhIhE-35rfiAyVfCsK")
 DRIVE_SHORTCUT_NAME = C.get("drive_shortcut_name", "XIOSYNC-Shared")
-DRIVE_FS_ROOT       = C.get("drive_fs_root",       f"/content/drive/MyDrive/{DRIVE_SHORTCUT_NAME}")
+DRIVE_FS_ROOT = C.get("drive_fs_root", f"/content/drive/MyDrive/{DRIVE_SHORTCUT_NAME}")
 
 # Keep the original bootstrap URL (e.g. Cloudflare tunnel) for fetching public
 # artifacts before Tailscale connects. XIOSYNC_BASE may be a Tailscale IP that
@@ -213,7 +219,7 @@ os.makedirs(LOCAL_ROOT, exist_ok=True)
 os.makedirs("/tmp/xiorun_profiles", exist_ok=True)
 
 # Module-level reference to Drive FS helper (initialised in Phase 0.5)
-_XIO_FS = None   # type: XIODriveFS | None
+_XIO_FS = None  # type: XIODriveFS | None
 
 
 def _p(msg: str) -> None:
@@ -243,18 +249,35 @@ _p("  Phase 0: System packages")
 _p("═" * 60)
 
 _APT_DEPS = [
-    "libnss3", "libatk1.0-0", "libatk-bridge2.0-0", "libx11-xcb1", "libxcomposite1",
-    "libxdamage1", "libxrandr2", "libgbm1", "libcups2", "libxkbcommon0",
-    "xvfb", "unzip", "curl", "openssh-server",
+    "libnss3",
+    "libatk1.0-0",
+    "libatk-bridge2.0-0",
+    "libx11-xcb1",
+    "libxcomposite1",
+    "libxdamage1",
+    "libxrandr2",
+    "libgbm1",
+    "libcups2",
+    "libxkbcommon0",
+    "xvfb",
+    "unzip",
+    "curl",
+    "openssh-server",
 ]
 # libasound2 was renamed to libasound2t64 in Ubuntu 24.04 (Colab updated runtime)
-_LIBASOUND = "libasound2t64" if _run("apt-cache show libasound2t64 > /dev/null 2>&1", silent=True) == 0 else "libasound2"
+_LIBASOUND = (
+    "libasound2t64"
+    if _run("apt-cache show libasound2t64 > /dev/null 2>&1", silent=True) == 0
+    else "libasound2"
+)
 _APT_DEPS.append(_LIBASOUND)
 _missing = [p for p in _APT_DEPS if _run(f"dpkg -s {p}", silent=True) != 0]
 if _missing:
     _p(f"  Installing {len(_missing)} system deps…")
-    _run(f"DEBIAN_FRONTEND=noninteractive apt-get install -y -q --fix-missing {' '.join(_missing)} > /dev/null 2>&1",
-         timeout=300)
+    _run(
+        f"DEBIAN_FRONTEND=noninteractive apt-get install -y -q --fix-missing {' '.join(_missing)} > /dev/null 2>&1",
+        timeout=300,
+    )
 else:
     _p("  ✅ All system deps already installed")
 
@@ -263,7 +286,9 @@ _node_ver = _run("node --version 2>/dev/null", capture=True, silent=True) or ""
 if not str(_node_ver).strip().startswith("v2"):
     _p("  📦 Node.js < 20 detected — upgrading to Node 20 LTS…")
     _run("curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1", timeout=60)
-    _run("DEBIAN_FRONTEND=noninteractive apt-get install -y -q nodejs > /dev/null 2>&1", timeout=120)
+    _run(
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y -q nodejs > /dev/null 2>&1", timeout=120
+    )
     _p(f"  ✅ Node.js installed: {_run('node --version', capture=True, silent=True).strip()}")
 else:
     _p(f"  ✅ Node.js OK: {str(_node_ver).strip()}")
@@ -276,6 +301,7 @@ try:
     # Endpoint requires worker auth — use Request with header, fall back to IP if DNS fails
     try:
         import urllib.request as _gs_urq
+
         _gs_req = _gs_urq.Request(_gs_url, headers={"X-Worker-Secret": XIOSYNC_TOKEN})
         _gs_mjs = _gs_urq.urlopen(_gs_req, timeout=15).read()
     except Exception:
@@ -296,7 +322,7 @@ if _MAC_PUBKEY and _MAC_PUBKEY not in _ak_existing:
     with open(_AK, "a") as _f:
         _f.write(_MAC_PUBKEY.strip() + "\n")
 elif not os.path.exists(_AK):
-    open(_AK, "w").close()   # create empty file so chmod never fails
+    open(_AK, "w").close()  # create empty file so chmod never fails
 os.chmod(_AK, 0o600)
 
 _sshd_cfg = "/etc/ssh/sshd_config"
@@ -321,22 +347,26 @@ if os.system("pgrep Xvfb > /dev/null") != 0:
 # ── Chrome install (version from worker config — Phase 4 audit Fix 24) ───────
 # Version is configurable via worker config: C.get("chrome_version", "131")
 # Allows centralized A/B testing and auto-update without boot.py changes.
-_CHROME_MAJOR    = C.get("chrome_version", "131")
+_CHROME_MAJOR = C.get("chrome_version", "131")
 _CHROME_FULL_VER = C.get("chrome_full_version", "131.0.6778.204")
-_CHROME_BIN_DIR  = f"/opt/chrome{_CHROME_MAJOR}"
-_CHROME131_BIN   = f"{_CHROME_BIN_DIR}/chrome"
+_CHROME_BIN_DIR = f"/opt/chrome{_CHROME_MAJOR}"
+_CHROME131_BIN = f"{_CHROME_BIN_DIR}/chrome"
 if not os.path.isfile(_CHROME131_BIN):
     _p("  🔽 Chrome 131 not found — installing (UC 3.5.5 optimal version)…")
-    _CHROME131_DRIVE_TAR = f"{ASSET_BASE_DRIVE}/cache/chrome131.tar.gz" if \
-        "ASSET_BASE_DRIVE" in dir() else None
+    _CHROME131_DRIVE_TAR = (
+        f"{ASSET_BASE_DRIVE}/cache/chrome131.tar.gz" if "ASSET_BASE_DRIVE" in dir() else None
+    )
     _chrome131_installed = False
 
     # Try Drive cache first (fast, no bandwidth cost)
     _chrome131_drive_path = "/content/drive/MyDrive/XIOSYNC-Shared/cache/chrome131.tar.gz"
     if os.path.isfile(_chrome131_drive_path):
         _p("    ⚡ Chrome 131 Drive cache hit — extracting…")
-        _run(f"mkdir -p /opt/chrome131 && tar -xzf '{_chrome131_drive_path}' -C /opt/chrome131 "
-             f"--strip-components=1 2>&1 | tail -2", timeout=120)
+        _run(
+            f"mkdir -p /opt/chrome131 && tar -xzf '{_chrome131_drive_path}' -C /opt/chrome131 "
+            f"--strip-components=1 2>&1 | tail -2",
+            timeout=120,
+        )
         if os.path.isfile(_CHROME131_BIN):
             os.chmod(_CHROME131_BIN, 0o755)
             _chrome131_installed = True
@@ -354,25 +384,29 @@ if not os.path.isfile(_CHROME131_BIN):
             timeout=300,
         )
         if _dl_rc == 0 and os.path.exists("/tmp/chrome131.zip"):
-            _run("mkdir -p /opt/chrome131 && "
-                 "unzip -q /tmp/chrome131.zip -d /tmp/chrome131_src && "
-                 "mv /tmp/chrome131_src/chrome-linux64/* /opt/chrome131/ 2>/dev/null || true && "
-                 "rm -rf /tmp/chrome131.zip /tmp/chrome131_src",
-                 timeout=120)
+            _run(
+                "mkdir -p /opt/chrome131 && "
+                "unzip -q /tmp/chrome131.zip -d /tmp/chrome131_src && "
+                "mv /tmp/chrome131_src/chrome-linux64/* /opt/chrome131/ 2>/dev/null || true && "
+                "rm -rf /tmp/chrome131.zip /tmp/chrome131_src",
+                timeout=120,
+            )
             if os.path.isfile(_CHROME131_BIN):
                 os.chmod(_CHROME131_BIN, 0o755)
                 _chrome131_installed = True
                 # Cache to Drive for future boots
                 _run(
-                    f"tar -czf /tmp/chrome131.tar.gz -C /opt/chrome131 . && "
-                    f"cp /tmp/chrome131.tar.gz "
-                    f"'/content/drive/MyDrive/XIOSYNC-Shared/cache/chrome131.tar.gz' 2>/dev/null && "
-                    f"rm /tmp/chrome131.tar.gz",
+                    "tar -czf /tmp/chrome131.tar.gz -C /opt/chrome131 . && "
+                    "cp /tmp/chrome131.tar.gz "
+                    "'/content/drive/MyDrive/XIOSYNC-Shared/cache/chrome131.tar.gz' 2>/dev/null && "
+                    "rm /tmp/chrome131.tar.gz",
                     timeout=120,
                 )
                 _p("    ✅ Chrome 131 installed + cached to Drive")
             else:
-                _p("    ⚠️  Chrome 131 extract failed — will use patchright Chromium 153 (detection risk higher)")
+                _p(
+                    "    ⚠️  Chrome 131 extract failed — will use patchright Chromium 153 (detection risk higher)"
+                )
         else:
             _p("    ⚠️  Chrome 131 download failed — will use patchright Chromium 153")
 else:
@@ -381,11 +415,11 @@ else:
 # Install matching chromedriver 131 (must match Chrome 131 version exactly)
 _CD131_BIN = "/usr/local/bin/chromedriver131"
 _CD131_VER = "131.0.6778.204"  # must match _CHROME131_URL version above
-_CD131_UC_PATH = os.path.expanduser("~/.local/share/undetected_chromedriver/undetected_chromedriver")
-_need_cd131 = (
-    not os.path.isfile(_CD131_BIN) or
-    _CD131_VER not in (subprocess.run([_CD131_BIN, "--version"],
-                                      capture_output=True, text=True).stdout or "")
+_CD131_UC_PATH = os.path.expanduser(
+    "~/.local/share/undetected_chromedriver/undetected_chromedriver"
+)
+_need_cd131 = not os.path.isfile(_CD131_BIN) or _CD131_VER not in (
+    subprocess.run([_CD131_BIN, "--version"], capture_output=True, text=True).stdout or ""
 )
 if _need_cd131 and os.path.isfile(_CHROME131_BIN):
     _p(f"  🔽 chromedriver {_CD131_VER} not found — installing…")
@@ -424,19 +458,21 @@ _p("═" * 60)
 try:
     # 1. Fetch xio_drive_fs.py from XIOSYNC (served as a public static asset)
     import urllib.request as _urq  # noqa: PLC0415
+
     _fs_module_path = "/tmp/xio_drive_fs.py"
     _fs_url = f"{ASSET_BASE}/api/v1/workers/xio-drive-fs.py"
     try:
         _fs_src = _fetch_url_with_fallback(_fs_url, timeout=15).decode()
         with open(_fs_module_path, "w") as _f:
             _f.write(_fs_src)
-        _p(f"  ✅ Fetched xio_drive_fs.py from XIOSYNC")
+        _p("  ✅ Fetched xio_drive_fs.py from XIOSYNC")
     except Exception as _fe:
         _p(f"  ⚠️  xio_drive_fs.py fetch failed: {_fe} — Drive FUSE skipped")
         raise  # jump to outer except
 
     # 2. Import the module
     import importlib.util as _ilu  # noqa: PLC0415
+
     _spec = _ilu.spec_from_file_location("xio_drive_fs", _fs_module_path)
     _xdf_mod = _ilu.module_from_spec(_spec)
     _spec.loader.exec_module(_xdf_mod)
@@ -470,7 +506,6 @@ except Exception as _drive_ex:
     _p(f"  ℹ️  Drive FUSE setup skipped ({type(_drive_ex).__name__}) — non-fatal")
 
 
-
 # ════════════════════════════════════════════════════════════════════════════════
 # PHASE 1: Tailscale
 # ════════════════════════════════════════════════════════════════════════════════
@@ -482,7 +517,7 @@ _my_ts_ip: str = ""
 _ts_online: bool = False
 
 # _NODE_IDENTITY is derived at config load (top of file): "xiogrid--default--master"
-_TS_STATE_DIR  = "/var/lib/tailscale"
+_TS_STATE_DIR = "/var/lib/tailscale"
 _TS_STATE_FILE = f"{_TS_STATE_DIR}/tailscaled.state"
 
 # 1. Install Tailscale binary if missing
@@ -508,15 +543,18 @@ def _detect_runtime_type() -> str:
 def _resolve_mesh_identity(colab_account: str, xiosync_url: str, org_secret: str) -> str | None:
     """Resolve or create a stable MESH-{serial} binding for this runtime.
     colab_account is an optional hint (empty string is fine — serial is assigned by XIOSYNC)."""
+    import json as _json_mi  # noqa: PLC0415
     import urllib.request as _urq_mi  # noqa: PLC0415
-    import json as _json_mi           # noqa: PLC0415
+
     try:
         _req = _urq_mi.Request(
             f"{xiosync_url}/api/v1/workers/mesh-identity",
-            data=_json_mi.dumps({
-                "colab_account": colab_account or "",   # optional hint
-                "runtime_type": _detect_runtime_type(),
-            }).encode(),
+            data=_json_mi.dumps(
+                {
+                    "colab_account": colab_account or "",  # optional hint
+                    "runtime_type": _detect_runtime_type(),
+                }
+            ).encode(),
             headers={
                 "Content-Type": "application/json",
                 "X-Worker-Org-Secret": org_secret,
@@ -536,18 +574,26 @@ if not TS_AUTH_KEY:
     _p("  ℹ️  No tailscale_auth_key in config — skipping Tailscale")
 else:
     # 2. Kill any stale tailscaled daemon
-    subprocess.run("pkill -9 tailscaled 2>/dev/null; sleep 1",
-                   shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(
+        "pkill -9 tailscaled 2>/dev/null; sleep 1",
+        shell=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     os.makedirs(_TS_STATE_DIR, mode=0o700, exist_ok=True)
 
     # 2b. Detect Colab Google account — stable identity across runtimes
     _colab_account: str = ""
     try:
         import subprocess as _sp_ts  # noqa: PLC0415
-        _gcloud_out = _sp_ts.check_output(
-            ["gcloud", "config", "get-value", "account"],
-            timeout=5, stderr=_sp_ts.DEVNULL
-        ).decode().strip()
+
+        _gcloud_out = (
+            _sp_ts.check_output(
+                ["gcloud", "config", "get-value", "account"], timeout=5, stderr=_sp_ts.DEVNULL
+            )
+            .decode()
+            .strip()
+        )
         if "@" in _gcloud_out:
             _colab_account = _gcloud_out.split("@")[0].lower().replace(".", "_")
     except Exception:
@@ -556,6 +602,7 @@ else:
     if not _colab_account:
         try:
             import glob as _gl  # noqa: PLC0415
+
             for _cred_f in _gl.glob("/root/.config/gcloud/legacy_credentials/*/adc.json"):
                 _acct = _cred_f.split("/")[-2]
                 if "@" in _acct:
@@ -567,7 +614,11 @@ else:
     # 2b. Mesh identity → stable MESH-{serial} hostname
     # Identity is based on XIOSYNC-assigned serial (domain-independent: works for
     # Colab runtimes, VMs, physical devices — no Google account required)
-    _mesh_hostname = _resolve_mesh_identity(_colab_account, XIOSYNC_BASE, WORKER_SECRET) if (XIOSYNC_BASE and WORKER_SECRET) else None
+    _mesh_hostname = (
+        _resolve_mesh_identity(_colab_account, XIOSYNC_BASE, WORKER_SECRET)
+        if (XIOSYNC_BASE and WORKER_SECRET)
+        else None
+    )
     if _mesh_hostname:
         _NODE_IDENTITY = _mesh_hostname
         _p(f"  🔗  Mesh identity resolved: {_NODE_IDENTITY}")
@@ -584,6 +635,7 @@ else:
             _restore_source = "Drive FUSE"
         else:
             import urllib.request as _urq_ts  # noqa: PLC0415
+
             _restore_source = "none"
             try:
                 _encoded_key = _ts_key.replace("/", "__")
@@ -603,8 +655,10 @@ else:
             with open(_TS_STATE_FILE, "wb") as _sf:
                 _sf.write(_state_bytes_restore)
             _ts_state_restored = True
-            _p(f"  ✅ TS state restored from {_restore_source} "
-               f"({len(_state_bytes_restore)} bytes) — will reconnect existing node")
+            _p(
+                f"  ✅ TS state restored from {_restore_source} "
+                f"({len(_state_bytes_restore)} bytes) — will reconnect existing node"
+            )
         else:
             try:
                 os.remove(_TS_STATE_FILE)
@@ -620,41 +674,56 @@ else:
 
     # 3. Start tailscaled
     _tun_ok = os.system("modprobe tun > /dev/null 2>&1") == 0
-    _tsd_bin = (shutil.which("tailscaled")
-                or next((p for p in ["/usr/sbin/tailscaled", "/usr/local/sbin/tailscaled",
-                                     "/usr/bin/tailscaled"] if os.path.exists(p)), None))
+    _tsd_bin = shutil.which("tailscaled") or next(
+        (
+            p
+            for p in ["/usr/sbin/tailscaled", "/usr/local/sbin/tailscaled", "/usr/bin/tailscaled"]
+            if os.path.exists(p)
+        ),
+        None,
+    )
     if not _tsd_bin:
         _p("  ❌ tailscaled binary not found — skipping Tailscale")
     else:
         if _tun_ok:
             os.system(f"nohup {_tsd_bin} --state={_TS_STATE_FILE} > /tmp/tailscaled.log 2>&1 &")
         else:
-            os.system(f"nohup {_tsd_bin} --state={_TS_STATE_FILE}"
-                      f" --tun=userspace-networking --socks5-server=localhost:1055"
-                      f" > /tmp/tailscaled.log 2>&1 &")
+            os.system(
+                f"nohup {_tsd_bin} --state={_TS_STATE_FILE}"
+                f" --tun=userspace-networking --socks5-server=localhost:1055"
+                f" > /tmp/tailscaled.log 2>&1 &"
+            )
         time.sleep(3)
 
         # 4. Authenticate
         _ts_bin = shutil.which("tailscale") or "/usr/bin/tailscale"
-        _p(f"  Connecting as '{_NODE_IDENTITY}' "
-           f"({'reconnecting existing node' if _ts_state_restored else 'fresh registration'})…")
+        _p(
+            f"  Connecting as '{_NODE_IDENTITY}' "
+            f"({'reconnecting existing node' if _ts_state_restored else 'fresh registration'})…"
+        )
         _ts_up_args = [
-            _ts_bin, "up",
+            _ts_bin,
+            "up",
             f"--authkey={TS_AUTH_KEY}",
             f"--hostname={_NODE_IDENTITY}",
-            "--accept-routes", "--ssh",
+            "--accept-routes",
+            "--ssh",
         ]
         if not _ts_state_restored:
             _ts_up_args.append("--reset")
         _ts_up = subprocess.run(_ts_up_args, capture_output=True, text=True, timeout=90)
         if _ts_up.returncode == 0:
             time.sleep(3)
-            _ip_out = subprocess.run([_ts_bin, "ip", "-4"],
-                                      capture_output=True, text=True, timeout=5)
+            _ip_out = subprocess.run(
+                [_ts_bin, "ip", "-4"], capture_output=True, text=True, timeout=5
+            )
             _my_ts_ip = _ip_out.stdout.strip()
             _ts_online = bool(_my_ts_ip)
-            _p(f"  ✅ Tailscale connected: {_my_ts_ip}" if _ts_online
-               else "  ⚠️  tailscale up OK but no IP returned")
+            _p(
+                f"  ✅ Tailscale connected: {_my_ts_ip}"
+                if _ts_online
+                else "  ⚠️  tailscale up OK but no IP returned"
+            )
         else:
             _ts_err = (_ts_up.stdout + _ts_up.stderr).strip()
             _p(f"  ⚠️  tailscale up failed (rc={_ts_up.returncode}): {_ts_err[:200]}")
@@ -668,10 +737,12 @@ else:
         # 5. SSH pubkey: store on Drive FUSE (primary) or XIOSYNC API (fallback)
         try:
             import urllib.request as _urq  # noqa: PLC0415
+
             _node_pubkey = open(f"{_NODE_SSH_ID}.pub").read().strip()
             if _XIO_FS is not None:
-                _XIO_FS.put(f"ssh_pubkeys/{_NODE_IDENTITY}.pub",
-                            _node_pubkey.encode(), skip_if_same=True)
+                _XIO_FS.put(
+                    f"ssh_pubkeys/{_NODE_IDENTITY}.pub", _node_pubkey.encode(), skip_if_same=True
+                )
             else:
                 _pk_req = _urq.Request(
                     f"{ASSET_BASE}/api/v1/workers/ssh-pubkey/{_NODE_IDENTITY}",
@@ -687,25 +758,30 @@ else:
         if _ts_online and os.path.exists(_TS_STATE_FILE):
             try:
                 import urllib.request as _urq  # noqa: PLC0415
+
                 _state_bytes = open(_TS_STATE_FILE, "rb").read()
 
                 if _XIO_FS is not None:
                     _written = _XIO_FS.put(_ts_key, _state_bytes, skip_if_same=True)
-                    _p("  ✅ TS state saved to Drive FUSE" + (" (unchanged)" if not _written else ""))
+                    _p(
+                        "  ✅ TS state saved to Drive FUSE"
+                        + (" (unchanged)" if not _written else "")
+                    )
                 else:
                     _encoded_save = _ts_key.replace("/", "__")
                     _save_req = _urq.Request(
                         f"{ASSET_BASE}/api/v1/workers/ts-state/{_encoded_save}",
                         data=_state_bytes,
-                        headers={"Content-Type": "application/octet-stream",
-                                 "X-Worker-Secret": WORKER_SECRET},
+                        headers={
+                            "Content-Type": "application/octet-stream",
+                            "X-Worker-Secret": WORKER_SECRET,
+                        },
                         method="PUT",
                     )
                     _urq.urlopen(_save_req, timeout=10)
                     _p(f"  ✅ TS state saved via XIOSYNC API ({_ts_key})")
             except Exception as _se:
                 _p(f"  ℹ️  TS state save skipped ({_se.__class__.__name__}: {_se})")
-
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -721,7 +797,7 @@ _PYTHON_DEPS = [
     # level — proven to pass Google bot-detection where CDP-based approaches fail.
     # User directive: UC is the ONLY active browser engine in Colab.
     "undetected-chromedriver>=3.5.5",
-    "pyotp>=2.9",              # TOTP-based 2FA for UC login
+    "pyotp>=2.9",  # TOTP-based 2FA for UC login
     "selenium>=4.18",
     # ── Agent / API framework ─────────────────────────────────────────────────
     "fastapi[standard]>=0.111",
@@ -731,14 +807,14 @@ _PYTHON_DEPS = [
     "pydantic>=2.7",
     "structlog>=24.1",
     "google-generativeai>=0.8",  # AIHealer Tier-10 Gemini LLM provider
-    "Pillow>=10.0",              # JPEG screenshots via uc_snap()
+    "Pillow>=10.0",  # JPEG screenshots via uc_snap()
     "patchright>=1.49.1",
-     "psycopg[binary]>=3.1",     # async PG advisory locks in _execute_dag_run (P0-5)
+    "psycopg[binary]>=3.1",  # async PG advisory locks in _execute_dag_run (P0-5)
 ]
 
 
 # ── Drive cache fast-path: extract pre-bundled wheels from Drive FUSE ──────────
-_PY_CACHE_KEY  = "cache/python/stealth-pkgs-v2.tar.gz"  # v2 includes pyotp + undetected-chromedriver
+_PY_CACHE_KEY = "cache/python/stealth-pkgs-v2.tar.gz"  # v2 includes pyotp + undetected-chromedriver
 _PY_CACHE_PATH = None
 if _XIO_FS is not None:
     _py_drive_path = os.path.join(_drive_root, _PY_CACHE_KEY)
@@ -756,8 +832,9 @@ if _XIO_FS is not None:
             pass
 
 if _PY_CACHE_PATH and os.path.exists(_PY_CACHE_PATH):
-    _p(f"  ⚡ Drive cache hit — extracting Python wheels from Drive…")
+    _p("  ⚡ Drive cache hit — extracting Python wheels from Drive…")
     import tarfile as _tf
+
     _wheel_dir = "/tmp/xio-pkgs"
     os.makedirs(_wheel_dir, exist_ok=True)
     with _tf.open(_PY_CACHE_PATH, "r:gz") as _tar:
@@ -765,16 +842,16 @@ if _PY_CACHE_PATH and os.path.exists(_PY_CACHE_PATH):
     _deps_str = " ".join(f'"{d}"' for d in _PYTHON_DEPS)
     _p(f"  Installing {len(_PYTHON_DEPS)} packages from local wheels…")
     rc = _run(
-        f"\"{sys.executable}\" -m pip install -q --no-index --find-links {_wheel_dir} {_deps_str} 2>&1 | tail -2",
+        f'"{sys.executable}" -m pip install -q --no-index --find-links {_wheel_dir} {_deps_str} 2>&1 | tail -2',
         timeout=120,
     )
     if rc != 0:
         _p("  ⚠️  Offline install failed — falling back to PyPI…")
-        rc = _run(f"\"{sys.executable}\" -m pip install -q {_deps_str} 2>&1 | tail -4", timeout=300)
+        rc = _run(f'"{sys.executable}" -m pip install -q {_deps_str} 2>&1 | tail -4', timeout=300)
 else:
     _p(f"  Installing {len(_PYTHON_DEPS)} Python packages from PyPI…")
     _deps_str = " ".join(f'"{d}"' for d in _PYTHON_DEPS)
-    rc = _run(f"\"{sys.executable}\" -m pip install -q {_deps_str} 2>&1 | tail -4", timeout=300)
+    rc = _run(f'"{sys.executable}" -m pip install -q {_deps_str} 2>&1 | tail -4', timeout=300)
 
 _p(f"  {'✅' if rc == 0 else '⚠️ '} pip install {'OK' if rc == 0 else 'had warnings (check above)'}")
 
@@ -787,10 +864,11 @@ _p("  Phase 2.5: Antigravity Auth Restore")
 _p("═" * 60)
 
 _agy_drive_root = _drive_root or "/content/drive/MyDrive/XIOSYNC-Shared"
-_agy_cache_dir  = os.path.join(_agy_drive_root, "cache")
+_agy_cache_dir = os.path.join(_agy_drive_root, "cache")
 # Try account-bound backup first (agy-credentials-{email_slug}.tar.gz),
 # fall back to the generic agy-credentials.tar.gz
 import glob as _agy_glob
+
 _acct_tars = sorted(_agy_glob.glob(os.path.join(_agy_cache_dir, "agy-credentials-*.tar.gz")))
 if _acct_tars:
     _agy_creds_tar = _acct_tars[-1]  # most recently saved
@@ -800,6 +878,7 @@ else:
 if os.path.isfile(_agy_creds_tar):
     try:
         import tarfile as _agy_tf
+
         # Auto-detect tar format by peeking at first entry:
         #   New tars (saved by xiorun_agent ≥ commit 6885484): root is .gemini/antigravity-cli/
         #     → extract to /root/ so it lands at /root/.gemini/antigravity-cli/
@@ -814,11 +893,13 @@ if os.path.isfile(_agy_creds_tar):
         _p(f"  ⚠️  agy tar peek failed: {_agy_ex} — extracting to /root/.gemini/")
         os.makedirs("/root/.gemini", exist_ok=True)
         _run(f"tar xzf {_agy_creds_tar} -C /root/.gemini/", silent=True)
-    _agy_test = _run("PATH=/root/.local/bin:/usr/local/bin:$PATH agy --version 2>&1", capture=True, silent=True)
+    _agy_test = _run(
+        "PATH=/root/.local/bin:/usr/local/bin:$PATH agy --version 2>&1", capture=True, silent=True
+    )
     if _agy_test and "authentication required" not in str(_agy_test):
         _p(f"  ✅ agy auth restored ({_agy_test.strip().split(chr(10))[0]})")
     else:
-        _p(f"  ⚠️  agy auth restore failed or token invalid — will need OAuth")
+        _p("  ⚠️  agy auth restore failed or token invalid — will need OAuth")
 else:
     _p(f"  ⚠️  no agy credentials at {_agy_creds_tar} — will need OAuth")
 
@@ -846,14 +927,20 @@ _UC_CHROME_PATHS = [
 _uc_chrome_found = next((p for p in _UC_CHROME_PATHS if os.path.isfile(p)), None)
 if not _uc_chrome_found:
     import shutil as _sh  # noqa: PLC0415
-    _uc_chrome_found = _sh.which("google-chrome") or _sh.which("chromium-browser") or _sh.which("chromium")
+
+    _uc_chrome_found = (
+        _sh.which("google-chrome") or _sh.which("chromium-browser") or _sh.which("chromium")
+    )
 
 if _uc_chrome_found:
     try:
-        _chrome_ver = subprocess.check_output(
-            [_uc_chrome_found, "--version"], timeout=5,
-            stderr=subprocess.DEVNULL
-        ).decode().strip()
+        _chrome_ver = (
+            subprocess.check_output(
+                [_uc_chrome_found, "--version"], timeout=5, stderr=subprocess.DEVNULL
+            )
+            .decode()
+            .strip()
+        )
         _p(f"  ✅ System Chrome ready: {_chrome_ver} → {_uc_chrome_found}")
     except Exception:
         _p(f"  ✅ System Chrome found at {_uc_chrome_found}")
@@ -865,20 +952,25 @@ else:
 
 # ── Patchright patched Chromium ──────────────────────────────────
 # Phase 3b-pre: Restore patchright cache from Drive (saves ~15-30s download)
-_PATCHRIGHT_CACHE_TAR = os.path.join(_drive_root or "/content/drive/MyDrive/XIOSYNC-Shared", "cache", "patchright-cache.tar.gz")
+_PATCHRIGHT_CACHE_TAR = os.path.join(
+    _drive_root or "/content/drive/MyDrive/XIOSYNC-Shared", "cache", "patchright-cache.tar.gz"
+)
 if os.path.isfile(_PATCHRIGHT_CACHE_TAR):
     try:
         import tarfile as _pr_tf
+
         _p("  📦 Restoring patchright cache from Drive...")
         with _pr_tf.open(_PATCHRIGHT_CACHE_TAR, "r:gz") as _pr_tar:
             _pr_tar.extractall(path="/root/.cache")
-        _p(f"  ✅ Patchright cache restored from Drive ({os.path.getsize(_PATCHRIGHT_CACHE_TAR)//1024//1024}MB)")
+        _p(
+            f"  ✅ Patchright cache restored from Drive ({os.path.getsize(_PATCHRIGHT_CACHE_TAR) // 1024 // 1024}MB)"
+        )
     except Exception as _pr_restore_err:
         _p(f"  ⚠️  Patchright cache restore failed (non-fatal): {_pr_restore_err}")
 else:
     _p("  ℹ️  No patchright Drive cache found — will download fresh")
 
-_PR_BOOT_URL  = f"{ASSET_BASE}/api/v1/workers/patchright-boot.py"
+_PR_BOOT_URL = f"{ASSET_BASE}/api/v1/workers/patchright-boot.py"
 _PR_BOOT_PATH = "/tmp/patchright_boot.py"
 try:
     with open(_PR_BOOT_PATH, "wb") as _pbf_out:
@@ -890,11 +982,6 @@ try:
     _p(f"  ✅ Phase 3b: Patchright ready ({_pr_cache})")
 except Exception as exc:
     _p(f"  ⚠️  Patchright setup failed (non-fatal): {exc}")
-
-
-
-
-
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -909,6 +996,7 @@ _ENROLLMENT_ID: str | None = None
 
 def _xiosync_post(path: str, data: dict, *, timeout: int = 15) -> dict:
     import urllib.request as _urq  # noqa
+
     # Use ASSET_BASE (bootstrap/tunnel URL) so this works before Tailscale connects.
     # After Tailscale, heartbeats switch to XIOSYNC_BASE directly.
     _base = ASSET_BASE or XIOSYNC_BASE
@@ -916,7 +1004,7 @@ def _xiosync_post(path: str, data: dict, *, timeout: int = 15) -> dict:
         f"{_base}{path}",
         data=json.dumps(data).encode(),
         headers={
-            "Content-Type":  "application/json",
+            "Content-Type": "application/json",
             "Authorization": f"Bearer {XIOSYNC_TOKEN}",
         },
         method="POST",
@@ -931,9 +1019,9 @@ if XIOSYNC_BASE and WORKER_SECRET:
             "/api/v1/workers/self-enroll",
             {
                 "worker_org_secret": WORKER_SECRET,
-                "runtime_type":      "colab",
-                "tailscale_ip":      _my_ts_ip,
-                "reported_caps":     [
+                "runtime_type": "colab",
+                "tailscale_ip": _my_ts_ip,
+                "reported_caps": [
                     "browser.run",
                     "xiorun.agent",
                     "xioflow.execute",
@@ -942,8 +1030,10 @@ if XIOSYNC_BASE and WORKER_SECRET:
             },
         )
         _ENROLLMENT_ID = _enr.get("enrollment_id")
-        _p(f"  ✅ Self-enrolled: enrollment_id={_ENROLLMENT_ID} "
-           f"state={_enr.get('enrollment_state')}")
+        _p(
+            f"  ✅ Self-enrolled: enrollment_id={_ENROLLMENT_ID} "
+            f"state={_enr.get('enrollment_state')}"
+        )
     except Exception as _err:
         _p(f"  ⚠️  Self-enroll failed (non-fatal): {_err}")
 else:
@@ -955,16 +1045,19 @@ def _heartbeat_loop() -> None:
     if not (_ENROLLMENT_ID and XIOSYNC_BASE):
         return
     import urllib.request as _urq  # noqa
+
     while True:
         try:
             req = _urq.Request(
                 f"{XIOSYNC_BASE}/api/v1/workers/{_ENROLLMENT_ID}/heartbeat",
-                data=json.dumps({
-                    "tailscale_ip": _my_ts_ip,
-                    "reported_caps": ["browser.run", "xiorun.agent", "xioflow.execute"],
-                }).encode(),
+                data=json.dumps(
+                    {
+                        "tailscale_ip": _my_ts_ip,
+                        "reported_caps": ["browser.run", "xiorun.agent", "xioflow.execute"],
+                    }
+                ).encode(),
                 headers={
-                    "Content-Type":  "application/json",
+                    "Content-Type": "application/json",
                     "Authorization": f"Bearer {XIOSYNC_TOKEN}",
                 },
                 method="POST",
@@ -999,9 +1092,10 @@ _AGENT_PATH = "/tmp/xiorun_agent.py"
 _fetched = False
 try:
     import urllib.request as _urq  # noqa
+
     _urq.urlretrieve(_AGENT_URL, _AGENT_PATH)
     _fetched = True
-    _p(f"  ✅ Fetched xiorun_agent.py from XIOSYNC")
+    _p("  ✅ Fetched xiorun_agent.py from XIOSYNC")
 except Exception as _fe:
     _p(f"  ⚠️  Could not fetch xiorun_agent.py from XIOSYNC ({_fe}) — checking local copy…")
     # Fallback: local copy bundled in the Colab environment
@@ -1018,33 +1112,33 @@ _agent_proc: subprocess.Popen | None = None
 if _fetched:
     _agent_env = {
         **os.environ,
-        "XIORUN_AGENT_PORT":        str(XIORUN_PORT),
-        "XIORUN_R2_ENDPOINT":       R2_ENDPOINT,
-        "XIORUN_R2_BUCKET":         R2_BUCKET,
-        "XIORUN_R2_ACCESS_KEY":     R2_ACCESS_KEY,
-        "XIORUN_R2_SECRET_KEY":     R2_SECRET_KEY,
-        "XIORUN_XIOSYNC_BASE":      XIOSYNC_BASE,
-        "XIORUN_XIOSYNC_TOKEN":     INTERNAL_SECRET,  # Colab → XIOSYNC internal secret
-        "XIO_NODE_NAME":            NODE_NAME,         # legacy key
+        "XIORUN_AGENT_PORT": str(XIORUN_PORT),
+        "XIORUN_R2_ENDPOINT": R2_ENDPOINT,
+        "XIORUN_R2_BUCKET": R2_BUCKET,
+        "XIORUN_R2_ACCESS_KEY": R2_ACCESS_KEY,
+        "XIORUN_R2_SECRET_KEY": R2_SECRET_KEY,
+        "XIORUN_XIOSYNC_BASE": XIOSYNC_BASE,
+        "XIORUN_XIOSYNC_TOKEN": INTERNAL_SECRET,  # Colab → XIOSYNC internal secret
+        "XIO_NODE_NAME": NODE_NAME,  # legacy key
         # ── profile_store / XIODriveFS init ──────────────────────────────────
-        "XIOSYNC_BASE":             XIOSYNC_BASE,
-        "WORKER_SECRET":            WORKER_SECRET,
-        "NODE_NAME":                NODE_NAME,
-        "XIO_DRIVE_ROOT":           _drive_root or "/content/drive/MyDrive/XIOSYNC-Shared",
+        "XIOSYNC_BASE": XIOSYNC_BASE,
+        "WORKER_SECRET": WORKER_SECRET,
+        "NODE_NAME": NODE_NAME,
+        "XIO_DRIVE_ROOT": _drive_root or "/content/drive/MyDrive/XIOSYNC-Shared",
         # Chrome location (UC auto-downloaded or system Chrome)
         "PLAYWRIGHT_BROWSERS_PATH": os.path.expanduser("~/.cache/ms-patchright"),
         # ── SSH SOCKS5 exit node: route Chrome through Mac's residential IP ───
         # XIORUN_PROXY_SSH_HOST = Mac Tailscale IP (100.86.149.127)
         # Agent will SSH -D to this host on startup to create socks5://127.0.0.1:19056
-        "XIORUN_PROXY_SSH_HOST":    C.get("proxy_ssh_host", ""),
-        "XIORUN_PROXY_SSH_USER":    C.get("proxy_ssh_user", ""),
-        "XIORUN_PROXY_SSH_KEY":     "/root/.ssh/xio_proxy_key",
-        "XIORUN_PROXY_LOCAL_PORT":  "19056",  # 1055 conflicts with tailscaled userspace
+        "XIORUN_PROXY_SSH_HOST": C.get("proxy_ssh_host", ""),
+        "XIORUN_PROXY_SSH_USER": C.get("proxy_ssh_user", ""),
+        "XIORUN_PROXY_SSH_KEY": "/root/.ssh/xio_proxy_key",
+        "XIORUN_PROXY_LOCAL_PORT": "19056",  # 1055 conflicts with tailscaled userspace
         # ── WS SOCKS5 bridge (primary — bypasses Tailscale ACL via XIOSYNC HTTPS) ──
-        "XIORUN_INTERNAL_SECRET":   INTERNAL_SECRET,
-        "XIORUN_PPPOE_PROXY":       C.get("pppoe_proxy", ""),
+        "XIORUN_INTERNAL_SECRET": INTERNAL_SECRET,
+        "XIORUN_PPPOE_PROXY": C.get("pppoe_proxy", ""),
         # ─────────────────────────────────────────────────────────────────────
-        "DISPLAY":                  ":99",
+        "DISPLAY": ":99",
     }
 
     # ── Write SSH proxy private key so agent can SSH to Mac ──────────────────
@@ -1070,6 +1164,7 @@ if _fetched:
         time.sleep(0.5)
         try:
             import urllib.request as _urq  # noqa
+
             _health = json.loads(
                 _urq.urlopen(f"http://127.0.0.1:{XIORUN_PORT}/health", timeout=2).read()
             )
@@ -1080,11 +1175,15 @@ if _fetched:
             pass
 
     if _ready:
-        _p(f"  ✅ xiorun_agent ready on :{XIORUN_PORT} "
-           f"(PID {_agent_proc.pid}) — Tailscale: {_my_ts_ip}:{XIORUN_PORT}")
+        _p(
+            f"  ✅ xiorun_agent ready on :{XIORUN_PORT} "
+            f"(PID {_agent_proc.pid}) — Tailscale: {_my_ts_ip}:{XIORUN_PORT}"
+        )
     else:
-        _p(f"  ⚠️  xiorun_agent started (PID {_agent_proc.pid}) but health check timed out "
-           f"— see /tmp/xiorun_agent.log")
+        _p(
+            f"  ⚠️  xiorun_agent started (PID {_agent_proc.pid}) but health check timed out "
+            f"— see /tmp/xiorun_agent.log"
+        )
 
 
 # ════════════════════════════════════════════════════════════════════════════════
@@ -1096,6 +1195,7 @@ _p("═" * 60)
 
 
 import random as _rand  # noqa: PLC0415
+
 _BOOT_GEN = _rand.randint(100000, 999999)
 with open("/tmp/xio_boot_gen", "w") as _bg:
     _bg.write(str(_BOOT_GEN))
@@ -1147,6 +1247,7 @@ if "authentication required" in str(_agy_test):
     _p("  ⚠️  agy auth missing — triggering browser login flow via /ai/install-agy")
     try:
         import urllib.request as _urq
+
         req = _urq.Request("http://127.0.0.1:9300/ai/install-agy", method="POST")
         _urq.urlopen(req, timeout=10)
     except Exception as e:
@@ -1154,12 +1255,11 @@ if "authentication required" in str(_agy_test):
 else:
     _p("  ✅ agy already authenticated")
 
-_p(f"\n" + "═" * 60)
-_p(f"  Boot complete ✅")
+_p("\n" + "═" * 60)
+_p("  Boot complete ✅")
 _p(f"  Node:          {NODE_NAME}")
 _p(f"  Tailscale IP:  {_my_ts_ip or 'not connected'}")
 _p(f"  XIOSYNC:       {XIOSYNC_BASE or BOOTSTRAP_XIOSYNC_BASE or 'not configured'}")
 _p(f"  xiorun_agent:  :{XIORUN_PORT} (PID {_agent_proc.pid if _agent_proc else 'N/A'})")
 _p(f"  Enrollment ID: {_ENROLLMENT_ID or 'not enrolled'}")
 _p("═" * 60 + "\n")
-

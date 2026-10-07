@@ -117,6 +117,7 @@ class ActorService:
         """
         actor_id = new_id()
         from datetime import UTC
+
         now = datetime.now(UTC)
 
         actor = Actor(
@@ -212,9 +213,7 @@ class ActorService:
         limit: int = 50,
     ) -> list[ActorRecord]:
         """List actors in the current organization with optional filters."""
-        query = select(Actor).where(
-            Actor.organization_id == context.organization_id
-        )
+        query = select(Actor).where(Actor.organization_id == context.organization_id)
         if actor_type is not None:
             query = query.where(Actor.actor_type == actor_type)
         if state is not None:
@@ -231,9 +230,7 @@ class ActorService:
         actor_type: str | None = None,
     ) -> int:
         """Count actors in the current organization."""
-        query = select(func.count(Actor.id)).where(
-            Actor.organization_id == context.organization_id
-        )
+        query = select(func.count(Actor.id)).where(Actor.organization_id == context.organization_id)
         if actor_type is not None:
             query = query.where(Actor.actor_type == actor_type)
         result = self._session.execute(query).scalar()

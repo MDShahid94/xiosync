@@ -47,9 +47,7 @@ class AuthorizationService:
         if rate_checker is None and self._rate_limiter is not None:
             from xiosync.core.capability_rate import build_rate_checker
 
-            rate_checker = build_rate_checker(
-                self._rate_limiter, context.actor_id, capability
-            )
+            rate_checker = build_rate_checker(self._rate_limiter, context.actor_id, capability)
 
         decision: Decision
         try:
@@ -114,4 +112,3 @@ class AuthorizationService:
                 False, decision.decision_id, "policy_event_emission_failed", decision.grant_id
             )
         return decision
-

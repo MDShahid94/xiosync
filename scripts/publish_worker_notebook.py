@@ -27,6 +27,7 @@ Requirements:
     google-api-python-client  google-auth
     (pip install google-api-python-client google-auth)
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,6 +44,7 @@ sys.path.insert(0, _ROOT)
 def _get_db():
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
+
     url = os.environ["DATABASE_URL"]
     engine = create_engine(url)
     return Session(engine)
@@ -54,8 +56,10 @@ _ORG_ZERO = uuid.UUID("00000000-0000-7000-8000-000000000000")
 def _get_drive_provider(session):
     """Return (folder_id, provider_id, sa_key_json_or_none) from Org Zero's Drive provider."""
     from sqlalchemy import text
-    row = session.execute(
-        text("""
+
+    row = (
+        session.execute(
+            text("""
             SELECT id, config->>'folder_id' AS folder_id, vault_key
             FROM storage_providers
             WHERE organization_id = :org
@@ -63,8 +67,11 @@ def _get_drive_provider(session):
               AND is_default = true
             LIMIT 1
         """),
-        {"org": str(_ORG_ZERO)},
-    ).mappings().first()
+            {"org": str(_ORG_ZERO)},
+        )
+        .mappings()
+        .first()
+    )
     if not row:
         raise SystemExit(
             "No default google_drive storage provider found for Org Zero.\n"
@@ -73,12 +80,14 @@ def _get_drive_provider(session):
 
     sa_credential = None
     if row["vault_key"]:
-        from xiosync.subsystems.vault.service import VaultService
         from xiosync.domain.context import OrgContext
+        from xiosync.subsystems.vault.service import VaultService
+
         ctx = OrgContext(organization_id=_ORG_ZERO, actor_id=uuid.UUID(int=0))
         try:
-            sa_credential = VaultService(session).get_secret(ctx, row["vault_key"],
-                                                              allow_platform=True)
+            sa_credential = VaultService(session).get_secret(
+                ctx, row["vault_key"], allow_platform=True
+            )
         except Exception:
             pass  # Will fall through to Colab ADC
 
@@ -88,6 +97,7 @@ def _get_drive_provider(session):
 def _store_file_id(session, provider_id: str, file_id: str) -> None:
     """Persist the notebook Drive file_id into storage_providers.notebook_file_id."""
     from sqlalchemy import text
+
     session.execute(
         text("""
             UPDATE storage_providers
@@ -102,13 +112,12 @@ def _store_file_id(session, provider_id: str, file_id: str) -> None:
 def _build_drive_service(sa_key_json: str | None):
     """Build a Drive API service using service account or ADC."""
     try:
-        from googleapiclient.discovery import build
-        from google.oauth2 import service_account
         from google.auth import default as google_auth_default
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
     except ImportError:
         raise SystemExit(
-            "Missing dependencies. Run:\n"
-            "  pip install google-api-python-client google-auth"
+            "Missing dependencies. Run:\n  pip install google-api-python-client google-auth"
         )
 
     if sa_key_json:
@@ -117,9 +126,7 @@ def _build_drive_service(sa_key_json: str | None):
             scopes=["https://www.googleapis.com/auth/drive"],
         )
     else:
-        creds, _ = google_auth_default(
-            scopes=["https://www.googleapis.com/auth/drive"]
-        )
+        creds, _ = google_auth_default(scopes=["https://www.googleapis.com/auth/drive"])
 
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
@@ -132,9 +139,7 @@ def _find_existing_file(service, folder_id: str, filename: str) -> str | None:
         f"and mimeType='application/vnd.google.colab' "
         f"and trashed=false"
     )
-    results = service.files().list(
-        q=q, fields="files(id,name)", spaces="drive"
-    ).execute()
+    results = service.files().list(q=q, fields="files(id,name)", spaces="drive").execute()
     files = results.get("files", [])
     return files[0]["id"] if files else None
 
@@ -159,24 +164,32 @@ def _upload_notebook(
 
     if existing_file_id:
         # Update in-place (same file_id → same Colab link stays valid)
-        file = service.files().update(
-            fileId=existing_file_id,
-            body={"name": filename},
-            media_body=media,
-            fields="id",
-        ).execute()
+        file = (
+            service.files()
+            .update(
+                fileId=existing_file_id,
+                body={"name": filename},
+                media_body=media,
+                fields="id",
+            )
+            .execute()
+        )
         print(f"  ✅ Notebook updated in Drive (id={file['id']})")
     else:
         # Create new
-        file = service.files().create(
-            body={
-                "name":    filename,
-                "parents": [folder_id],
-                "mimeType": mime,
-            },
-            media_body=media,
-            fields="id",
-        ).execute()
+        file = (
+            service.files()
+            .create(
+                body={
+                    "name": filename,
+                    "parents": [folder_id],
+                    "mimeType": mime,
+                },
+                media_body=media,
+                fields="id",
+            )
+            .execute()
+        )
         print(f"  ✅ Notebook created in Drive (id={file['id']})")
 
     return file["id"]
@@ -229,7 +242,7 @@ def main() -> None:
             print(f"  ✅ Found: id={file_id}")
             _set_public_read(service, file_id)
             _store_file_id(session, provider_id, file_id)
-            print(f"  ✅ notebook_file_id stored in XIOSYNC DB")
+            print("  ✅ notebook_file_id stored in XIOSYNC DB")
         else:
             # ── Full publish: upload/update then store ───────────────────────
             if not os.path.exists(args.notebook):
@@ -246,16 +259,13 @@ def main() -> None:
             _set_public_read(service, file_id)
             _store_file_id(session, provider_id, file_id)
 
-    colab_url = (
-        f"https://colab.research.google.com/drive/{file_id}"
-        f"#forceEdit=true&sandboxMode=true"
-    )
+    colab_url = f"https://colab.research.google.com/drive/{file_id}#forceEdit=true&sandboxMode=true"
 
     print()
     print("=" * 60)
     print("  ✅ Done!")
     print()
-    print(f"  Colab URL (playground / sandbox mode):")
+    print("  Colab URL (playground / sandbox mode):")
     print(f"  {colab_url}")
     print()
     print("  This URL is permanent — updates publish to the same link.")

@@ -19,9 +19,7 @@ down_revision: str | None = "0012"
 branch_labels = None
 depends_on = None
 
-_ORG_ISOLATION = (
-    "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
-)
+_ORG_ISOLATION = "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
 
 
 def upgrade() -> None:
@@ -92,8 +90,12 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("'active'"),
         ),
-        sa.Column("headers", postgresql.JSONB(astext_type=sa.Text()), nullable=False,
-                  server_default=sa.text("'{}'::jsonb")),
+        sa.Column(
+            "headers",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
         sa.Column(
             "created_at",
             postgresql.TIMESTAMP(timezone=True),
@@ -125,9 +127,7 @@ def upgrade() -> None:
     # RLS
     op.execute("ALTER TABLE webhook_subscriptions ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE webhook_subscriptions FORCE ROW LEVEL SECURITY")
-    op.execute(
-        f"CREATE POLICY org_isolation ON webhook_subscriptions USING ({_ORG_ISOLATION})"
-    )
+    op.execute(f"CREATE POLICY org_isolation ON webhook_subscriptions USING ({_ORG_ISOLATION})")
 
 
 def downgrade() -> None:

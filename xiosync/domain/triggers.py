@@ -24,11 +24,11 @@ TRIGGER_STATES: frozenset[str] = frozenset({"active", "paused", "disabled"})
 
 # Basic cron field ranges for validation.
 _CRON_RANGES = [
-    (0, 59),   # minute
-    (0, 23),   # hour
-    (1, 31),   # day of month
-    (1, 12),   # month
-    (0, 7),    # day of week (0 and 7 = Sunday)
+    (0, 59),  # minute
+    (0, 23),  # hour
+    (1, 31),  # day of month
+    (1, 12),  # month
+    (0, 7),  # day of week (0 and 7 = Sunday)
 ]
 
 
@@ -48,8 +48,7 @@ def validate_trigger_type(trigger_type: str) -> None:
     """Reject unknown trigger types."""
     if trigger_type not in TRIGGER_TYPES:
         raise InvalidTriggerTypeError(
-            f"unknown trigger type {trigger_type!r}; "
-            f"expected one of {sorted(TRIGGER_TYPES)}"
+            f"unknown trigger type {trigger_type!r}; expected one of {sorted(TRIGGER_TYPES)}"
         )
 
 
@@ -57,8 +56,7 @@ def validate_trigger_state(state: str) -> None:
     """Reject invalid trigger states."""
     if state not in TRIGGER_STATES:
         raise InvalidTriggerStateError(
-            f"invalid trigger state {state!r}; "
-            f"expected one of {sorted(TRIGGER_STATES)}"
+            f"invalid trigger state {state!r}; expected one of {sorted(TRIGGER_STATES)}"
         )
 
 
@@ -111,26 +109,18 @@ def _validate_cron_field(field: str, lo: int, hi: int, index: int) -> None:
                 raise InvalidCronExpressionError(f"invalid range in {name}: {base!r}")
             for rp in range_parts:
                 if not rp.isdigit():
-                    raise InvalidCronExpressionError(
-                        f"non-numeric range bound in {name}: {base!r}"
-                    )
+                    raise InvalidCronExpressionError(f"non-numeric range bound in {name}: {base!r}")
                 val = int(rp)
                 if val < lo or val > hi:
-                    raise InvalidCronExpressionError(
-                        f"{name} value {val} out of range [{lo}-{hi}]"
-                    )
+                    raise InvalidCronExpressionError(f"{name} value {val} out of range [{lo}-{hi}]")
             continue
 
         # Plain numeric
         if not base.isdigit():
-            raise InvalidCronExpressionError(
-                f"non-numeric value in {name}: {base!r}"
-            )
+            raise InvalidCronExpressionError(f"non-numeric value in {name}: {base!r}")
         val = int(base)
         if val < lo or val > hi:
-            raise InvalidCronExpressionError(
-                f"{name} value {val} out of range [{lo}-{hi}]"
-            )
+            raise InvalidCronExpressionError(f"{name} value {val} out of range [{lo}-{hi}]")
 
 
 def next_cron_fire(expression: str, after: datetime) -> datetime | None:

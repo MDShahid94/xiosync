@@ -13,14 +13,12 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
-
 from xiosync.api.middleware.rbac import (
     CapabilityDeniedError,
     _check_role,
     require_capability,
 )
 from xiosync.domain.context import MembershipRole, OrgContext, PlatformRole
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -56,6 +54,7 @@ def _make_request(context: OrgContext | None) -> MagicMock:
 # ---------------------------------------------------------------------------
 # _check_role unit tests
 # ---------------------------------------------------------------------------
+
 
 class TestCheckRole:
     """Unit tests for the fast-path role hierarchy check."""
@@ -143,6 +142,7 @@ class TestCheckRole:
 # ---------------------------------------------------------------------------
 # require_capability() async dependency tests
 # ---------------------------------------------------------------------------
+
 
 class TestRequireCapability:
     """Tests for the FastAPI dependency returned by require_capability()."""
@@ -305,9 +305,11 @@ _RBAC_MATRIX = [
 class TestRBACMatrix:
     """Parametrized test covering the full role × capability group matrix."""
 
-    @pytest.mark.parametrize("role,group,expected", _RBAC_MATRIX,
-                             ids=[f"{r.value}-{g}-{'ALLOW' if e else 'DENY'}"
-                                  for r, g, e in _RBAC_MATRIX])
+    @pytest.mark.parametrize(
+        "role,group,expected",
+        _RBAC_MATRIX,
+        ids=[f"{r.value}-{g}-{'ALLOW' if e else 'DENY'}" for r, g, e in _RBAC_MATRIX],
+    )
     def test_rbac_matrix(self, role: MembershipRole, group: str, expected: bool) -> None:
         ctx = _make_context(membership_role=role)
         assert _check_role(ctx, group) is expected

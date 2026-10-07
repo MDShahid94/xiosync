@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement_func = """    def cdp_clear_input():
@@ -30,10 +30,10 @@ replacement_func = """    def cdp_clear_input():
         time.sleep(0.1)"""
 
 code = re.sub(
-    r'    def cdp_clear_input\(\):\n.*?(?=    _mouse_pos = )',
+    r"    def cdp_clear_input\(\):\n.*?(?=    _mouse_pos = )",
     replacement_func + "\n\n",
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

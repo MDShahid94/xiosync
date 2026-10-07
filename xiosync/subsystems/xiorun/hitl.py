@@ -8,18 +8,20 @@ A HITL notice is created when a browser automation step encounters an
 unresolvable challenge (TOTP rejected, unsupported 2FA, CAPTCHA, etc.).
 The workflow blocks until an operator or AI agent resumes it.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from enum import StrEnum
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_HITL_TIMEOUT = 300.0
+
 
 class HITLState(StrEnum):
     PENDING = "PENDING"
@@ -27,10 +29,12 @@ class HITLState(StrEnum):
     EXPIRED = "EXPIRED"
     CANCELLED = "CANCELLED"
 
+
 class HITLResumedBy(StrEnum):
     HUMAN = "HUMAN"
     AI_AGENT = "AI_AGENT"
     TIMEOUT = "TIMEOUT"
+
 
 @dataclass
 class HITLNotice:
@@ -46,6 +50,7 @@ class HITLNotice:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     resumed_at: datetime | None = None
     resumed_by: HITLResumedBy | None = None
+
 
 class HITLNoticeStore:
     def __init__(self):
@@ -66,7 +71,9 @@ class HITLNoticeStore:
             pending = [n for n in pending if n.organization_id == org_id]
         return pending
 
-    def resume(self, notice_id: uuid.UUID, resumed_by: HITLResumedBy = HITLResumedBy.HUMAN) -> HITLNotice:
+    def resume(
+        self, notice_id: uuid.UUID, resumed_by: HITLResumedBy = HITLResumedBy.HUMAN
+    ) -> HITLNotice:
         notice = self.get(notice_id)
         if notice and notice.state == HITLState.PENDING:
             notice.state = HITLState.RESUMED
@@ -88,15 +95,15 @@ class HITLNoticeStore:
         notice = self.get(notice_id)
         if not notice:
             raise ValueError("Notice not found")
-            
+
         if notice.state != HITLState.PENDING:
             return notice
-            
+
         event = self._events.get(notice_id)
         if not event:
             event = asyncio.Event()
             self._events[notice_id] = event
-            
+
         try:
             await asyncio.wait_for(event.wait(), timeout=timeout)
         except TimeoutError:
@@ -104,7 +111,8 @@ class HITLNoticeStore:
             notice.resumed_by = HITLResumedBy.TIMEOUT
             notice.resumed_at = datetime.now(UTC)
             raise TimeoutError("HITL notice expired")
-            
+
         return notice
+
 
 _hitl_store = HITLNoticeStore()

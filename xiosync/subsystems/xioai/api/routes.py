@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from typing import Any
+
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from xiosync.subsystems.xioai.gateway import AIGateway
 
 router = APIRouter(tags=["xioai"])
+
 
 class GenerateRequest(BaseModel):
     description: str
@@ -15,6 +17,7 @@ class GenerateRequest(BaseModel):
     json_schema: dict | None = None
     provider: str | None = None
     timeout: int = 120
+
 
 @router.post("/generate")
 async def generate(req: GenerateRequest) -> dict[str, Any]:
@@ -35,6 +38,7 @@ async def generate(req: GenerateRequest) -> dict[str, Any]:
         "usage": result.usage,
     }
 
+
 @router.get("/providers")
 async def get_providers() -> dict[str, Any]:
     gw = AIGateway()
@@ -42,6 +46,7 @@ async def get_providers() -> dict[str, Any]:
         "available": AIGateway.available_providers(),
         "active": gw.provider_name,
     }
+
 
 @router.get("/status")
 async def get_status() -> dict[str, Any]:

@@ -33,6 +33,7 @@ Usage
     data    = fs.get("ts_states/TS_colab-master.state")
     keys    = fs.list_prefix("ts_states/")
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -46,11 +47,11 @@ from pathlib import Path
 logger = logging.getLogger("xio_drive_fs")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-_LOCK_SUFFIX = ".xiolock"   # advisory lock file extension
-_TMP_SUFFIX  = ".xiotmp"    # atomic write staging extension
-_LOCK_TTL_S  = 60           # seconds before a held lock is considered stale
-_LOCK_WAIT_S = 45           # default timeout waiting to acquire a lock
-_LOCK_POLL_S = 1.2          # polling interval base (+ random jitter)
+_LOCK_SUFFIX = ".xiolock"  # advisory lock file extension
+_TMP_SUFFIX = ".xiotmp"  # atomic write staging extension
+_LOCK_TTL_S = 60  # seconds before a held lock is considered stale
+_LOCK_WAIT_S = 45  # default timeout waiting to acquire a lock
+_LOCK_POLL_S = 1.2  # polling interval base (+ random jitter)
 
 
 class XIODriveFSError(Exception):
@@ -73,11 +74,11 @@ class XIODriveFS:
         drive_fs_root: str = "/content/drive/MyDrive/XIOSYNC-Shared",
         lock_ttl: int = _LOCK_TTL_S,
     ) -> None:
-        self.xiosync_base  = xiosync_base.rstrip("/")
+        self.xiosync_base = xiosync_base.rstrip("/")
         self.worker_secret = worker_secret
-        self.node_name     = node_name
-        self.root          = Path(str(drive_fs_root).strip())   # strip trailing space/newline
-        self.lock_ttl      = lock_ttl
+        self.node_name = node_name
+        self.root = Path(str(drive_fs_root).strip())  # strip trailing space/newline
+        self.lock_ttl = lock_ttl
 
     # ── Path helpers ──────────────────────────────────────────────────────────
 
@@ -104,17 +105,19 @@ class XIODriveFS:
         True=acquired, False=held by another, None=server unreachable.
         """
         import urllib.request as _urq  # noqa: PLC0415
+
         try:
-            body = json.dumps({
-                "resource_key": key,
-                "node_name":    self.node_name,
-                "ttl_seconds":  self.lock_ttl,
-            }).encode()
+            body = json.dumps(
+                {
+                    "resource_key": key,
+                    "node_name": self.node_name,
+                    "ttl_seconds": self.lock_ttl,
+                }
+            ).encode()
             req = _urq.Request(
                 f"{self.xiosync_base}/api/v1/workers/lock/acquire",
                 data=body,
-                headers={"Content-Type": "application/json",
-                         "X-Worker-Secret": self.worker_secret},
+                headers={"Content-Type": "application/json", "X-Worker-Secret": self.worker_secret},
                 method="POST",
             )
             resp = json.loads(_urq.urlopen(req, timeout=5).read())
@@ -126,13 +129,13 @@ class XIODriveFS:
     def _redis_release(self, key: str) -> None:
         """Release XIOSYNC Redis lock (best-effort, never raises)."""
         import urllib.request as _urq  # noqa: PLC0415
+
         try:
             body = json.dumps({"resource_key": key, "node_name": self.node_name}).encode()
             req = _urq.Request(
                 f"{self.xiosync_base}/api/v1/workers/lock/release",
                 data=body,
-                headers={"Content-Type": "application/json",
-                         "X-Worker-Secret": self.worker_secret},
+                headers={"Content-Type": "application/json", "X-Worker-Secret": self.worker_secret},
                 method="POST",
             )
             _urq.urlopen(req, timeout=5)
@@ -157,8 +160,14 @@ class XIODriveFS:
             if not lpath.exists():
                 try:
                     with open(lpath, "x") as f:
-                        json.dump({"node": self.node_name, "acquired_at": time.time(),
-                                   "ttl": self.lock_ttl}, f)
+                        json.dump(
+                            {
+                                "node": self.node_name,
+                                "acquired_at": time.time(),
+                                "ttl": self.lock_ttl,
+                            },
+                            f,
+                        )
                     return True
                 except FileExistsError:
                     pass
@@ -189,7 +198,7 @@ class XIODriveFS:
         Returns lock mode string: 'redis' or 'fs'.
         """
         deadline = time.monotonic() + timeout
-        use_fs   = False
+        use_fs = False
 
         while time.monotonic() < deadline:
             if use_fs:
@@ -201,7 +210,9 @@ class XIODriveFS:
             if result is True:
                 return "redis"
             if result is None:
-                logger.warning("XIOSYNC lock server unreachable -- falling back to .xiolock for %r", key)
+                logger.warning(
+                    "XIOSYNC lock server unreachable -- falling back to .xiolock for %r", key
+                )
                 use_fs = True
                 continue
             # False = held by another node; wait and retry
@@ -234,7 +245,7 @@ class XIODriveFS:
         Returns True if written, False if skipped (identical content).
         Uses atomic tmp+rename to prevent partial writes.
         """
-        dest      = self._abspath(key)
+        dest = self._abspath(key)
         new_cksum = self.checksum(data)
 
         # Fast-path dedup (no lock needed)
@@ -320,6 +331,7 @@ class XIODriveFS:
 
 # ── Drive mount helper (called from boot.py) ──────────────────────────────────
 
+
 def mount_drive_and_ensure_shortcut(
     *,
     folder_id: str,
@@ -340,12 +352,15 @@ def mount_drive_and_ensure_shortcut(
       All blob I/O: ZERO Drive API quota -- pure FUSE filesystem operations
     """
     try:
-        from google.colab import auth as _auth, drive as _drive  # noqa: PLC0415
-        import google.auth as _gauth                             # noqa: PLC0415
-        from googleapiclient.discovery import build as _build   # noqa: PLC0415
+        import google.auth as _gauth  # noqa: PLC0415
+        from google.colab import auth as _auth  # noqa: PLC0415
+        from google.colab import drive as _drive
+        from googleapiclient.discovery import build as _build  # noqa: PLC0415
 
         _auth.authenticate_user()
-        import os as _os, shutil as _shu  # noqa: PLC0415
+        import os as _os
+        import shutil as _shu  # noqa: PLC0415
+
         # force_remount=True alone is insufficient: Colab pre-populates /content/drive
         # with files (.shortcut-targets-by-id, etc.) before the user mounts Drive.
         # drive.mount() raises ValueError if ANY files exist in the mountpoint.
@@ -368,25 +383,31 @@ def mount_drive_and_ensure_shortcut(
             _drive.mount(mount_point, force_remount=False)
             print(f"  ✅ Drive mounted at {mount_point}", flush=True)
 
-
         _creds, _ = _gauth.default()
         _svc = _build("drive", "v3", credentials=_creds)
 
-        _existing = _svc.files().list(
-            q=(f"name='{shortcut_name}' "
-               f"and mimeType='application/vnd.google-apps.shortcut' "
-               f"and trashed=false"),
-            fields="files(id,name)",
-            spaces="drive",
-        ).execute().get("files", [])
+        _existing = (
+            _svc.files()
+            .list(
+                q=(
+                    f"name='{shortcut_name}' "
+                    f"and mimeType='application/vnd.google-apps.shortcut' "
+                    f"and trashed=false"
+                ),
+                fields="files(id,name)",
+                spaces="drive",
+            )
+            .execute()
+            .get("files", [])
+        )
 
         if not _existing:
             _svc.files().create(
                 body={
-                    "name":     shortcut_name,
+                    "name": shortcut_name,
                     "mimeType": "application/vnd.google-apps.shortcut",
                     "shortcutDetails": {"targetId": folder_id},
-                    "parents":  ["root"],
+                    "parents": ["root"],
                 },
                 fields="id,name",
             ).execute()

@@ -43,14 +43,15 @@ class WebhookSubscription(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
     )  # IMM
     url: Mapped[str] = mapped_column(Text, nullable=False)
     event_types: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     signing_secret: Mapped[str] = mapped_column(Text, nullable=False)
-    state: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'active'")
-    )
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
     headers: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )

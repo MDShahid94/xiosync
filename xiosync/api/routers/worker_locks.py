@@ -20,6 +20,7 @@ Why Redis / PostgreSQL Advisory Locks?
   - PostgreSQL advisory locks provide session-level auto-release if connection drops.
   - Filesystem flock() does NOT propagate across different VMs.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -53,6 +54,7 @@ def _get_db_engine() -> Any:
     """Retrieve application database engine singleton."""
     try:
         from xiosync.persistence.engine import get_engine  # noqa: PLC0415
+
         eng = get_engine()
         if eng is not None:
             return eng
@@ -60,6 +62,7 @@ def _get_db_engine() -> Any:
         pass
     try:
         from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
+
         eng = get_engine()
         if eng is not None:
             return eng
@@ -71,13 +74,14 @@ def _get_db_engine() -> Any:
 # ── Redis setup ───────────────────────────────────────────────────────────────
 
 _REDIS_KEY_PREFIX = "xio:objlock:"
-_DEFAULT_TTL_S    = 60
-_MAX_TTL_S        = 300
+_DEFAULT_TTL_S = 60
+_MAX_TTL_S = 300
 
 
 def _get_redis():
     """Return a Redis client using REDIS_URL env var."""
     import redis as _redis  # noqa: PLC0415
+
     url = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
     return _redis.Redis.from_url(url, decode_responses=True, socket_timeout=3)
 
@@ -95,6 +99,7 @@ def _worker_secret_ok(x_worker_secret: str | None) -> bool:
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
+
 
 class _Base(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -120,13 +125,13 @@ class AcquireRequest(_Base):
 class AcquireResponse(_Base):
     model_config = ConfigDict(extra="ignore")
     acquired: bool
-    holder:   str | None = None   # node that currently holds the lock (if not acquired)
+    holder: str | None = None  # node that currently holds the lock (if not acquired)
     ttl_seconds: int | None = None
 
 
 class ReleaseRequest(_Base):
     resource_key: str = Field(max_length=512)
-    node_name: str    = Field(max_length=128)
+    node_name: str = Field(max_length=128)
 
 
 class ReleaseResponse(_Base):
@@ -144,6 +149,7 @@ class LockStatusResponse(_Base):
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
 
 @router.post(
     "/workers/lock/acquire",
@@ -167,11 +173,13 @@ def acquire_lock(
     try:
         r = _get_redis()
         rkey = _redis_key(payload.resource_key)
-        value = json.dumps({
-            "node":        payload.node_name,
-            "acquired_at": time.time(),
-            "resource":    payload.resource_key,
-        })
+        value = json.dumps(
+            {
+                "node": payload.node_name,
+                "acquired_at": time.time(),
+                "resource": payload.resource_key,
+            }
+        )
 
         # SET key value NX EX ttl  (atomic: only sets if key doesn't exist)
         acquired = r.set(rkey, value, nx=True, ex=payload.ttl_seconds)
@@ -179,7 +187,9 @@ def acquire_lock(
         if acquired:
             logger.debug(
                 "lock.acquired resource=%r node=%r ttl=%d",
-                payload.resource_key, payload.node_name, payload.ttl_seconds,
+                payload.resource_key,
+                payload.node_name,
+                payload.ttl_seconds,
             )
             return AcquireResponse(
                 acquired=True,
@@ -197,7 +207,9 @@ def acquire_lock(
                     holder = str(raw)[:64]
             logger.debug(
                 "lock.denied resource=%r requested_by=%r holder=%r",
-                payload.resource_key, payload.node_name, holder,
+                payload.resource_key,
+                payload.node_name,
+                holder,
             )
             return AcquireResponse(
                 acquired=False,
@@ -295,6 +307,7 @@ def lock_status(
 
 # ── PostgreSQL Advisory Lock Endpoints ────────────────────────────────────────
 
+
 @router.post(
     "/workers/lock/pg/acquire",
     response_model=AcquireResponse,
@@ -324,7 +337,8 @@ def pg_acquire_lock(
         if acquired:
             logger.debug(
                 "lock.pg_acquired resource=%r node=%r",
-                payload.resource_key, payload.node_name,
+                payload.resource_key,
+                payload.node_name,
             )
             return AcquireResponse(
                 acquired=True,
@@ -335,7 +349,9 @@ def pg_acquire_lock(
             holder = get_lock_holder(engine, payload.resource_key)
             logger.debug(
                 "lock.pg_denied resource=%r requested_by=%r holder=%r",
-                payload.resource_key, payload.node_name, holder,
+                payload.resource_key,
+                payload.node_name,
+                holder,
             )
             return AcquireResponse(
                 acquired=False,
@@ -379,7 +395,8 @@ def pg_release_lock_endpoint(
         if released:
             logger.debug(
                 "lock.pg_released resource=%r node=%r",
-                payload.resource_key, payload.node_name,
+                payload.resource_key,
+                payload.node_name,
             )
             return ReleaseResponse(released=True)
         else:
@@ -422,4 +439,3 @@ def pg_lock_status(
     except Exception as exc:
         logger.exception("lock.pg_status_error resource=%r", resource_key)
         raise HTTPException(status_code=503, detail=f"Lock service error: {exc}") from exc
-

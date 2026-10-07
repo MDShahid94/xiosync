@@ -7,6 +7,7 @@ Sensitive values (tokens, passwords) are NOT stored here — they reference
 vault_key paths in vaulted_secrets. The config is the non-sensitive runtime
 parameters: ports, paths, feature flags, provider names, etc.
 """
+
 from alembic import op
 
 revision = "0037"

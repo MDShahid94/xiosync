@@ -10,13 +10,15 @@ async task. The registry is the single source of truth for:
 Thread-safety: all public methods use asyncio.Lock to prevent race
 conditions during concurrent WebSocket connect/disconnect events.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 from xiosync.subsystems.xioview.protocol import (
     MODE_CDP_DOM_SNAPSHOT,
@@ -31,14 +33,23 @@ logger = logging.getLogger(__name__)
 # Re-export mode constants for backward compatibility
 # (other modules may import these from registry)
 __all__ = [
-    "MODE_SCREENSHOT", "MODE_CDP_SCREENCAST", "MODE_DOM_STREAM",
-    "MODE_CDP_DOM_SNAPSHOT", "MODE_DOM_OVERLAY",
-    "VALID_MODES", "get_registry", "XIOViewRegistry", "ObservationEntry",
+    "MODE_SCREENSHOT",
+    "MODE_CDP_SCREENCAST",
+    "MODE_DOM_STREAM",
+    "MODE_CDP_DOM_SNAPSHOT",
+    "MODE_DOM_OVERLAY",
+    "VALID_MODES",
+    "get_registry",
+    "XIOViewRegistry",
+    "ObservationEntry",
 ]
 
 VALID_MODES = {
-    MODE_SCREENSHOT, MODE_CDP_SCREENCAST, MODE_DOM_STREAM,
-    MODE_CDP_DOM_SNAPSHOT, MODE_DOM_OVERLAY,
+    MODE_SCREENSHOT,
+    MODE_CDP_SCREENCAST,
+    MODE_DOM_STREAM,
+    MODE_CDP_DOM_SNAPSHOT,
+    MODE_DOM_OVERLAY,
 }
 
 # Default capture rates (screenshots per second)
@@ -51,6 +62,7 @@ _FPS_MAX = 15.0
 @dataclass
 class ObservationEntry:
     """State for one active browser-session observation."""
+
     session_id: str
     org_id: str
     mode: str
@@ -66,9 +78,9 @@ class ObservationEntry:
     viewport_width: int | None = None
     viewport_height: int | None = None
     # Profile / worker identity — set at attach time
-    novnc_url: str | None = None        # direct noVNC URL for HITL (e.g. http://100.x.x.x:6080/vnc.html)
-    profile_id: str | None = None       # PRFL-NNN identifier
-    worker_node: str | None = None      # xiogrid--default--worker-018
+    novnc_url: str | None = None  # direct noVNC URL for HITL (e.g. http://100.x.x.x:6080/vnc.html)
+    profile_id: str | None = None  # PRFL-NNN identifier
+    worker_node: str | None = None  # xiogrid--default--worker-018
 
     @property
     def client_count(self) -> int:
@@ -89,8 +101,8 @@ class XIOViewRegistry:
     """
 
     def __init__(self) -> None:
-        self._sessions: dict[str, ObservationEntry] = {}   # session_id → entry
-        self._global_fps: float | None = None               # None = per-session default
+        self._sessions: dict[str, ObservationEntry] = {}  # session_id → entry
+        self._global_fps: float | None = None  # None = per-session default
         self._lock = asyncio.Lock()
         self._cleanup_task: asyncio.Task | None = None
 
@@ -121,13 +133,17 @@ class XIOViewRegistry:
                 from xiosync.subsystems.xioview.session_manager import (  # noqa: PLC0415
                     cleanup_dead_sessions,
                 )
+
                 await cleanup_dead_sessions()
             except asyncio.CancelledError:
                 break
             except Exception as exc:  # noqa: BLE001
-                logger.warning("xioview.periodic_cleanup_error", extra={
-                    "error": str(exc),
-                })
+                logger.warning(
+                    "xioview.periodic_cleanup_error",
+                    extra={
+                        "error": str(exc),
+                    },
+                )
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -153,18 +169,21 @@ class XIOViewRegistry:
                 fps=self._global_fps or _FPS_ACTIVE,
             )
             self._sessions[session_id] = entry
-            logger.info("xioview.session_started", extra={
-                "session_id": session_id, "mode": mode, "org_id": org_id,
-            })
+            logger.info(
+                "xioview.session_started",
+                extra={
+                    "session_id": session_id,
+                    "mode": mode,
+                    "org_id": org_id,
+                },
+            )
         else:
             entry = self._sessions[session_id]
 
         entry.queues.add(queue)
 
         # Start the capture background task if needed
-        if (
-            entry.capture_task is None or entry.capture_task.done()
-        ) and page_getter is not None:
+        if (entry.capture_task is None or entry.capture_task.done()) and page_getter is not None:
             entry.capture_task = asyncio.create_task(
                 _capture_loop(entry, page_getter),
                 name=f"xioview-capture-{session_id[:8]}",
@@ -190,6 +209,7 @@ class XIOViewRegistry:
         if entry is None:
             return
         import json
+
         data = json.dumps(event)
         for q in list(entry.queues):
             try:
@@ -204,6 +224,7 @@ class XIOViewRegistry:
         directly (encapsulation boundary). Fire-and-forget; never raises.
         """
         import json
+
         data = json.dumps(event)
         for entry in list(self._sessions.values()):
             if entry.org_id != org_id:
@@ -218,12 +239,18 @@ class XIOViewRegistry:
         """Push a JPEG frame to all clients of a session (for external CDP push)."""
         import base64
         import json
+
         entry = self._sessions.get(session_id)
         if entry is None:
             return
         entry.last_frame = jpeg_bytes
-        msg = json.dumps({"type": "frame", "mode": "screenshot",
-                          "jpeg_b64": base64.b64encode(jpeg_bytes).decode()})
+        msg = json.dumps(
+            {
+                "type": "frame",
+                "mode": "screenshot",
+                "jpeg_b64": base64.b64encode(jpeg_bytes).decode(),
+            }
+        )
         for q in list(entry.queues):
             try:
                 q.put_nowait(msg)
@@ -300,6 +327,7 @@ def get_registry() -> XIOViewRegistry:
 
 # ── Capture loop (screenshot mode) ────────────────────────────────────────────
 
+
 async def _capture_loop(entry: ObservationEntry, page_getter: Callable) -> None:
     """Background task: screenshot loop for screenshot mode.
 
@@ -327,11 +355,13 @@ async def _capture_loop(entry: ObservationEntry, page_getter: Callable) -> None:
             if jpeg:
                 entry.last_frame = jpeg
 
-            msg = json.dumps({
-                "type": "frame",
-                "mode": "screenshot",
-                "jpeg_b64": base64.b64encode(jpeg or entry.last_frame or b"").decode(),
-            })
+            msg = json.dumps(
+                {
+                    "type": "frame",
+                    "mode": "screenshot",
+                    "jpeg_b64": base64.b64encode(jpeg or entry.last_frame or b"").decode(),
+                }
+            )
             for q in list(entry.queues):
                 try:
                     q.put_nowait(msg)
@@ -344,9 +374,9 @@ async def _capture_loop(entry: ObservationEntry, page_getter: Callable) -> None:
         except asyncio.CancelledError:
             break
         except Exception as exc:  # noqa: BLE001
-            logger.warning("xioview.capture_error", extra={
-                "session_id": entry.session_id, "error": str(exc)
-            })
+            logger.warning(
+                "xioview.capture_error", extra={"session_id": entry.session_id, "error": str(exc)}
+            )
             await asyncio.sleep(2.0)
 
     logger.debug("xioview.capture_loop_stop", extra={"session_id": entry.session_id})

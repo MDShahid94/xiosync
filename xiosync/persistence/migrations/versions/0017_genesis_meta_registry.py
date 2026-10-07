@@ -21,8 +21,8 @@ Three structural changes:
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, UUID
 
 revision = "0017"
@@ -61,9 +61,7 @@ def upgrade() -> None:
         sa.Column("namespace", sa.Text(), nullable=False, server_default="core"),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("state", sa.Text(), nullable=False, server_default="active"),
-        sa.Column(
-            "created_at", _timestamptz, nullable=False, server_default=sa.text("now()")
-        ),
+        sa.Column("created_at", _timestamptz, nullable=False, server_default=sa.text("now()")),
         sa.UniqueConstraint("name", name=op.f("uq_registry_categories_name")),
         sa.CheckConstraint(
             "state IN ('active', 'deprecated')",
@@ -92,22 +90,17 @@ def upgrade() -> None:
     # ---- 2. Drop hardcoded CHECK on type_registry.category -------------------
     # The CHECK was named via op.f() convention: ck_type_registry_category_allowed
     op.execute(
-        "ALTER TABLE type_registry DROP CONSTRAINT IF EXISTS "
-        "ck_type_registry_category_allowed"
+        "ALTER TABLE type_registry DROP CONSTRAINT IF EXISTS ck_type_registry_category_allowed"
     )
     # Also try the bare name used in models
-    op.execute(
-        "ALTER TABLE type_registry DROP CONSTRAINT IF EXISTS category_allowed"
-    )
+    op.execute("ALTER TABLE type_registry DROP CONSTRAINT IF EXISTS category_allowed")
 
     # Drop the same CHECK on type_registry_aliases
     op.execute(
         "ALTER TABLE type_registry_aliases DROP CONSTRAINT IF EXISTS "
         "ck_type_registry_aliases_category_allowed"
     )
-    op.execute(
-        "ALTER TABLE type_registry_aliases DROP CONSTRAINT IF EXISTS category_allowed"
-    )
+    op.execute("ALTER TABLE type_registry_aliases DROP CONSTRAINT IF EXISTS category_allowed")
 
     # Add FK from type_registry.category → registry_categories.name
     # (deferred constraint so bulk inserts work)
@@ -148,13 +141,9 @@ def upgrade() -> None:
             server_default=sa.text("'[]'::jsonb"),
         ),
         sa.Column("state", sa.Text(), nullable=False, server_default="active"),
-        sa.Column(
-            "created_at", _timestamptz, nullable=False, server_default=sa.text("now()")
-        ),
+        sa.Column("created_at", _timestamptz, nullable=False, server_default=sa.text("now()")),
         sa.Column("updated_at", _timestamptz, nullable=True),
-        sa.UniqueConstraint(
-            "organization_id", "name", name=op.f("uq_capability_groups_org_name")
-        ),
+        sa.UniqueConstraint("organization_id", "name", name=op.f("uq_capability_groups_org_name")),
         sa.CheckConstraint(
             "state IN ('active', 'deprecated')",
             name=op.f("ck_capability_groups_state_allowed"),
@@ -216,4 +205,6 @@ def downgrade() -> None:
 
     # Drop registry_categories
     op.drop_table("registry_categories")
+
+
 """Migration 0017 — Genesis meta-registry and capability groups."""

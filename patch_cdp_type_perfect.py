@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement_func = """    def cdp_type_text(text):
@@ -13,10 +13,10 @@ replacement_func = """    def cdp_type_text(text):
 
 # regex to replace current cdp_type_text
 code = re.sub(
-    r'    def cdp_type_text\(text\):\n        driver\.execute_cdp_cmd.*?(?=    def |$)',
+    r"    def cdp_type_text\(text\):\n        driver\.execute_cdp_cmd.*?(?=    def |$)",
     replacement_func + "\n\n",
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

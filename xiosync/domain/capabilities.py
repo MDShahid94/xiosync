@@ -28,9 +28,7 @@ class InvalidExecutionModeError(ValueError):
     """The execution_mode is not one of the declared modes."""
 
     def __init__(self, mode: str) -> None:
-        super().__init__(
-            f"execution_mode {mode!r} is not one of {sorted(EXECUTION_MODES)}"
-        )
+        super().__init__(f"execution_mode {mode!r} is not one of {sorted(EXECUTION_MODES)}")
         self.mode = mode
 
 
@@ -38,9 +36,7 @@ class InvalidCapabilityStateError(ValueError):
     """The capability state is not one of the declared states."""
 
     def __init__(self, state: str) -> None:
-        super().__init__(
-            f"capability state {state!r} is not one of {sorted(CAPABILITY_STATES)}"
-        )
+        super().__init__(f"capability state {state!r} is not one of {sorted(CAPABILITY_STATES)}")
         self.state = state
 
 

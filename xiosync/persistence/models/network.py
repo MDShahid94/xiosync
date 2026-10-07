@@ -52,14 +52,15 @@ class WorkerNetworkAllowRule(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
+        index=True,
     )  # IMM
     enrollment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     host_pattern: Mapped[str] = mapped_column(Text, nullable=False)
     port: Mapped[int] = mapped_column(Integer, nullable=False)
-    protocol: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'https'")
-    )
+    protocol: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'https'"))
     created_at: Mapped[datetime] = mapped_column(
         _ts, nullable=False, server_default=text("now()")
     )  # IMM

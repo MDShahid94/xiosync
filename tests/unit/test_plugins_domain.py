@@ -162,9 +162,7 @@ def _valid_manifest_kwargs() -> dict[str, object]:
         "entrypoint": "ghcr.io/acme/csv-normalizer@sha256:abc",
         "required_capability": "plugin.csv_normalize",
         "filesystem_jail": "/srv/plugins/csv-normalizer",
-        "resource_quota": ResourceQuota(
-            cpu_millis=500, memory_mb=256, timeout_seconds=30
-        ),
+        "resource_quota": ResourceQuota(cpu_millis=500, memory_mb=256, timeout_seconds=30),
         "rpc_methods": [
             RpcMethodContract(
                 name="normalize",
@@ -172,9 +170,7 @@ def _valid_manifest_kwargs() -> dict[str, object]:
                 output_schema={"type": "object"},
             )
         ],
-        "network_allowlist": [
-            NetworkAllowRule(host="api.acme.com", port=443, protocol="https")
-        ],
+        "network_allowlist": [NetworkAllowRule(host="api.acme.com", port=443, protocol="https")],
     }
 
 

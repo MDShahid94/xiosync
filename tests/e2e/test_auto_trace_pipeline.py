@@ -10,98 +10,116 @@ Tests:
 Run:
   .venv/bin/python tests/e2e/test_auto_trace_pipeline.py
 """
+
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
 def banner(msg: str) -> None:
-    print(f"\n{'═'*60}")
+    print(f"\n{'═' * 60}")
     print(f"  {msg}")
-    print(f"{'═'*60}\n")
+    print(f"{'═' * 60}\n")
 
 
 def test_1_trace_collector_and_dag_builder():
     """In-process test: TraceCollector → DAGGraphBuilder → DAG JSON."""
     banner("Test 1: TraceCollector → DAGGraphBuilder pipeline")
 
-    from xiosync.subsystems.xioflow.ingestion.trace_collector import TraceAction, TraceCollector
     from xiosync.subsystems.xioflow.ingestion.dag_graph_builder import DAGGraphBuilder
+    from xiosync.subsystems.xioflow.ingestion.trace_collector import TraceAction, TraceCollector
 
     # Simulate a google-signin trace
     tc = TraceCollector(org_id="org-test", domain="accounts.google.com", run_id="test-run-001")
 
     tc.enter_step("phase1_navigate")
-    tc.record(TraceAction(
-        action_type="navigate",
-        category="browser",
-        action_params={"url": "https://accounts.google.com/signin/v2"},
-        url="https://accounts.google.com/signin/v2",
-    ))
+    tc.record(
+        TraceAction(
+            action_type="navigate",
+            category="browser",
+            action_params={"url": "https://accounts.google.com/signin/v2"},
+            url="https://accounts.google.com/signin/v2",
+        )
+    )
     tc.exit_step("phase1_navigate")
 
     tc.enter_step("phase2_email")
-    tc.record(TraceAction(
-        action_type="fill",
-        category="browser",
-        action_params={"text": "user@example.com"},
-        place_value={"selector": "#identifierId", "test_id": None, "aria": "Email or phone"},
-        face_value={"tag": "input", "text": ""},
-        url="https://accounts.google.com/signin/v2",
-    ))
-    tc.record(TraceAction(
-        action_type="click",
-        category="browser",
-        place_value={"selector": "#identifierNext button"},
-        face_value={"tag": "button", "text": "Next"},
-        url="https://accounts.google.com/signin/v2",
-    ))
+    tc.record(
+        TraceAction(
+            action_type="fill",
+            category="browser",
+            action_params={"text": "user@example.com"},
+            place_value={"selector": "#identifierId", "test_id": None, "aria": "Email or phone"},
+            face_value={"tag": "input", "text": ""},
+            url="https://accounts.google.com/signin/v2",
+        )
+    )
+    tc.record(
+        TraceAction(
+            action_type="click",
+            category="browser",
+            place_value={"selector": "#identifierNext button"},
+            face_value={"tag": "button", "text": "Next"},
+            url="https://accounts.google.com/signin/v2",
+        )
+    )
     tc.exit_step("phase2_email")
 
     tc.enter_step("phase3_password")
-    tc.record(TraceAction(
-        action_type="fill",
-        category="browser",
-        action_params={"text": "***"},
-        place_value={"selector": "input[type=password]", "aria": "Enter your password"},
-        face_value={"tag": "input", "text": ""},
-        url="https://accounts.google.com/signin/v2",
-    ))
-    tc.record(TraceAction(
-        action_type="click",
-        category="browser",
-        place_value={"selector": "#passwordNext button"},
-        face_value={"tag": "button", "text": "Next"},
-        url="https://accounts.google.com/signin/v2",
-    ))
+    tc.record(
+        TraceAction(
+            action_type="fill",
+            category="browser",
+            action_params={"text": "***"},
+            place_value={"selector": "input[type=password]", "aria": "Enter your password"},
+            face_value={"tag": "input", "text": ""},
+            url="https://accounts.google.com/signin/v2",
+        )
+    )
+    tc.record(
+        TraceAction(
+            action_type="click",
+            category="browser",
+            place_value={"selector": "#passwordNext button"},
+            face_value={"tag": "button", "text": "Next"},
+            url="https://accounts.google.com/signin/v2",
+        )
+    )
     tc.exit_step("phase3_password")
 
     tc.enter_step("phase4_verify")
-    tc.record(TraceAction(
-        action_type="navigate",
-        category="browser",
-        action_params={"url": "https://myaccount.google.com"},
-        url="https://myaccount.google.com",
-    ))
-    tc.record(TraceAction(
-        action_type="extract_data",
-        category="browser",
-        action_params={"extracted": "Shahid"},
-        place_value={"selector": "[data-email]"},
-        url="https://myaccount.google.com",
-    ))
+    tc.record(
+        TraceAction(
+            action_type="navigate",
+            category="browser",
+            action_params={"url": "https://myaccount.google.com"},
+            url="https://myaccount.google.com",
+        )
+    )
+    tc.record(
+        TraceAction(
+            action_type="extract_data",
+            category="browser",
+            action_params={"extracted": "Shahid"},
+            place_value={"selector": "[data-email]"},
+            url="https://myaccount.google.com",
+        )
+    )
     tc.exit_step("phase4_verify")
 
     # Build trace summary
     summary = tc.to_summary()
-    print(f"  ✅ Trace recorded: {summary['total_actions']} actions across {len(summary['steps'])} steps")
+    print(
+        f"  ✅ Trace recorded: {summary['total_actions']} actions across {len(summary['steps'])} steps"
+    )
     print(f"     Steps: {summary['steps']}")
-    print(f"     Browser: {summary['browser_actions']}, Non-browser: {summary['non_browser_actions']}")
+    print(
+        f"     Browser: {summary['browser_actions']}, Non-browser: {summary['non_browser_actions']}"
+    )
 
     # Convert trace → DAG
     builder = DAGGraphBuilder()
@@ -155,15 +173,15 @@ def test_1_trace_collector_and_dag_builder():
     for nn in navigate_nodes:
         assert nn.get("volatility_type") == "static"
 
-    print(f"\n  ✅ All DAG validations passed:")
-    print(f"     • Chain integrity: OK")
-    print(f"     • Terminal node: OK")
-    print(f"     • recording_method='auto_trace': OK")
-    print(f"     • place_value propagation: OK")
-    print(f"     • Volatility classification: OK")
+    print("\n  ✅ All DAG validations passed:")
+    print("     • Chain integrity: OK")
+    print("     • Terminal node: OK")
+    print("     • recording_method='auto_trace': OK")
+    print("     • place_value propagation: OK")
+    print("     • Volatility classification: OK")
 
     # Print the DAG spec (for inspection)
-    print(f"\n  📋 DAG JSON spec:")
+    print("\n  📋 DAG JSON spec:")
     for i, node in enumerate(nodes):
         arrow = "→" if i < len(nodes) - 1 else "⏹"
         pv = "✓" if node.get("place_value") else "○"
@@ -177,6 +195,7 @@ def test_2_page_proxy():
     banner("Test 2: PageProxy interception")
 
     from unittest.mock import AsyncMock, MagicMock
+
     from xiosync.subsystems.xioflow.ingestion.page_proxy import PageProxy
     from xiosync.subsystems.xioflow.ingestion.trace_collector import TraceCollector
 
@@ -188,10 +207,12 @@ def test_2_page_proxy():
     mock_page.evaluate = AsyncMock()
 
     dom = MagicMock()
-    dom.inspect_target = AsyncMock(return_value={
-        "place_value": {"selector": "#identifierId", "test_id": None, "aria": "Email"},
-        "face_value": {"tag": "input", "text": ""},
-    })
+    dom.inspect_target = AsyncMock(
+        return_value={
+            "place_value": {"selector": "#identifierId", "test_id": None, "aria": "Email"},
+            "face_value": {"tag": "input", "text": ""},
+        }
+    )
 
     trace = TraceCollector(org_id="org1", domain="accounts.google.com")
     proxy = PageProxy(mock_page, trace, dom)
@@ -207,7 +228,11 @@ def test_2_page_proxy():
     assert trace.actions[0].action_type == "navigate"
     assert trace.actions[1].action_type == "fill"
     assert trace.actions[1].action_params["text"] == "test@gmail.com"
-    assert trace.actions[1].place_value == {"selector": "#identifierId", "test_id": None, "aria": "Email"}
+    assert trace.actions[1].place_value == {
+        "selector": "#identifierId",
+        "test_id": None,
+        "aria": "Email",
+    }
     assert trace.actions[2].action_type == "click"
 
     print(f"  ✅ PageProxy intercepted {len(trace.actions)} actions:")
@@ -221,18 +246,21 @@ def test_2_page_proxy():
 
     asyncio.run(_eval_test())
     assert len(trace.actions) == 3  # evaluate NOT traced
-    print(f"  ✅ evaluate() passthrough (not traced): OK")
-    print(f"  ✅ __getattr__ delegation: OK")
+    print("  ✅ evaluate() passthrough (not traced): OK")
+    print("  ✅ __getattr__ delegation: OK")
 
 
 def test_3_ai_gateway_providers():
     """Test AI gateway auto-detection and provider listing."""
     banner("Test 3: AI Gateway provider detection")
 
-    from xiosync.subsystems.xioflow.services.ai_gateway import (
-        AIGateway, _PROVIDER_REGISTRY, AGYProvider,
-    )
     import shutil
+
+    from xiosync.subsystems.xioflow.services.ai_gateway import (
+        _PROVIDER_REGISTRY,
+        AGYProvider,
+        AIGateway,
+    )
 
     gw = AIGateway()
     print(f"  Auto-detected provider: {gw.provider_name}")
@@ -254,12 +282,12 @@ def test_3_ai_gateway_providers():
     # Test explicit provider selection
     gw2 = AIGateway(provider="agy")
     assert gw2.provider_name == "agy"
-    print(f"\n  ✅ Explicit provider selection: OK")
+    print("\n  ✅ Explicit provider selection: OK")
 
     # Test instance injection
     gw3 = AIGateway(provider=AGYProvider())
     assert gw3.provider_name == "agy"
-    print(f"  ✅ Instance injection: OK")
+    print("  ✅ Instance injection: OK")
 
 
 def test_4_workflow_generator_internals():
@@ -275,7 +303,7 @@ def test_4_workflow_generator_internals():
     cleaned = gen._clean_source(raw)
     assert "```" not in cleaned
     assert "export const meta" in cleaned
-    print(f"  ✅ Source cleaning (markdown fences): OK")
+    print("  ✅ Source cleaning (markdown fences): OK")
 
     # Test meta extraction
     source = """
@@ -301,17 +329,18 @@ def test_5_dom_inspector_method_exists():
     """Verify DOMInspector.inspect_target() is properly defined."""
     banner("Test 5: DOMInspector.inspect_target() exists")
 
-    from xiosync.subsystems.xioflow.engine.dom_inspector import DOMInspector
     import inspect
+
+    from xiosync.subsystems.xioflow.engine.dom_inspector import DOMInspector
 
     assert hasattr(DOMInspector, "inspect_target")
     sig = inspect.signature(DOMInspector.inspect_target)
     params = list(sig.parameters.keys())
     assert "page" in params
     assert "selector" in params
-    print(f"  ✅ DOMInspector.inspect_target() defined")
+    print("  ✅ DOMInspector.inspect_target() defined")
     print(f"     Signature: {sig}")
-    print(f"     Returns: dict with 'place_value' and 'face_value'")
+    print("     Returns: dict with 'place_value' and 'face_value'")
 
 
 def test_6_memory_nodes_constraints():
@@ -322,21 +351,24 @@ def test_6_memory_nodes_constraints():
 
     # Check table args for constraints
     constraints = XioflowMemoryNode.__table_args__
-    constraint_strs = [str(c.sqltext) if hasattr(c, 'sqltext') else str(c) for c in constraints
-                       if hasattr(c, 'sqltext')]
+    constraint_strs = [
+        str(c.sqltext) if hasattr(c, "sqltext") else str(c)
+        for c in constraints
+        if hasattr(c, "sqltext")
+    ]
 
     # Check recording_method constraint
-    rm_constraint = [c for c in constraint_strs if 'recording_method' in c]
+    rm_constraint = [c for c in constraint_strs if "recording_method" in c]
     assert rm_constraint, "recording_method constraint not found"
-    assert 'auto_trace' in rm_constraint[0], "auto_trace not in recording_method constraint"
-    print(f"  ✅ recording_method constraint includes 'auto_trace'")
+    assert "auto_trace" in rm_constraint[0], "auto_trace not in recording_method constraint"
+    print("  ✅ recording_method constraint includes 'auto_trace'")
 
     # Check action_type constraint
-    at_constraint = [c for c in constraint_strs if 'action_type' in c]
+    at_constraint = [c for c in constraint_strs if "action_type" in c]
     assert at_constraint, "action_type constraint not found"
-    for action_type in ['fill', 'press', 'hover', 'select_option', 'check', 'uncheck']:
+    for action_type in ["fill", "press", "hover", "select_option", "check", "uncheck"]:
         assert action_type in at_constraint[0], f"'{action_type}' not in action_type constraint"
-    print(f"  ✅ action_type constraint includes fill/press/hover/select_option/check/uncheck")
+    print("  ✅ action_type constraint includes fill/press/hover/select_option/check/uncheck")
 
 
 def test_7_run_dispatcher_trace_mode():
@@ -344,7 +376,6 @@ def test_7_run_dispatcher_trace_mode():
     banner("Test 7: run_dispatcher trace_mode wiring")
 
     import importlib
-    import xiosync.worker.run_dispatcher as rd
 
     source = importlib.util.find_spec("xiosync.worker.run_dispatcher").origin
     with open(source) as f:
@@ -352,8 +383,8 @@ def test_7_run_dispatcher_trace_mode():
 
     assert "trace_mode" in content
     assert "_schedule_trace_deploy" in content
-    print(f"  ✅ run_dispatcher contains trace_mode handling")
-    print(f"  ✅ _schedule_trace_deploy() function present")
+    print("  ✅ run_dispatcher contains trace_mode handling")
+    print("  ✅ _schedule_trace_deploy() function present")
 
 
 def test_8_api_trace_flag():
@@ -365,12 +396,12 @@ def test_8_api_trace_flag():
     fields = DispatchRunRequest.model_fields
     assert "trace" in fields
     assert fields["trace"].default is False
-    print(f"  ✅ DispatchRunRequest.trace field exists (default=False)")
+    print("  ✅ DispatchRunRequest.trace field exists (default=False)")
 
     # Test model instantiation
     req = DispatchRunRequest(trace=True, context={"email": "test@test.com"})
     assert req.trace is True
-    print(f"  ✅ DispatchRunRequest(trace=True) instantiates correctly")
+    print("  ✅ DispatchRunRequest(trace=True) instantiates correctly")
 
 
 if __name__ == "__main__":
@@ -396,6 +427,7 @@ if __name__ == "__main__":
             failed += 1
             print(f"\n  ❌ FAILED: {e}")
             import traceback
+
             traceback.print_exc()
 
     banner(f"Results: {passed}/{len(tests)} passed, {failed} failed")

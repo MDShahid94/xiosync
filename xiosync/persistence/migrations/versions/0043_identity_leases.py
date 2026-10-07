@@ -32,8 +32,9 @@ Indexes:
   - (expires_at) WHERE state='active'          — expired lease sweep by background task
   - (worker_id) WHERE state='active'           — "what does this worker hold?"
 """
-from alembic import op
+
 import sqlalchemy as sa
+from alembic import op
 
 revision = "0043"
 down_revision = "0042"
@@ -44,7 +45,8 @@ depends_on = None
 def upgrade() -> None:
     conn = op.get_bind()
 
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE TABLE IF NOT EXISTS identity_leases (
             id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             identity_id     UUID NOT NULL
@@ -59,28 +61,35 @@ def upgrade() -> None:
             run_context     JSONB NOT NULL DEFAULT '{}',
             state           TEXT NOT NULL DEFAULT 'active'
         )
-    """))
+    """)
+    )
 
     # Fast "is this identity currently leased?" lookup
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE INDEX IF NOT EXISTS ix_identity_leases_identity_active
         ON identity_leases (identity_id)
         WHERE state = 'active'
-    """))
+    """)
+    )
 
     # Background sweep: find leases past their TTL
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE INDEX IF NOT EXISTS ix_identity_leases_expires_active
         ON identity_leases (expires_at)
         WHERE state = 'active'
-    """))
+    """)
+    )
 
     # Worker's current holdings
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE INDEX IF NOT EXISTS ix_identity_leases_worker_active
         ON identity_leases (worker_id)
         WHERE state = 'active' AND worker_id IS NOT NULL
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:

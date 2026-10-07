@@ -12,6 +12,7 @@ Objects:
     GET    /storage/objects                         — list (filterable by type/metadata)
     DELETE /storage/objects/{provider_id}/{key}     — deindex an object
 """
+
 from __future__ import annotations
 
 import uuid
@@ -26,10 +27,12 @@ router = APIRouter(prefix="/storage", tags=["Storage"])
 # RBAC: storage.read  → all GET endpoints (applied at router level in app.py)
 #        storage.write → POST, DELETE (register provider/object, deindex)
 from xiosync.api.middleware.rbac import require_capability as _rc
+
 _require_write = _rc("storage.write")  # returns Depends(_dependency) directly
 
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
+
 
 class _S(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -44,15 +47,13 @@ class RegisterProviderRequest(_S):
         description="Non-secret provider config (folder_id, bucket, endpoint, base_path…)"
     )
     vault_key: str | None = Field(
-        default=None,
-        description="Key in vaulted_secrets holding provider credentials"
+        default=None, description="Key in vaulted_secrets holding provider credentials"
     )
     is_default: bool = False
     is_writable: bool = True
     priority: int = Field(default=100, description="Lower = higher priority")
     platform_global: bool = Field(
-        default=False,
-        description="Register as platform-global shared provider (admin only)"
+        default=False, description="Register as platform-global shared provider (admin only)"
     )
 
 
@@ -62,7 +63,7 @@ class ProviderResponse(_S):
     organization_id: uuid.UUID | None
     name: str
     provider_type: str
-    config: dict[str, Any]   # Non-secret config only — credential never returned
+    config: dict[str, Any]  # Non-secret config only — credential never returned
     vault_key: str | None
     is_default: bool
     is_writable: bool
@@ -77,7 +78,7 @@ class RegisterObjectRequest(_S):
     object_key: str = Field(description="Logical key within provider (path relative to root)")
     object_type: str = Field(
         default="generic",
-        description="'chrome_profile' | 'ts_state' | 'session_export' | 'workflow_artifact' | 'generic'"
+        description="'chrome_profile' | 'ts_state' | 'session_export' | 'workflow_artifact' | 'generic'",
     )
     size_bytes: int | None = None
     checksum_sha256: str | None = None
@@ -113,14 +114,18 @@ class AccessInfoResponse(_S):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _svc(request: Request):
     from sqlalchemy.orm import Session as OrmSession
+
     from xiosync.subsystems.storage.service import StorageService
+
     return StorageService(cast(OrmSession, request.state.org_session))
 
 
 def _ctx(request: Request):
     from xiosync.domain.context import OrgContext
+
     return cast(OrgContext, request.state.org_context)
 
 
@@ -160,11 +165,17 @@ def _object_resp(rec) -> ObjectResponse:
 
 # ── Provider endpoints ────────────────────────────────────────────────────────
 
-@router.post("/providers", status_code=201, response_model=ProviderResponse,
-             summary="Register or update a storage provider",
-             dependencies=[_require_write])
+
+@router.post(
+    "/providers",
+    status_code=201,
+    response_model=ProviderResponse,
+    summary="Register or update a storage provider",
+    dependencies=[_require_write],
+)
 def register_provider(payload: RegisterProviderRequest, request: Request) -> ProviderResponse:
     from xiosync.subsystems.storage.service import StorageProviderError
+
     try:
         rec = _svc(request).register_provider(
             _ctx(request),
@@ -182,8 +193,9 @@ def register_provider(payload: RegisterProviderRequest, request: Request) -> Pro
     return _provider_resp(rec)
 
 
-@router.get("/providers", response_model=list[ProviderResponse],
-            summary="List configured storage providers")
+@router.get(
+    "/providers", response_model=list[ProviderResponse], summary="List configured storage providers"
+)
 def list_providers(
     request: Request,
     include_platform: bool = Query(default=True),
@@ -192,10 +204,12 @@ def list_providers(
     return [_provider_resp(r) for r in recs]
 
 
-@router.get("/providers/{provider_id}", response_model=ProviderResponse,
-            summary="Get a storage provider")
+@router.get(
+    "/providers/{provider_id}", response_model=ProviderResponse, summary="Get a storage provider"
+)
 def get_provider(provider_id: uuid.UUID, request: Request) -> ProviderResponse:
     from xiosync.subsystems.storage.service import StorageNotFoundError
+
     try:
         rec = _svc(request).get_provider(_ctx(request), provider_id)
     except StorageNotFoundError:
@@ -203,20 +217,26 @@ def get_provider(provider_id: uuid.UUID, request: Request) -> ProviderResponse:
     return _provider_resp(rec)
 
 
-@router.delete("/providers/{provider_id}", status_code=204,
-               summary="Delete an org-private storage provider",
-               dependencies=[_require_write])
+@router.delete(
+    "/providers/{provider_id}",
+    status_code=204,
+    summary="Delete an org-private storage provider",
+    dependencies=[_require_write],
+)
 def delete_provider(provider_id: uuid.UUID, request: Request) -> None:
     from xiosync.subsystems.storage.service import StorageNotFoundError
+
     try:
         _svc(request).delete_provider(_ctx(request), provider_id)
     except StorageNotFoundError:
         raise HTTPException(status_code=404, detail="provider_not_found")
 
 
-@router.get("/providers/{provider_id}/access/{operation}",
-            response_model=AccessInfoResponse,
-            summary="Get access instructions for a blob (upload/download/delete)")
+@router.get(
+    "/providers/{provider_id}/access/{operation}",
+    response_model=AccessInfoResponse,
+    summary="Get access instructions for a blob (upload/download/delete)",
+)
 def get_access_info(
     provider_id: uuid.UUID,
     operation: str,
@@ -224,6 +244,7 @@ def get_access_info(
     object_key: str = Query(description="Object key within the provider"),
 ) -> AccessInfoResponse:
     from xiosync.subsystems.storage.service import StorageNotFoundError, StorageProviderError
+
     if operation not in ("upload", "download", "delete"):
         raise HTTPException(status_code=422, detail="operation must be upload|download|delete")
     try:
@@ -244,12 +265,18 @@ def get_access_info(
 
 # ── Object endpoints ──────────────────────────────────────────────────────────
 
-@router.post("/objects", status_code=201, response_model=ObjectResponse,
-             summary="Register an uploaded blob in the object index",
-             dependencies=[_require_write])
+
+@router.post(
+    "/objects",
+    status_code=201,
+    response_model=ObjectResponse,
+    summary="Register an uploaded blob in the object index",
+    dependencies=[_require_write],
+)
 def register_object(payload: RegisterObjectRequest, request: Request) -> ObjectResponse:
     """Workers call this AFTER uploading a blob to the provider to index it in XIOSYNC."""
-    from xiosync.subsystems.storage.service import StorageProviderError, StorageNotFoundError
+    from xiosync.subsystems.storage.service import StorageNotFoundError, StorageProviderError
+
     try:
         rec = _svc(request).register_object(
             _ctx(request),
@@ -267,8 +294,7 @@ def register_object(payload: RegisterObjectRequest, request: Request) -> ObjectR
     return _object_resp(rec)
 
 
-@router.get("/objects", response_model=list[ObjectResponse],
-            summary="List objects in the index")
+@router.get("/objects", response_model=list[ObjectResponse], summary="List objects in the index")
 def list_objects(
     request: Request,
     provider_id: uuid.UUID | None = None,
@@ -281,15 +307,19 @@ def list_objects(
     return [_object_resp(r) for r in recs]
 
 
-@router.delete("/objects/{provider_id}/{object_key:path}", status_code=204,
-               summary="Remove an object from the index (does NOT delete from provider)",
-               dependencies=[_require_write])
+@router.delete(
+    "/objects/{provider_id}/{object_key:path}",
+    status_code=204,
+    summary="Remove an object from the index (does NOT delete from provider)",
+    dependencies=[_require_write],
+)
 def deindex_object(
     provider_id: uuid.UUID,
     object_key: str,
     request: Request,
 ) -> None:
     from xiosync.subsystems.storage.service import StorageNotFoundError
+
     try:
         _svc(request).deindex_object(_ctx(request), provider_id, object_key)
     except StorageNotFoundError:

@@ -30,9 +30,11 @@ def configure_xioflow_logging(json_output: bool = False) -> None:
         cache_logger_on_first_use=True,
     )
 
+
 def get_logger(name: str):
     """Return structlog logger."""
     return structlog.get_logger(name)
+
 
 def bind_context(**kwargs) -> None:
     """Bind key-value pairs to the current structlog context."""

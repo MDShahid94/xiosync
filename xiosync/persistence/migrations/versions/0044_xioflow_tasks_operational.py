@@ -20,6 +20,7 @@ Revision ID: 0044
 Revises: 0043
 Create Date: 2026-09-12
 """
+
 from __future__ import annotations
 
 import sqlalchemy as sa
@@ -35,44 +36,48 @@ def upgrade() -> None:
     conn = op.get_bind()
 
     # ── Operational columns on xioflow_tasks ────────────────────────────────
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         ALTER TABLE xioflow_tasks
             ADD COLUMN IF NOT EXISTS leased_by        UUID,
             ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ,
             ADD COLUMN IF NOT EXISTS retry_count      INTEGER NOT NULL DEFAULT 0,
             ADD COLUMN IF NOT EXISTS max_retries      INTEGER NOT NULL DEFAULT 3,
             ADD COLUMN IF NOT EXISTS priority         INTEGER NOT NULL DEFAULT 0
-    """))
+    """)
+    )
 
     # ── Index: dispatcher claims highest-priority PENDING tasks first ────────
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE INDEX IF NOT EXISTS ix_xioflow_tasks_claimable
             ON xioflow_tasks (priority DESC, created_at ASC)
             WHERE state = 'PENDING'
-    """))
+    """)
+    )
 
     # ── Index: reaper finds RUNNING tasks whose lease has expired ───────────
-    conn.execute(sa.text("""
+    conn.execute(
+        sa.text("""
         CREATE INDEX IF NOT EXISTS ix_xioflow_tasks_stale_leases
             ON xioflow_tasks (lease_expires_at ASC)
             WHERE state = 'RUNNING'
-    """))
+    """)
+    )
 
 
 def downgrade() -> None:
     conn = op.get_bind()
 
-    conn.execute(sa.text(
-        "DROP INDEX IF EXISTS ix_xioflow_tasks_stale_leases"
-    ))
-    conn.execute(sa.text(
-        "DROP INDEX IF EXISTS ix_xioflow_tasks_claimable"
-    ))
-    conn.execute(sa.text("""
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_xioflow_tasks_stale_leases"))
+    conn.execute(sa.text("DROP INDEX IF EXISTS ix_xioflow_tasks_claimable"))
+    conn.execute(
+        sa.text("""
         ALTER TABLE xioflow_tasks
             DROP COLUMN IF EXISTS leased_by,
             DROP COLUMN IF EXISTS lease_expires_at,
             DROP COLUMN IF EXISTS retry_count,
             DROP COLUMN IF EXISTS max_retries,
             DROP COLUMN IF EXISTS priority
-    """))
+    """)
+    )

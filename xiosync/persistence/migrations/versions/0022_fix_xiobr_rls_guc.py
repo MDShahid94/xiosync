@@ -53,10 +53,7 @@ def upgrade() -> None:
         # Drop the old (broken) policy and recreate with the correct GUC name.
         # IF EXISTS makes this idempotent in case of partial prior correction.
         op.execute(f"DROP POLICY IF EXISTS {policy_name} ON {table}")
-        op.execute(
-            f"CREATE POLICY {policy_name} ON {table} "
-            f"USING ({_PREDICATE})"
-        )
+        op.execute(f"CREATE POLICY {policy_name} ON {table} USING ({_PREDICATE})")
 
 
 def downgrade() -> None:
@@ -64,7 +61,4 @@ def downgrade() -> None:
     # the preceding migrations.
     for policy_name, table in _POLICIES:
         op.execute(f"DROP POLICY IF EXISTS {policy_name} ON {table}")
-        op.execute(
-            f"CREATE POLICY {policy_name} ON {table} "
-            f"USING ({_OLD_PREDICATE})"
-        )
+        op.execute(f"CREATE POLICY {policy_name} ON {table} USING ({_OLD_PREDICATE})")

@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement = """            # Use fingerprint if provided, else fallback
@@ -53,7 +53,7 @@ code = re.sub(
     r"            _uc_canvas_seed = random\.randint\(0x1000, 0xFFFF\)\n            _uc_audio_seed  = random\.randint\(0x1000, 0xFFFF\)\n            _uc_stealth = \(\n                _STEALTH_JS(.*?)\)\n",
     replacement + "\n",
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

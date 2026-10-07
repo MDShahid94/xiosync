@@ -15,9 +15,7 @@ __all__ = [
 ]
 
 #: Resource types eligible for cross-org sharing.
-SHAREABLE_TYPES: frozenset[str] = frozenset(
-    {"capability", "artifact", "workflow", "plugin"}
-)
+SHAREABLE_TYPES: frozenset[str] = frozenset({"capability", "artifact", "workflow", "plugin"})
 
 #: Permissions grantable on a shared resource.
 SHARE_PERMISSIONS: frozenset[str] = frozenset({"read", "execute", "fork"})

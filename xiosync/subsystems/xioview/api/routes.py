@@ -17,6 +17,7 @@ Endpoints:
   DELETE /xioview/attach/{session_id}           — detach session
   GET /xioview/sessions/{id}/view              — viewer HTML page
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -56,6 +57,7 @@ public_router = APIRouter(prefix="/xioview", tags=["XIOVIEW-public"])
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
+
 def _get_org_id(websocket: WebSocket) -> str:
     """Extract org_id from the WebSocket's auth state."""
     ctx = getattr(websocket.state, "org_context", None)
@@ -67,6 +69,7 @@ def _get_org_id(websocket: WebSocket) -> str:
 def _assert_session_visible(session_id: str, org_id: str, db: Any) -> dict[str, Any]:
     """Verify the session exists, belongs to this org, and is in a live state."""
     from sqlalchemy import text  # noqa: PLC0415
+
     row = db.execute(
         text("""
             SELECT bs.id, bs.state, bs.pool_id, bp.engine_type
@@ -89,6 +92,7 @@ def _assert_session_visible(session_id: str, org_id: str, db: Any) -> dict[str, 
 
 # ── REST Endpoints ─────────────────────────────────────────────────────────────
 
+
 @router.get("/sessions", summary="List all actively observed browser sessions")
 def list_observed_sessions() -> dict[str, Any]:
     return {"sessions": get_registry().list_sessions()}
@@ -103,8 +107,7 @@ def list_observable_sessions() -> dict[str, Any]:
     from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
 
     observed: dict[str, dict] = {
-        s["session_id"]: {**s, "streaming": True}
-        for s in get_registry().list_sessions()
+        s["session_id"]: {**s, "streaming": True} for s in get_registry().list_sessions()
     }
 
     for entry in get_runtime_pool().list_sessions():
@@ -159,13 +162,15 @@ async def list_session_tabs(session_id: str) -> dict[str, Any]:
     for i, page in enumerate(context.pages):
         if page is active_page:
             active_index = i
-        tabs.append({
-            "index": i,
-            "url": page.url,
-            "title": await page.title() if not page.is_closed() else "(closed)",
-            "closed": page.is_closed(),
-            "active": page is active_page,
-        })
+        tabs.append(
+            {
+                "index": i,
+                "url": page.url,
+                "title": await page.title() if not page.is_closed() else "(closed)",
+                "closed": page.is_closed(),
+                "active": page is active_page,
+            }
+        )
 
     return {
         "session_id": session_id,
@@ -197,7 +202,7 @@ async def switch_session_tab(session_id: str, tab_index: int) -> dict[str, Any]:
 
     pages = context.pages
     if tab_index < 0 or tab_index >= len(pages):
-        raise HTTPException(400, detail=f"tab_index out of range [0, {len(pages)-1}]")
+        raise HTTPException(400, detail=f"tab_index out of range [0, {len(pages) - 1}]")
 
     new_page = pages[tab_index]
     if new_page.is_closed():
@@ -209,9 +214,14 @@ async def switch_session_tab(session_id: str, tab_index: int) -> dict[str, Any]:
     invalidate_cdp_session(session_id)
     invalidate_viewport_cache(session_id)
 
-    logger.info("xioview.tab_switched", extra={
-        "session_id": session_id, "tab_index": tab_index, "url": new_page.url,
-    })
+    logger.info(
+        "xioview.tab_switched",
+        extra={
+            "session_id": session_id,
+            "tab_index": tab_index,
+            "url": new_page.url,
+        },
+    )
 
     return {
         "session_id": session_id,
@@ -223,18 +233,21 @@ async def switch_session_tab(session_id: str, tab_index: int) -> dict[str, Any]:
 
 # ── Attach / Detach ───────────────────────────────────────────────────────────
 
+
 class AttachRequest(BaseModel):
     cdp_ws_url: str
     session_id: str | None = None
     internal_secret: str | None = None
     mode: str = "cdp_screencast"
-    novnc_url: str | None = None    # direct noVNC URL on the worker (for HITL)
-    profile_id: str | None = None   # PRFL-NNN for profile-aware routing
+    novnc_url: str | None = None  # direct noVNC URL on the worker (for HITL)
+    profile_id: str | None = None  # PRFL-NNN for profile-aware routing
     worker_node: str | None = None  # xiogrid--default--worker-018
+
 
 @public_router.post("/attach", summary="Attach XIOSYNC to an existing Colab Chrome CDP session")
 async def attach_session(body: AttachRequest) -> dict[str, Any]:
     from xiosync.subsystems.xioview.session_manager import attach_browser  # noqa: PLC0415
+
     try:
         result = await attach_browser(
             cdp_ws_url=body.cdp_ws_url,
@@ -252,13 +265,17 @@ async def attach_session(body: AttachRequest) -> dict[str, Any]:
         raise HTTPException(500, detail=str(e)) from e
 
 
-@public_router.delete("/attach/{session_id}", summary="Detach and close a manually-attached session")
+@public_router.delete(
+    "/attach/{session_id}", summary="Detach and close a manually-attached session"
+)
 async def detach_session(session_id: str) -> dict[str, Any]:
     from xiosync.subsystems.xioview.session_manager import detach_browser  # noqa: PLC0415
+
     return await detach_browser(session_id)
 
 
 # ── Viewer HTML ────────────────────────────────────────────────────────────────
+
 
 @public_router.get(
     "/sessions/{session_id}/view",
@@ -266,8 +283,8 @@ async def detach_session(session_id: str) -> dict[str, Any]:
     summary="Browser viewer page for a session — HITL-aware, auto-embeds noVNC when active",
 )
 async def session_viewer(session_id: str, request: Request) -> HTMLResponse:
-    from xiosync.subsystems.xioview.viewer import render_viewer  # noqa: PLC0415
     from xiosync.subsystems.xioview.registry import get_registry  # noqa: PLC0415
+    from xiosync.subsystems.xioview.viewer import render_viewer  # noqa: PLC0415
 
     host = request.headers.get("host", "localhost:8000")
     scheme = "wss" if request.url.scheme == "https" else "ws"
@@ -285,8 +302,9 @@ async def session_viewer(session_id: str, request: Request) -> HTMLResponse:
         # Try fetching pending HITL from the worker agent — derive worker base URL
         # from the novnc_url (e.g. http://100.111.130.118:6080 → http://100.111.130.118:9300)
         try:
-            import urllib.request as _ur
             import json as _json
+            import urllib.request as _ur
+
             _worker_ip = novnc_url.split("://")[1].split(":")[0]
             _hitl_url = f"http://{_worker_ip}:9300/hitl/pending"
             _resp = _ur.urlopen(_hitl_url, timeout=2)
@@ -294,26 +312,32 @@ async def session_viewer(session_id: str, request: Request) -> HTMLResponse:
             _notices = _data.get("notices", [])
             # Find the most recent PENDING notice for this session
             _sess_notices = [
-                n for n in _notices
+                n
+                for n in _notices
                 if n.get("state") == "PENDING" and n.get("session_id") == session_id
             ]
             if _sess_notices:
                 hitl_notice = _sess_notices[-1]
                 hitl_notice["novnc_url"] = novnc_url  # embed URL in notice for JS
-                hitl_notice["resume_url"] = f"http://{_worker_ip}:9300/hitl/{hitl_notice['id']}/resume"
+                hitl_notice["resume_url"] = (
+                    f"http://{_worker_ip}:9300/hitl/{hitl_notice['id']}/resume"
+                )
         except Exception:
             pass  # HITL fetch is best-effort; don't fail the viewer
 
-    return HTMLResponse(content=render_viewer(
-        session_id=session_id,
-        ws_url=ws_url,
-        novnc_url=novnc_url,
-        profile_id=profile_id,
-        hitl_notice=hitl_notice,
-    ))
+    return HTMLResponse(
+        content=render_viewer(
+            session_id=session_id,
+            ws_url=ws_url,
+            novnc_url=novnc_url,
+            profile_id=profile_id,
+            hitl_notice=hitl_notice,
+        )
+    )
 
 
 # ── WebSocket Observation Endpoint ─────────────────────────────────────────────
+
 
 @public_router.websocket("/sessions/{session_id}/observe")
 async def observe_session(
@@ -322,7 +346,6 @@ async def observe_session(
     mode: str = Query(default=MODE_SCREENSHOT),
 ) -> None:
     """Live browser session observation + remote control WebSocket."""
-    from xiosync.subsystems.xioview.control import dispatch_control  # noqa: PLC0415
     from xiosync.subsystems.xioview.session_manager import (  # noqa: PLC0415
         get_attached_info,
         get_playwright_page,
@@ -341,12 +364,18 @@ async def observe_session(
     reg = get_registry()
     queue: asyncio.Queue = asyncio.Queue(maxsize=30)
 
-    logger.info("xioview.client_connected", extra={
-        "session_id": session_id, "org_id": org_id, "mode": mode,
-    })
+    logger.info(
+        "xioview.client_connected",
+        extra={
+            "session_id": session_id,
+            "org_id": org_id,
+            "mode": mode,
+        },
+    )
 
     # Q-4: Audit log session observation
     from xiosync.subsystems.xioview.audit import get_audit_log  # noqa: PLC0415
+
     _audit = get_audit_log()
     _audit.record_session_start(session_id, org_id, actor_id, mode)
 
@@ -378,21 +407,26 @@ async def observe_session(
         )
 
         # Send connected confirmation
-        await websocket.send_json({
-            "type": MSG_CONNECTED,
-            "session_id": session_id,
-            "mode": mode,
-            "fps": entry.fps,
-        })
+        await websocket.send_json(
+            {
+                "type": MSG_CONNECTED,
+                "session_id": session_id,
+                "mode": mode,
+                "fps": entry.fps,
+            }
+        )
 
         # Send last good frame immediately (screenshot mode)
         if entry.last_frame and mode == MODE_SCREENSHOT:
             import base64  # noqa: PLC0415
-            await websocket.send_json({
-                "type": MSG_FRAME,
-                "mode": "screenshot",
-                "jpeg_b64": base64.b64encode(entry.last_frame).decode(),
-            })
+
+            await websocket.send_json(
+                {
+                    "type": MSG_FRAME,
+                    "mode": "screenshot",
+                    "jpeg_b64": base64.b64encode(entry.last_frame).decode(),
+                }
+            )
 
         # Push session_info — retry for up to 10s waiting for page
         try:
@@ -412,22 +446,28 @@ async def observe_session(
                     entry.viewport_width = _sw
                     entry.viewport_height = _sh
                     # Cache for coordinate scaling
-                    from xiosync.subsystems.xioview.session_manager import cache_viewport  # noqa: PLC0415
+                    from xiosync.subsystems.xioview.session_manager import (
+                        cache_viewport,  # noqa: PLC0415
+                    )
+
                     cache_viewport(session_id, _sw, _sh)
                 except Exception:
                     _sw, _sh = entry.stream_width, entry.stream_height
-                await websocket.send_json({
-                    "type": MSG_SESSION_INFO,
-                    "url": _page.url,
-                    "width": _sw,
-                    "height": _sh,
-                })
+                await websocket.send_json(
+                    {
+                        "type": MSG_SESSION_INFO,
+                        "url": _page.url,
+                        "width": _sw,
+                        "height": _sh,
+                    }
+                )
         except Exception:
             pass
 
         # Start mode-specific background tasks
         if mode == MODE_CDP_SCREENCAST:
             from xiosync.subsystems.xioview.screencast import cdp_screencast_loop  # noqa: PLC0415
+
             t = asyncio.create_task(
                 cdp_screencast_loop(session_id, queue),
                 name=f"xioview-cdp-{session_id[:8]}",
@@ -438,18 +478,24 @@ async def observe_session(
             # C-7: dom_stream injects rrweb JS into the page, which violates
             # stealth/anti-fingerprinting properties. Deprecated in favor of
             # cdp_dom_snapshot or dom_overlay which use only CDP commands.
-            logger.warning("xioview.dom_stream_deprecated", extra={
-                "session_id": session_id,
-                "detail": "dom_stream (rrweb) injects JS that violates stealth mode. "
-                          "Use cdp_dom_snapshot or dom_overlay instead.",
-            })
-            await websocket.send_json({
-                "type": MSG_SESSION_INFO,
-                "deprecation": "dom_stream mode injects rrweb JS into the page, "
-                               "which may trigger bot detection. Consider using "
-                               "cdp_dom_snapshot or dom_overlay mode instead.",
-            })
+            logger.warning(
+                "xioview.dom_stream_deprecated",
+                extra={
+                    "session_id": session_id,
+                    "detail": "dom_stream (rrweb) injects JS that violates stealth mode. "
+                    "Use cdp_dom_snapshot or dom_overlay instead.",
+                },
+            )
+            await websocket.send_json(
+                {
+                    "type": MSG_SESSION_INFO,
+                    "deprecation": "dom_stream mode injects rrweb JS into the page, "
+                    "which may trigger bot detection. Consider using "
+                    "cdp_dom_snapshot or dom_overlay mode instead.",
+                }
+            )
             from xiosync.subsystems.xioview.screencast import inject_rrweb  # noqa: PLC0415
+
             t = asyncio.create_task(
                 inject_rrweb(session_id, queue),
                 name=f"xioview-rrweb-{session_id[:8]}",
@@ -460,9 +506,11 @@ async def observe_session(
             from xiosync.subsystems.xioview.modes.cdp_dom_snapshot import (  # noqa: PLC0415
                 cdp_dom_snapshot_loop,
             )
+
             t = asyncio.create_task(
                 cdp_dom_snapshot_loop(
-                    session_id, queue,
+                    session_id,
+                    queue,
                     get_page=lambda: get_playwright_page(session_id),
                 ),
                 name=f"xioview-domsnapshot-{session_id[:8]}",
@@ -470,17 +518,19 @@ async def observe_session(
             background_tasks.append(t)
 
         elif mode == MODE_DOM_OVERLAY:
-            from xiosync.subsystems.xioview.screencast import cdp_screencast_loop  # noqa: PLC0415
             from xiosync.subsystems.xioview.modes.dom_overlay import (  # noqa: PLC0415
                 dom_overlay_loop,
             )
+            from xiosync.subsystems.xioview.screencast import cdp_screencast_loop  # noqa: PLC0415
+
             t1 = asyncio.create_task(
                 cdp_screencast_loop(session_id, queue),
                 name=f"xioview-cdp-{session_id[:8]}",
             )
             t2 = asyncio.create_task(
                 dom_overlay_loop(
-                    session_id, queue,
+                    session_id,
+                    queue,
                     get_page=lambda: get_playwright_page(session_id),
                 ),
                 name=f"xioview-domoverlay-{session_id[:8]}",
@@ -507,9 +557,13 @@ async def observe_session(
     except WebSocketDisconnect:
         pass
     except Exception as exc:  # noqa: BLE001
-        logger.warning("xioview.session_error", extra={
-            "session_id": session_id, "error": str(exc),
-        })
+        logger.warning(
+            "xioview.session_error",
+            extra={
+                "session_id": session_id,
+                "error": str(exc),
+            },
+        )
     finally:
         # FIX (S-2): Cancel ALL background tasks on disconnect
         for t in background_tasks:
@@ -522,6 +576,7 @@ async def observe_session(
 
 
 # ── Internal Coroutines ────────────────────────────────────────────────────────
+
 
 async def _sender(websocket: WebSocket, queue: asyncio.Queue) -> None:
     """Pump queued messages to the WebSocket client.
@@ -563,6 +618,7 @@ def _check_control_permission(websocket: WebSocket) -> bool:
         return True
     try:
         from xiosync.domain.context import MembershipRole  # noqa: PLC0415
+
         role = ctx.membership_role
         return role in (MembershipRole.ORG_ADMIN, MembershipRole.ORG_OWNER)
     except Exception:
@@ -570,14 +626,24 @@ def _check_control_permission(websocket: WebSocket) -> bool:
 
 
 # Control message types that require session.control RBAC
-_RBAC_CONTROLLED_TYPES = frozenset({
-    "mouse_move", "mousedown", "mouseup", "click", "dblclick",
-    "key", "type", "scroll",
-})
+_RBAC_CONTROLLED_TYPES = frozenset(
+    {
+        "mouse_move",
+        "mousedown",
+        "mouseup",
+        "click",
+        "dblclick",
+        "key",
+        "type",
+        "scroll",
+    }
+)
 
 
 async def _receiver(
-    websocket: WebSocket, session_id: str, org_id: str,
+    websocket: WebSocket,
+    session_id: str,
+    org_id: str,
 ) -> None:
     """Receive and dispatch remote-control commands from the operator.
 
@@ -609,11 +675,14 @@ async def _receiver(
 
         # Q-3 fix: Enforce RBAC for interactive control
         if msg_type in _RBAC_CONTROLLED_TYPES and not _can_control:
-            reg.push_event(session_id, {
-                "type": "interaction_blocked",
-                "reason": "insufficient_permission",
-                "detail": "Remote control requires ORG_ADMIN role or higher.",
-            })
+            reg.push_event(
+                session_id,
+                {
+                    "type": "interaction_blocked",
+                    "reason": "insufficient_permission",
+                    "detail": "Remote control requires ORG_ADMIN role or higher.",
+                },
+            )
             continue
 
         try:
@@ -622,11 +691,18 @@ async def _receiver(
                 reg.push_event(session_id, ack)
                 # Q-4: Audit control interaction
                 _audit.record_control(
-                    msg_type, session_id, org_id, _actor_id,
+                    msg_type,
+                    session_id,
+                    org_id,
+                    _actor_id,
                     detail={k: v for k, v in msg.items() if k != "type"},
                 )
         except Exception as exc:  # noqa: BLE001
-            logger.warning("xioview.control_error", extra={
-                "type": msg_type, "error": str(exc), "session_id": session_id,
-            })
-
+            logger.warning(
+                "xioview.control_error",
+                extra={
+                    "type": msg_type,
+                    "error": str(exc),
+                    "session_id": session_id,
+                },
+            )

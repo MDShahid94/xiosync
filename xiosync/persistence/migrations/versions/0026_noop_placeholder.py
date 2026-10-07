@@ -11,6 +11,7 @@ the actual organisation branding columns.
 
 Safe to run on existing databases: upgrade/downgrade are both no-ops.
 """
+
 from alembic import op  # noqa: F401 — required by Alembic runner
 
 revision: str = "0026"

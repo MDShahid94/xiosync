@@ -30,10 +30,11 @@ Upgrade path (when multi-process is needed):
 For single-process deployments (current architecture: one Colab worker per
 session) this is correct and sufficient.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from xiosync.subsystems.xiorun.launcher import BrowserLauncher
@@ -45,8 +46,8 @@ class XIORunRuntimePool:
     """Process-wide registry of live BrowserLauncher instances and their Pages."""
 
     def __init__(self) -> None:
-        self._launchers: dict[str, "BrowserLauncher"] = {}
-        self._pages:     dict[str, Any] = {}   # session_id → patchright Page
+        self._launchers: dict[str, BrowserLauncher] = {}
+        self._pages: dict[str, Any] = {}  # session_id → patchright Page
         # Active run tracking — covers BOTH script and DAG paradigms.
         # session_id → {"run_id": str, "template_type": "script"|"xioflow_dag"}
         self._active_runs: dict[str, dict[str, str]] = {}
@@ -104,11 +105,14 @@ class XIORunRuntimePool:
             return None
         return page
 
-    def get_launcher(self, session_id: str) -> "BrowserLauncher | None":
+    def get_launcher(self, session_id: str) -> BrowserLauncher | None:
         return self._launchers.get(session_id)
 
     def register_active_run(
-        self, session_id: str, run_id: str, template_type: str,
+        self,
+        session_id: str,
+        run_id: str,
+        template_type: str,
     ) -> None:
         """Mark a session as having an active run (script or DAG).
 
@@ -119,18 +123,26 @@ class XIORunRuntimePool:
             "run_id": run_id,
             "template_type": template_type,
         }
-        logger.debug("xiorun.pool.run_started", extra={
-            "session_id": session_id, "run_id": run_id,
-            "template_type": template_type,
-        })
+        logger.debug(
+            "xiorun.pool.run_started",
+            extra={
+                "session_id": session_id,
+                "run_id": run_id,
+                "template_type": template_type,
+            },
+        )
 
     def unregister_active_run(self, session_id: str) -> None:
         """Mark a session as no longer having an active run."""
         removed = self._active_runs.pop(session_id, None)
         if removed:
-            logger.debug("xiorun.pool.run_ended", extra={
-                "session_id": session_id, "run_id": removed.get("run_id"),
-            })
+            logger.debug(
+                "xiorun.pool.run_ended",
+                extra={
+                    "session_id": session_id,
+                    "run_id": removed.get("run_id"),
+                },
+            )
 
     def is_run_active(self, session_id: str) -> bool:
         """Check if any run (script or DAG) is currently executing on this session.
@@ -143,7 +155,7 @@ class XIORunRuntimePool:
         # Secondary check: launcher's _run_task (DAG-specific, for robustness)
         launcher = self._launchers.get(session_id)
         if launcher:
-            run_task = getattr(launcher, '_run_task', None)
+            run_task = getattr(launcher, "_run_task", None)
             if run_task and not run_task.done():
                 return True
         return False
@@ -174,19 +186,19 @@ class XIORunRuntimePool:
 
     # ── Internal ────────────────────────────────────────────────────────────
 
-    def _register(self, session_id: str, page: Any, launcher: "BrowserLauncher") -> None:
-        self._pages[session_id]     = page
+    def _register(self, session_id: str, page: Any, launcher: BrowserLauncher) -> None:
+        self._pages[session_id] = page
         self._launchers[session_id] = launcher
-        logger.debug("xiorun.pool.registered", extra={
-            "session_id": session_id, "total": len(self._pages)
-        })
+        logger.debug(
+            "xiorun.pool.registered", extra={"session_id": session_id, "total": len(self._pages)}
+        )
 
     def _unregister(self, session_id: str) -> None:
         self._pages.pop(session_id, None)
         self._launchers.pop(session_id, None)
-        logger.debug("xiorun.pool.unregistered", extra={
-            "session_id": session_id, "total": len(self._pages)
-        })
+        logger.debug(
+            "xiorun.pool.unregistered", extra={"session_id": session_id, "total": len(self._pages)}
+        )
 
 
 # ── Module-level singleton ──────────────────────────────────────────────────

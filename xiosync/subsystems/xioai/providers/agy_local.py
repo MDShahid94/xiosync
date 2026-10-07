@@ -7,7 +7,6 @@ import os
 import re
 import shlex
 import shutil
-from typing import Any
 
 from xiosync.subsystems.xioai.providers.base import GenerationProvider, GenerationResult
 
@@ -92,7 +91,7 @@ async def _call_sidecar(req: dict, timeout: int) -> GenerationResult:
     except (ConnectionRefusedError, FileNotFoundError, OSError):
         # Sidecar not running — fall through to direct execution
         return None  # type: ignore[return-value]
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return GenerationResult(
             success=False,
             error=f"agy sidecar timeout ({timeout}s)",
@@ -150,7 +149,9 @@ class AGYLocalProvider(GenerationProvider):
             result = await _call_sidecar(req, timeout)
             if result is not None:
                 return result
-            logger.warning("agy_local: sidecar socket present but unreachable, falling back to direct exec")
+            logger.warning(
+                "agy_local: sidecar socket present but unreachable, falling back to direct exec"
+            )
 
         # ── Path 2: Direct subprocess (fallback / Linux workers) ────────────
         bin_path = os.environ.get("XIOAI_AGY_BIN") or shutil.which("agy")
@@ -179,6 +180,7 @@ class AGYLocalProvider(GenerationProvider):
 
         # On Linux (Colab workers), wrap with `script -qc` to provide a PTY
         import platform
+
         agy_cmd_str = " ".join(shlex.quote(c) for c in cmd)
         if platform.system() == "Linux":
             shell_cmd = f"script -qc {shlex.quote(agy_cmd_str)} /dev/null"
@@ -208,8 +210,14 @@ class AGYLocalProvider(GenerationProvider):
             text = stdout.decode("utf-8", errors="replace").strip().replace("\r", "")
             err_text = stderr.decode("utf-8", errors="replace").strip()
 
-            auth_fail_markers = ["authentication timed out", "authentication failed", "Waiting for authentication"]
-            is_auth_fail = any(m in text for m in auth_fail_markers) or any(m in err_text for m in auth_fail_markers)
+            auth_fail_markers = [
+                "authentication timed out",
+                "authentication failed",
+                "Waiting for authentication",
+            ]
+            is_auth_fail = any(m in text for m in auth_fail_markers) or any(
+                m in err_text for m in auth_fail_markers
+            )
 
             if is_auth_fail:
                 return GenerationResult(
@@ -235,7 +243,7 @@ class AGYLocalProvider(GenerationProvider):
                 provider=self.name,
                 model=model,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return GenerationResult(
                 success=False,
                 error=f"agy timeout ({timeout}s)",

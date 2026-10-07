@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement_click = """        if not rect or rect.get('w', 0) <= 0:
@@ -26,7 +26,7 @@ code = re.sub(
     r"        if not rect or rect\.get\('w', 0\) <= 0:\n            raise Exception\(f\"Element not found for CDP click: \{selectors\}\"\)\n        \n        target_x = rect\['x'\] \+ rect\['w'\] \* random\.uniform\(0\.3, 0\.7\)",
     replacement_click,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 replacement_sleep = """        def uc_sleep(a=0.8, b=2.0):
@@ -50,7 +50,7 @@ code = re.sub(
     r"        def uc_sleep\(a=0\.8, b=2\.0\):\n            time\.sleep\(a \+ random\.random\(\) \* \(b - a\)\)",
     replacement_sleep,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

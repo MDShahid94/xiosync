@@ -72,9 +72,9 @@ def create_app(
     so orchestrators can easily probe them without authentication.
     """
     # P3: Lifespan handler for graceful startup/shutdown.
-    from contextlib import asynccontextmanager
-    from collections.abc import AsyncIterator
     import logging as _logging
+    from collections.abc import AsyncIterator
+    from contextlib import asynccontextmanager
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -82,11 +82,13 @@ def create_app(
         _log.info("startup: XIOSYNC API starting")
         # Register engine singleton so subsystems can reach DB outside request context
         from xiosync.platform.engine_ref import set_engine as _set_engine
+
         _set_engine(engine)
         # Start XIOVIEW background tasks (cleanup timer, audit flusher)
         try:
-            from xiosync.subsystems.xioview.registry import get_registry  # noqa: PLC0415
             from xiosync.subsystems.xioview.audit import get_audit_log  # noqa: PLC0415
+            from xiosync.subsystems.xioview.registry import get_registry  # noqa: PLC0415
+
             get_registry().start_background_tasks()
             get_audit_log().start()
             _log.info("startup: XIOVIEW background tasks started")
@@ -95,8 +97,9 @@ def create_app(
         yield
         # Graceful shutdown: stop XIOVIEW background tasks
         try:
-            from xiosync.subsystems.xioview.registry import get_registry as _xv_reg  # noqa: PLC0415
             from xiosync.subsystems.xioview.audit import get_audit_log as _xv_audit  # noqa: PLC0415
+            from xiosync.subsystems.xioview.registry import get_registry as _xv_reg  # noqa: PLC0415
+
             _xv_reg().stop_background_tasks()
             _xv_audit().stop()
             _log.info("shutdown: XIOVIEW background tasks stopped")
@@ -108,6 +111,7 @@ def create_app(
         if rate_limiter is not None:
             try:
                 from xiosync.core.rate_limit import close_rate_limiter
+
                 close_rate_limiter(rate_limiter)
                 _log.info("shutdown: Redis rate limiter closed")
             except Exception:
@@ -126,6 +130,7 @@ def create_app(
         get_metrics_app,
         setup_opentelemetry,
     )
+
     application.add_middleware(ObservabilityMiddleware)
     setup_opentelemetry()
     metrics_app = get_metrics_app()
@@ -146,63 +151,75 @@ def create_app(
 
     # Task execution — script / http / node on-demand execution
     application.include_router(
-        execution_router, prefix="/api/v1",
+        execution_router,
+        prefix="/api/v1",
         dependencies=[require_capability("task.execute")],
     )
 
     # Dead letter queue — wired
     application.include_router(
-        dlq_router, prefix='/api/v1',
+        dlq_router,
+        prefix="/api/v1",
         dependencies=[require_capability("dlq.manage")],
     )
 
     # Plugins — requires plugin.admin capability
     application.include_router(
-        plugins_router, prefix="/api/v1",
+        plugins_router,
+        prefix="/api/v1",
         dependencies=[require_capability("plugin.admin")],
     )
 
     # Listings — read-only, requires readonly capability
     application.include_router(
-        listings_router, prefix="/api/v1",
+        listings_router,
+        prefix="/api/v1",
         dependencies=[require_capability("readonly")],
     )
 
     # Batch operations — bulk mutations on identities, sessions, runs
     application.include_router(
-        batch_router, prefix="/api/v1",
+        batch_router,
+        prefix="/api/v1",
         dependencies=[require_capability("workflow.manage")],
     )
 
     # SSE streaming — requires event.manage capability
     application.include_router(
-        streaming_router, prefix="/api/v1",
+        streaming_router,
+        prefix="/api/v1",
         dependencies=[require_capability("event.manage")],
     )
 
     # Triggers — requires trigger.manage capability
     application.include_router(
-        triggers_router, prefix="/api/v1",
+        triggers_router,
+        prefix="/api/v1",
         dependencies=[require_capability("trigger.manage")],
     )
 
     # Task output streams — requires task.execute capability
     application.include_router(
-        task_streams_router, prefix="/api/v1",
+        task_streams_router,
+        prefix="/api/v1",
         dependencies=[require_capability("task.execute")],
     )
 
     # Metering — read-only
     from xiosync.api.routers.metering import router as metering_router
+
     application.include_router(
-        metering_router, prefix="/api/v1",
+        metering_router,
+        prefix="/api/v1",
         dependencies=[require_capability("metering.read")],
     )
 
     # Actors — requires actor.manage capability
     from xiosync.api.routers.actors import router as actors_router
+
     application.include_router(
-        actors_router, prefix="/api/v1",
+        actors_router,
+        prefix="/api/v1",
         dependencies=[require_capability("actor.manage")],
     )
 
@@ -210,135 +227,172 @@ def create_app(
     # current org info requires readonly
     from xiosync.api.routers.organizations import router as organizations_router
     from xiosync.api.routers.projects import router as projects_router
+
     # Projects router carries per-route RBAC (project.read / project.manage).
     application.include_router(projects_router, prefix="/api/v1")
     application.include_router(
-        organizations_router, prefix="/api/v1",
+        organizations_router,
+        prefix="/api/v1",
     )
 
     # --- XIOFLOW: workflow template library (workflow.manage capability)
     from xiosync.subsystems.xioflow.api.templates import router as xioflow_templates_router
+
     application.include_router(
-        xioflow_templates_router, prefix="/api/v1",
+        xioflow_templates_router,
+        prefix="/api/v1",
         dependencies=[require_capability("workflow.manage")],
     )
 
     # --- XIOFLOW: run/DLQ/events management
     from xiosync.subsystems.xioflow.api.events import router as xioflow_events_router
+
     application.include_router(
-        xioflow_events_router, prefix="/api/v1",
+        xioflow_events_router,
+        prefix="/api/v1",
         dependencies=[require_capability("workflow.manage")],
     )
 
     # --- XIOFLOW: worker-internal endpoints (no JWT/RBAC — X-XIOSYNC-Internal auth)
     from xiosync.subsystems.xioflow.api.events import internal_router as xioflow_internal_router
+
     application.include_router(
-        xioflow_internal_router, prefix="/api/v1",
+        xioflow_internal_router,
+        prefix="/api/v1",
         # No dependencies — internal_router validates X-XIOSYNC-Internal header itself
     )
 
     # --- XIOFLOW: memory node recording + graph (teacher extension + operators)
     from xiosync.subsystems.xioflow.api.memory import router as xioflow_memory_router
+
     application.include_router(
-        xioflow_memory_router, prefix="/api/v1",
+        xioflow_memory_router,
+        prefix="/api/v1",
         dependencies=[require_capability("workflow.manage")],
     )
 
     # --- XIOFLOW: compute node registry (plugin sandbox)
     from xiosync.subsystems.xioflow.api.compute_nodes import router as xioflow_compute_router
+
     application.include_router(
-        xioflow_compute_router, prefix="/api/v1",
+        xioflow_compute_router,
+        prefix="/api/v1",
         dependencies=[require_capability("workflow.manage")],
     )
 
     # --- XIOFLOW: run dispatch + lifecycle + HITL pause/resume + stats
     from xiosync.subsystems.xioflow.api.runs import router as xioflow_runs_router
+
     application.include_router(
-        xioflow_runs_router, prefix="/api/v1",
+        xioflow_runs_router,
+        prefix="/api/v1",
         dependencies=[require_capability("workflow.manage")],
     )
 
     # --- XIOFLOW: DAG deploy + script→DAG convert (Gemini structured output)
     from xiosync.subsystems.xioflow.api.dag import router as xioflow_dag_router
+
     application.include_router(
-        xioflow_dag_router, prefix="/api/v1",
+        xioflow_dag_router,
+        prefix="/api/v1",
         dependencies=[require_capability("workflow.manage")],
     )
 
     # --- XIOFLOW: trigger management (cron + event triggers CRUD)
     from xiosync.subsystems.xioflow.api.triggers import router as xioflow_triggers_router
+
     application.include_router(
-        xioflow_triggers_router, prefix="/api/v1",
+        xioflow_triggers_router,
+        prefix="/api/v1",
         dependencies=[require_capability("workflow.manage")],
     )
 
     from xiosync.subsystems.xioflow.api.workflows import router as xioflow_workflows_router
+
     application.include_router(
-        xioflow_workflows_router, prefix="/api/v1",
+        xioflow_workflows_router,
+        prefix="/api/v1",
         dependencies=[require_capability("workflow.manage")],
     )
 
     # --- XIOVIEW: universal browser session observation (WS stream + remote control)
-    from xiosync.subsystems.xioview.api.observe import (  # noqa: PLC0415
-        router as xioview_router,
+    from xiosync.subsystems.xioview.api.observe import (
         public_router as xioview_public_router,
     )
+    from xiosync.subsystems.xioview.api.observe import (  # noqa: PLC0415
+        router as xioview_router,
+    )
+
     # Public endpoints — attach (uses internal-secret) + viewer HTML (no auth)
     application.include_router(xioview_public_router, prefix="/api/v1")
     # Protected endpoints — observe WS, fps control, session list
     application.include_router(
-        xioview_router, prefix="/api/v1",
+        xioview_router,
+        prefix="/api/v1",
         dependencies=[require_capability("session.observe")],
     )
 
-
     # --- XIORUN: browser runtime management + internal Colab callbacks
     from xiosync.subsystems.xiorun.api import router as xiorun_router
+
     # Internal /internal/xiorun/* callbacks have no RBAC — they validate by
     # XIOSYNC_INTERNAL_SECRET Bearer token. Session management routes
     # (/xiorun/sessions) reuse session.observe capability.
     application.include_router(
-        xiorun_router, prefix="/api/v1",
+        xiorun_router,
+        prefix="/api/v1",
     )
 
     # --- VAULT: universal encrypted secret store (org-scoped + platform-global)
     from xiosync.subsystems.vault.api import router as vault_router
+
     application.include_router(
-        vault_router, prefix="/api/v1",
+        vault_router,
+        prefix="/api/v1",
         dependencies=[require_capability("vault.read")],
     )
 
     # --- STORAGE: universal blob storage provider registry + object index
     from xiosync.subsystems.storage.api import router as storage_router
+
     application.include_router(
-        storage_router, prefix="/api/v1",
+        storage_router,
+        prefix="/api/v1",
         dependencies=[require_capability("storage.read")],
     )
 
     # --- IDENTITIES: universal external-identity + credential registry
     from xiosync.subsystems.identities.api import router as identities_router
+
     application.include_router(
-        identities_router, prefix="/api/v1",
+        identities_router,
+        prefix="/api/v1",
         dependencies=[require_capability("identities.read")],
     )
 
     # --- INTEGRATIONS: universal external connector registry
     from xiosync.subsystems.integrations.api import integrations_router
+
     application.include_router(
-        integrations_router, prefix="/api/v1",
+        integrations_router,
+        prefix="/api/v1",
         dependencies=[require_capability("integrations.manage")],
     )
 
     # --- WORKER CONFIG: server-side config delivery (GET/PUT /workers/{id}/config)
     from xiosync.subsystems.integrations.api import worker_config_router
+
     application.include_router(
-        worker_config_router, prefix="/api/v1",
+        worker_config_router,
+        prefix="/api/v1",
         dependencies=[require_capability("worker.manage")],
     )
 
     from xiosync.api.routers.workers_crud import router as workers_crud_router
+
     application.include_router(
-        workers_crud_router, prefix="/api/v1",
+        workers_crud_router,
+        prefix="/api/v1",
         dependencies=[require_capability("worker.manage")],
     )
 
@@ -346,103 +400,131 @@ def create_app(
     # Admin routes (POST/GET /workers/bootstrap-tokens) require worker.manage.
     # Public route (GET /workers/bootstrap/{token}) has no RBAC — token = credential.
     from xiosync.api.routers.worker_bootstrap import router as worker_bootstrap_router
+
     application.include_router(
-        worker_bootstrap_router, prefix="/api/v1",
+        worker_bootstrap_router,
+        prefix="/api/v1",
     )
 
     # --- WORKER LOCKS: Redis-backed distributed lock API for Drive FUSE coordination
     from xiosync.api.routers.worker_locks import router as worker_locks_router
+
     application.include_router(
-        worker_locks_router, prefix="/api/v1",
+        worker_locks_router,
+        prefix="/api/v1",
     )
 
     # --- PROXY TUNNEL: WebSocket TCP tunnel for Colab workers (bypasses TS ACL)
     from xiosync.api.routers.proxy_tunnel import router as proxy_tunnel_router  # noqa: PLC0415
+
     application.include_router(proxy_tunnel_router)
 
     from xiosync.api.routers.secrets_crud import router as secrets_crud_router
+
     application.include_router(
-        secrets_crud_router, prefix="/api/v1",
+        secrets_crud_router,
+        prefix="/api/v1",
         dependencies=[require_capability("secret.manage")],
     )
 
     from xiosync.api.routers.shares import router as shares_router
+
     application.include_router(
-        shares_router, prefix="/api/v1",
+        shares_router,
+        prefix="/api/v1",
         dependencies=[require_capability("share.manage")],
     )
 
     from xiosync.api.routers.webhooks import router as webhooks_router
+
     application.include_router(
-        webhooks_router, prefix="/api/v1",
+        webhooks_router,
+        prefix="/api/v1",
         dependencies=[require_capability("webhook.manage")],
     )
 
     from xiosync.api.routers.ontology import router as ontology_router
+
     application.include_router(
-        ontology_router, prefix="/api/v1",
+        ontology_router,
+        prefix="/api/v1",
         dependencies=[require_capability("ontology.manage")],
     )
 
     from xiosync.api.routers.operations import router as operations_router
+
     application.include_router(
-        operations_router, prefix="/api/v1",
+        operations_router,
+        prefix="/api/v1",
         dependencies=[require_capability("event.manage")],
     )
 
     # --- XIOAI: AI Gateway Subsystem ----------
     from xiosync.subsystems.xioai.api.routes import router as xioai_router
-    application.include_router(xioai_router, prefix="/api/v1/xioai",
-                               tags=["xioai"])
+
+    application.include_router(xioai_router, prefix="/api/v1/xioai", tags=["xioai"])
 
     # --- XIOGRID Decoupled Services ----------
     from xiosync.api.routers.browser_pools import router as browser_pools_router
+
     application.include_router(
-        browser_pools_router, prefix="/api/v1",
+        browser_pools_router,
+        prefix="/api/v1",
         dependencies=[require_capability("browser_pool.manage")],
     )
 
     from xiosync.api.routers.browser_sessions import router as browser_sessions_router
+
     application.include_router(
-        browser_sessions_router, prefix="/api/v1",
+        browser_sessions_router,
+        prefix="/api/v1",
         dependencies=[require_capability("browser_session.manage")],
     )
 
     from xiosync.api.routers.compute_runtimes import router as compute_runtimes_router
+
     application.include_router(
-        compute_runtimes_router, prefix="/api/v1",
+        compute_runtimes_router,
+        prefix="/api/v1",
         dependencies=[require_capability("compute_runtime.manage")],
     )
 
     from xiosync.api.routers.mesh_networks import router as mesh_networks_router
+
     application.include_router(
-        mesh_networks_router, prefix="/api/v1",
+        mesh_networks_router,
+        prefix="/api/v1",
         dependencies=[require_capability("mesh_network.manage")],
     )
 
     # --- Genesis Phase 3: Self-referential protocol (Gaps G-5, G-7) ----------
     from xiosync.api.routers.protocol import router as protocol_router
+
     application.include_router(
-        protocol_router, prefix="/api/v1",
+        protocol_router,
+        prefix="/api/v1",
         dependencies=[require_capability("capability.manage")],
     )
 
     from xiosync.api.routers.capability_groups import router as capability_groups_router
+
     application.include_router(
-        capability_groups_router, prefix="/api/v1",
+        capability_groups_router,
+        prefix="/api/v1",
         dependencies=[require_capability("capability.manage")],
     )
 
     # --- XIOGRID PPPoE Exit Nodes (browser_pool.manage capability) -----------
     from xiosync.subsystems.xiogrid.api.pppoe_nodes import router as pppoe_nodes_router
+
     application.include_router(
-        pppoe_nodes_router, prefix="/api/v1",
+        pppoe_nodes_router,
+        prefix="/api/v1",
         dependencies=[require_capability("browser_pool.manage")],
     )
 
     # Gap P-4: API version governance middleware.
     application.add_middleware(VersionGovernanceMiddleware)
-
 
     @application.exception_handler(RequestValidationError)
     async def validation_problem(request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -502,6 +584,7 @@ def create_app(
     @application.exception_handler(Exception)
     async def unhandled_problem(request: Request, exc: Exception) -> JSONResponse:
         import logging
+
         logging.getLogger("xiosync.api").exception("unhandled_error", exc_info=exc)
         return JSONResponse(
             status_code=500,
@@ -581,9 +664,7 @@ def create_production_app() -> FastAPI:
     logger.info("All startup checks passed; application ready")
     limiter = create_rate_limiter(config.redis_url) if config.redis_url else None
     config_fn = (
-        (lambda route_class: get_rate_limit_config(route_class, config))
-        if limiter
-        else None
+        (lambda route_class: get_rate_limit_config(route_class, config)) if limiter else None
     )
     return create_app(
         session_service=service,

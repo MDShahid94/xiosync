@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -193,12 +193,9 @@ class SecretRefService:
         names: list[str],
     ) -> list[SecretRefRecord]:
         """Resolve secret references by name. Returns only active secrets."""
-        stmt = (
-            select(SecretRef)
-            .where(
-                SecretRef.organization_id == context.organization_id,
-                SecretRef.name.in_(names),
-                SecretRef.state == "active",
-            )
+        stmt = select(SecretRef).where(
+            SecretRef.organization_id == context.organization_id,
+            SecretRef.name.in_(names),
+            SecretRef.state == "active",
         )
         return [_record(row) for row in self._session.scalars(stmt).all()]

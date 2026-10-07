@@ -470,9 +470,7 @@ class TestTrustTierEnforcement:
                 assert enrollment.approved_at is None
 
                 # Only after explicit approval does the state change.
-                approved = svc.approve_worker(
-                    ctx, enrollment.id, approved_by=owner_id
-                )
+                approved = svc.approve_worker(ctx, enrollment.id, approved_by=owner_id)
 
             assert approved.enrollment_state == "approved"
             assert approved.approved_by == owner_id

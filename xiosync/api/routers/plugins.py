@@ -102,9 +102,7 @@ def _problem(
 class InstallRequest(StrictModel):
     """Body for ``POST /plugins/{plugin_id}/install`` (INV-PLUGIN-3)."""
 
-    requested_by: uuid.UUID = Field(
-        description="The actor ID requesting the installation."
-    )
+    requested_by: uuid.UUID = Field(description="The actor ID requesting the installation.")
 
 
 class ApproveRequest(StrictModel):
@@ -391,11 +389,13 @@ def _installation_response(record: Any) -> InstallationResponse:
         grant_id=record.grant_id,
     )
 
-from xiosync.api.router_registry import register_router
+
 from xiosync.api.middleware.rbac import require_capability
+from xiosync.api.router_registry import register_router
+
 register_router(
     router,
-    prefix='/api/v1',
+    prefix="/api/v1",
     tags=["plugins"],
     dependencies=[require_capability("plugin.admin")],
 )

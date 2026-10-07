@@ -27,6 +27,7 @@ Teardown sequence:
 On proxy loss (ExitGuard callback):
   Emergency save → hard kill → state='failed' → cancel DAG task
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -53,11 +54,13 @@ def _set_session_state(
     Caller owns no transaction — this commits internally.
     """
     try:
+        import uuid  # noqa: PLC0415
+
         from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
         from xiosync.subsystems.xiogrid.services.browser_sessions import (  # noqa: PLC0415
             BrowserSessionService,
         )
-        import uuid  # noqa: PLC0415
 
         with OrmSession(engine) as sess:
             svc = BrowserSessionService(sess)
@@ -68,9 +71,10 @@ def _set_session_state(
             )
             sess.commit()
     except Exception as exc:
-        logger.warning("xiorun.launcher.set_state_error", extra={
-            "session_id": session_id, "state": state, "error": str(exc)
-        })
+        logger.warning(
+            "xiorun.launcher.set_state_error",
+            extra={"session_id": session_id, "state": state, "error": str(exc)},
+        )
 
 
 def _get_pool_max_instances(pool_id: str, engine: object) -> int:
@@ -126,20 +130,20 @@ class BrowserLauncher:
         org_id: str,
         engine: object,
     ) -> None:
-        self.session_id  = session_id
+        self.session_id = session_id
         self.identity_id = identity_id
-        self.org_id      = org_id
-        self._engine     = engine
+        self.org_id = org_id
+        self._engine = engine
 
         # Set during launch:
-        self._browser: Any     = None
-        self._context: Any     = None
-        self._page:    Any     = None
-        self._pw:      Any     = None
+        self._browser: Any = None
+        self._context: Any = None
+        self._page: Any = None
+        self._pw: Any = None
         self._node_client: Any = None
         self._guard_task: asyncio.Task | None = None
-        self._run_task:   asyncio.Task | None = None
-        self._profile_dir: str | None = None   # local path on Colab
+        self._run_task: asyncio.Task | None = None
+        self._profile_dir: str | None = None  # local path on Colab
         self._had_drive_profile: bool = False
         self._drive_object_key: str | None = None
 
@@ -157,6 +161,7 @@ class BrowserLauncher:
     ):
         """Orchestrate full browser launch. Returns live patchright Page."""
         from patchright.async_api import async_playwright  # noqa: PLC0415
+
         from xiosync.subsystems.xiorun.exit_guard import ExitGuard  # noqa: PLC0415
         from xiosync.subsystems.xiorun.fingerprint import (  # noqa: PLC0415
             build_cdp_ua_override,
@@ -175,31 +180,29 @@ class BrowserLauncher:
         # ── 1. Concurrency gate ────────────────────────────────────────────
         if pool_id:
             max_inst = _get_pool_max_instances(pool_id, self._engine)
-            active   = _get_active_session_count(pool_id, self._engine)
+            active = _get_active_session_count(pool_id, self._engine)
             if active >= max_inst:
-                raise PoolFullError(
-                    f"Pool {pool_id}: {active}/{max_inst} instances active"
-                )
+                raise PoolFullError(f"Pool {pool_id}: {active}/{max_inst} instances active")
 
         # ── 2. Fingerprint profile ─────────────────────────────────────────
-        profile    = resolve_fingerprint_profile(self.session_id, self._engine)
+        profile = resolve_fingerprint_profile(self.session_id, self._engine)
         chrome_ver = get_chrome_version()
         profile_dict = {}
         if profile:
             profile_dict = {
-                "webgl_vendor":   profile.webgl_vendor,
+                "webgl_vendor": profile.webgl_vendor,
                 "webgl_renderer": profile.webgl_renderer,
-                "platform":       profile.platform,
-                "ch_platform":    profile.ch_platform,
-                "ch_arch":        profile.ch_arch,
-                "cores":          profile.cores,
-                "ram_gb":         profile.ram_gb,
-                "screen_width":   profile.screen_width,
-                "screen_height":  profile.screen_height,
-                "dpr":            profile.dpr,
-                "cam_name":       profile.cam_name,
-                "is_mobile":      profile.is_mobile,
-                "ua_template":    profile.ua_template,
+                "platform": profile.platform,
+                "ch_platform": profile.ch_platform,
+                "ch_arch": profile.ch_arch,
+                "cores": profile.cores,
+                "ram_gb": profile.ram_gb,
+                "screen_width": profile.screen_width,
+                "screen_height": profile.screen_height,
+                "dpr": profile.dpr,
+                "cam_name": profile.cam_name,
+                "is_mobile": profile.is_mobile,
+                "ua_template": profile.ua_template,
             }
 
         # ── 3. Profile restore (Drive tar.gz — PRIMARY) ───────────────────
@@ -217,11 +220,14 @@ class BrowserLauncher:
                 self._had_drive_profile = collab_profile_dir is not None
 
         self._profile_dir = collab_profile_dir
-        logger.info("xiorun.launcher.profile_status", extra={
-            "session_id":         self.session_id,
-            "had_drive_profile":  self._had_drive_profile,
-            "profile_dir":        collab_profile_dir,
-        })
+        logger.info(
+            "xiorun.launcher.profile_status",
+            extra={
+                "session_id": self.session_id,
+                "had_drive_profile": self._had_drive_profile,
+                "profile_dir": collab_profile_dir,
+            },
+        )
 
         # ── 4. Command Colab — launch Chromium ────────────────────────────
         resp = await self._node_client.launch_browser(
@@ -234,10 +240,12 @@ class BrowserLauncher:
         cdp_ws_url = resp["cdp_ws_url"]
 
         # ── 5. CDP attach from Mac Mini over Tailscale ────────────────────
-        self._pw      = await async_playwright().start()
+        self._pw = await async_playwright().start()
         self._browser = await self._pw.chromium.connect_over_cdp(cdp_ws_url)
         self._context = self._browser.contexts[0]
-        self._page    = self._context.pages[0] if self._context.pages else await self._context.new_page()
+        self._page = (
+            self._context.pages[0] if self._context.pages else await self._context.new_page()
+        )
 
         # ── 6. Fingerprint injection ───────────────────────────────────────
         if profile:
@@ -246,6 +254,7 @@ class BrowserLauncher:
             if proxy_url:
                 try:
                     from xiosync.subsystems.xiorun.geo_lookup import lookup_geo  # noqa: PLC0415
+
                     # Resolve exit node ID for caching
                     exit_node_id = self._resolve_exit_node_id()
                     # Get public IP from exit node for geo lookup
@@ -258,17 +267,24 @@ class BrowserLauncher:
                         )
                         geo_lat = geo.lat
                         geo_lon = geo.lon
-                        logger.info("xiorun.launcher.geo_resolved", extra={
-                            "session_id": self.session_id,
-                            "city": geo.city,
-                            "timezone": geo.timezone,
-                            "lat": geo.lat,
-                            "lon": geo.lon,
-                        })
+                        logger.info(
+                            "xiorun.launcher.geo_resolved",
+                            extra={
+                                "session_id": self.session_id,
+                                "city": geo.city,
+                                "timezone": geo.timezone,
+                                "lat": geo.lat,
+                                "lon": geo.lon,
+                            },
+                        )
                 except Exception as exc:
-                    logger.warning("xiorun.launcher.geo_lookup_error", extra={
-                        "session_id": self.session_id, "error": str(exc),
-                    })
+                    logger.warning(
+                        "xiorun.launcher.geo_lookup_error",
+                        extra={
+                            "session_id": self.session_id,
+                            "error": str(exc),
+                        },
+                    )
 
             # ── 6b. CDP UA override ───────────────────────────────────────
             cdp_session = await self._context.new_cdp_session(self._page)
@@ -282,11 +298,14 @@ class BrowserLauncher:
 
             # ── 6c. JS init script (26 layers via HTML Injection) ────────────────
             _stealth_js = build_init_script(
-                profile, chrome_ver,
-                geo_lat=geo_lat, geo_lon=geo_lon,
+                profile,
+                chrome_ver,
+                geo_lat=geo_lat,
+                geo_lon=geo_lon,
             )
             if _stealth_js:
                 _inject_tag = f"<script>{_stealth_js}</script>"
+
                 async def _stealth_route_handler(route):
                     try:
                         resp = await route.fetch()
@@ -301,19 +320,29 @@ class BrowserLauncher:
                                     break
                             if not injected:
                                 import re as _re
-                                m = _re.search(r'(<head[^>]*>)', body, _re.IGNORECASE)
+
+                                m = _re.search(r"(<head[^>]*>)", body, _re.IGNORECASE)
                                 if m:
                                     pos = m.end()
                                     body = body[:pos] + _inject_tag + body[pos:]
-                                elif _re.search(r'<html[^>]*>', body, _re.IGNORECASE):
-                                    body = _re.sub(r'(<html[^>]*>)', r'\1' + _inject_tag, body, count=1, flags=_re.IGNORECASE)
+                                elif _re.search(r"<html[^>]*>", body, _re.IGNORECASE):
+                                    body = _re.sub(
+                                        r"(<html[^>]*>)",
+                                        r"\1" + _inject_tag,
+                                        body,
+                                        count=1,
+                                        flags=_re.IGNORECASE,
+                                    )
                                 else:
                                     body = _inject_tag + body
-                            await route.fulfill(status=resp.status, headers=dict(resp.headers), body=body)
+                            await route.fulfill(
+                                status=resp.status, headers=dict(resp.headers), body=body
+                            )
                         else:
                             await route.fulfill(response=resp)
                     except Exception:
                         await route.continue_()
+
                 await self._context.route("**/*", _stealth_route_handler)
 
         # ── 7. Cookie fallback (only if no Drive profile) ─────────────────
@@ -322,14 +351,16 @@ class BrowserLauncher:
             if state and state.get("cookies"):
                 now_sec = time.time()
                 valid = [
-                    c for c in state["cookies"]
+                    c
+                    for c in state["cookies"]
                     if (c.get("expires", -1) or -1) <= 0 or c["expires"] > now_sec
                 ]
                 if valid:
                     await self._context.add_cookies(valid)
-                    logger.info("xiorun.launcher.cookie_fallback_loaded", extra={
-                        "session_id": self.session_id, "count": len(valid)
-                    })
+                    logger.info(
+                        "xiorun.launcher.cookie_fallback_loaded",
+                        extra={"session_id": self.session_id, "count": len(valid)},
+                    )
 
         # ── 8. Exit guard ──────────────────────────────────────────────────
         if proxy_url:
@@ -344,27 +375,36 @@ class BrowserLauncher:
             )
 
         # ── 9. Emergency save on browser disconnect ────────────────────────
-        self._browser.on("disconnected", lambda: asyncio.create_task(
-            self._emergency_save(),
-            name=f"xiorun-emergency-{self.session_id[:8]}",
-        ))
+        self._browser.on(
+            "disconnected",
+            lambda: asyncio.create_task(
+                self._emergency_save(),
+                name=f"xiorun-emergency-{self.session_id[:8]}",
+            ),
+        )
 
         # ── 10. Mark active ────────────────────────────────────────────────
         _set_session_state(
-            self.session_id, "active", self._engine,
+            self.session_id,
+            "active",
+            self._engine,
             worker_ts_ip=worker_ts_ip,
         )
 
         # ── 11. Register ───────────────────────────────────────────────────
         from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+
         get_runtime_pool()._register(self.session_id, self._page, self)
         _register_page(self.session_id, self._page)
 
-        logger.info("xiorun.launcher.launched", extra={
-            "session_id":  self.session_id,
-            "worker_ip":   worker_ts_ip,
-            "cdp_ws_url":  cdp_ws_url,
-        })
+        logger.info(
+            "xiorun.launcher.launched",
+            extra={
+                "session_id": self.session_id,
+                "worker_ip": worker_ts_ip,
+                "cdp_ws_url": cdp_ws_url,
+            },
+        )
         return self._page
 
     async def teardown(self, page_url: str | None = None) -> None:
@@ -393,14 +433,15 @@ class BrowserLauncher:
             try:
                 state = await self._context.storage_state()
                 from xiosync.subsystems.xiorun.session_state import SessionStateIO  # noqa: PLC0415
+
                 SessionStateIO(self._engine).save(
                     self.identity_id, self.org_id, state, page_url=page_url
                 )
             except Exception as exc:
-                logger.warning("xiorun.launcher.cookie_save_error", extra={
-                    "session_id": self.session_id, "error": str(exc)
-                })
-
+                logger.warning(
+                    "xiorun.launcher.cookie_save_error",
+                    extra={"session_id": self.session_id, "error": str(exc)},
+                )
 
         # ── 4. Terminate Chromium on Colab ────────────────────────────────
         if self._node_client:
@@ -426,9 +467,9 @@ class BrowserLauncher:
 
     async def _on_proxy_lost(self) -> None:
         """ExitGuard callback — hard kill on exit-node loss. No cookie save for Google."""
-        logger.error("xiorun.launcher.proxy_lost_killing_session", extra={
-            "session_id": self.session_id
-        })
+        logger.error(
+            "xiorun.launcher.proxy_lost_killing_session", extra={"session_id": self.session_id}
+        )
 
         # Emergency save (non-Google cookies only)
         await self._emergency_save()
@@ -464,25 +505,31 @@ class BrowserLauncher:
                 return
             state = await self._context.storage_state()
             from xiosync.subsystems.xiorun.session_state import SessionStateIO  # noqa: PLC0415
+
             SessionStateIO(self._engine).save(
-                self.identity_id, self.org_id, state,
+                self.identity_id,
+                self.org_id,
+                state,
                 page_url=_EMERGENCY_GUARD_URL,
                 emergency=True,
             )
         except Exception as exc:
-            logger.warning("xiorun.launcher.emergency_save_error", extra={
-                "session_id": self.session_id, "error": str(exc)
-            })
+            logger.warning(
+                "xiorun.launcher.emergency_save_error",
+                extra={"session_id": self.session_id, "error": str(exc)},
+            )
 
     def _unregister(self) -> None:
         """Remove from both registries (idempotent)."""
         try:
             from xiosync.subsystems.xiorun.runtime_pool import get_runtime_pool  # noqa: PLC0415
+
             get_runtime_pool()._unregister(self.session_id)
         except Exception:
             pass
         try:
             from xiosync.worker.run_dispatcher import _unregister_page  # noqa: PLC0415
+
             _unregister_page(self.session_id)
         except Exception:
             pass
@@ -522,4 +569,3 @@ class BrowserLauncher:
                 return str(row) if row else None
         except Exception:
             return None
-

@@ -87,21 +87,30 @@ class XioflowMemoryNode(Base):
 
     # ── Identity ────────────────────────────────────────────────────────
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=new_id,
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=new_id,
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False,
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id"),
+        nullable=False,
     )
     project_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("projects.id"),
+        UUID(as_uuid=True),
+        ForeignKey("projects.id"),
     )
 
     # ── Memory Tier ─────────────────────────────────────────────────────
     tier: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'project_experimental'"),
+        Text,
+        nullable=False,
+        server_default=text("'project_experimental'"),
     )
     status: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'ACTIVE'"),
+        Text,
+        nullable=False,
+        server_default=text("'ACTIVE'"),
     )
 
     # ── Semantic Identity ───────────────────────────────────────────────
@@ -110,7 +119,9 @@ class XioflowMemoryNode(Base):
 
     # ── Device Context Hash ─────────────────────────────────────────────
     context_hash: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'default'"),
+        Text,
+        nullable=False,
+        server_default=text("'default'"),
     )
     device_type: Mapped[str | None] = mapped_column(Text)
     os_name: Mapped[str | None] = mapped_column(Text)
@@ -120,77 +131,109 @@ class XioflowMemoryNode(Base):
 
     # ── 10-Tier Locator Payload ─────────────────────────────────────────
     face_value: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb"),
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
     )
     place_value: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb"),
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
     )
 
     # ── Execution Definition ────────────────────────────────────────────
     action_type: Mapped[str] = mapped_column(Text, nullable=False)
     action_params: Mapped[dict[str, Any]] = mapped_column(
-        JSONB, nullable=False, server_default=text("'{}'::jsonb"),
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
     )
     output_var: Mapped[str | None] = mapped_column(Text)
     execution_mode: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'sequential'"),
+        Text,
+        nullable=False,
+        server_default=text("'sequential'"),
     )
 
     # ── Graph Edges ─────────────────────────────────────────────────────
     previous_intent: Mapped[str | None] = mapped_column(Text)
     next_nodes: Mapped[list[uuid.UUID] | None] = mapped_column(
-        ARRAY(UUID(as_uuid=True)), server_default=text("'{}'"),
+        ARRAY(UUID(as_uuid=True)),
+        server_default=text("'{}'"),
     )
     condition: Mapped[str | None] = mapped_column(
-        Text, server_default=text("'default'"),
+        Text,
+        server_default=text("'default'"),
     )
 
     # ── Volatility & Plugin Binding ─────────────────────────────────────
     volatility_type: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'static'"),
+        Text,
+        nullable=False,
+        server_default=text("'static'"),
     )
     fallback_plugin: Mapped[str | None] = mapped_column(Text)
 
     # ── Bayesian Consensus Scores ───────────────────────────────────────
     bayesian_score: Mapped[float] = mapped_column(
-        Float, nullable=False, server_default=text("0.5"),
+        Float,
+        nullable=False,
+        server_default=text("0.5"),
     )
     ema_score: Mapped[float] = mapped_column(
-        Float, nullable=False, server_default=text("0.5"),
+        Float,
+        nullable=False,
+        server_default=text("0.5"),
     )
     total_vote_weight: Mapped[float] = mapped_column(
-        Float, nullable=False, server_default=text("0.0"),
+        Float,
+        nullable=False,
+        server_default=text("0.0"),
     )
     promotions: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("0"),
+        Integer,
+        nullable=False,
+        server_default=text("0"),
     )
     ref_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("0"),
+        Integer,
+        nullable=False,
+        server_default=text("0"),
     )
 
     # ── Locator Priority Cache ──────────────────────────────────────────
     locator_priority: Mapped[list[int] | None] = mapped_column(
-        ARRAY(Integer), server_default=text("'{1,2,3,4,5,6,7,8,9,10}'"),
+        ARRAY(Integer),
+        server_default=text("'{1,2,3,4,5,6,7,8,9,10}'"),
     )
 
     # ── Provenance ──────────────────────────────────────────────────────
     recorded_by: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("actors.id"),
+        UUID(as_uuid=True),
+        ForeignKey("actors.id"),
     )
     recording_method: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default=text("'auto_learn'"),
+        Text,
+        nullable=False,
+        server_default=text("'auto_learn'"),
     )
     client_id: Mapped[str | None] = mapped_column(Text)
 
     # ── Timestamps ──────────────────────────────────────────────────────
     created_at: Mapped[datetime] = mapped_column(
-        _ts, nullable=False, server_default=text("now()"),
+        _ts,
+        nullable=False,
+        server_default=text("now()"),
     )
     last_used: Mapped[datetime] = mapped_column(
-        _ts, nullable=False, server_default=text("now()"),
+        _ts,
+        nullable=False,
+        server_default=text("now()"),
     )
     updated_at: Mapped[datetime] = mapped_column(
-        _ts, nullable=False, server_default=text("now()"),
+        _ts,
+        nullable=False,
+        server_default=text("now()"),
     )
 
     # ── Lookup Optimization ─────────────────────────────────────────────

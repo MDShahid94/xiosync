@@ -8,6 +8,7 @@ Respects XIOSYNC ontology:
 
 Output is a DAG JSON spec compatible with ``DAGDeployer.deploy_from_json()``.
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,16 +33,18 @@ class DAGGraphBuilder:
     """
 
     # Action types that should NOT be included in the DAG
-    _SKIP_ACTION_TYPES: frozenset[str] = frozenset({
-        "wait_for_selector",
-        "wait_for_load_state",
-    })
+    _SKIP_ACTION_TYPES: frozenset[str] = frozenset(
+        {
+            "wait_for_selector",
+            "wait_for_load_state",
+        }
+    )
 
     def build(
         self,
-        trace: Any,                    # TraceCollector
-        context: dict[str, Any],       # Device/viewport context
-        template_name: str = "",       # For template registration
+        trace: Any,  # TraceCollector
+        context: dict[str, Any],  # Device/viewport context
+        template_name: str = "",  # For template registration
     ) -> dict[str, Any]:
         """Build a deployable DAG JSON from a trace.
 
@@ -70,10 +73,7 @@ class DAGGraphBuilder:
             }
 
         # Filter out control-only actions
-        meaningful = [
-            a for a in trace.actions
-            if a.action_type not in self._SKIP_ACTION_TYPES
-        ]
+        meaningful = [a for a in trace.actions if a.action_type not in self._SKIP_ACTION_TYPES]
 
         if not meaningful:
             return {
@@ -137,24 +137,28 @@ class DAGGraphBuilder:
         # Terminal 'done' node
         last = meaningful[-1]
         done_intent = f"{last.step_name}__done"
-        nodes.append({
-            "domain": trace.domain,
-            "intent": done_intent,
-            "action_type": "done",
-            "action_params": {"next_intents": []},
-            "face_value": {},
-            "place_value": {},
-            "previous_intent": last.intent,
-            "context_hash": context_hash,
-            "recording_method": "auto_trace",
-            "tier": "project_experimental",
-        })
+        nodes.append(
+            {
+                "domain": trace.domain,
+                "intent": done_intent,
+                "action_type": "done",
+                "action_params": {"next_intents": []},
+                "face_value": {},
+                "place_value": {},
+                "previous_intent": last.intent,
+                "context_hash": context_hash,
+                "recording_method": "auto_trace",
+                "tier": "project_experimental",
+            }
+        )
 
         root_intent = nodes[0]["intent"]
 
         logger.info(
             "dag_graph_builder: built DAG with %d nodes (domain=%s, root=%s)",
-            len(nodes), trace.domain, root_intent,
+            len(nodes),
+            trace.domain,
+            root_intent,
         )
 
         return {
@@ -172,11 +176,11 @@ class DAGGraphBuilder:
     def _map_action_type(self, action_type: str) -> str:
         """Map trace action types to valid xioflow_memory_node action types."""
         mapping = {
-            "press": "fill",         # press is a fill variant
-            "select_option": "fill", # select is a fill variant
-            "check": "click",       # check/uncheck are click variants
+            "press": "fill",  # press is a fill variant
+            "select_option": "fill",  # select is a fill variant
+            "check": "click",  # check/uncheck are click variants
             "uncheck": "click",
-            "hover": "click",       # hover is a click variant for DAG
+            "hover": "click",  # hover is a click variant for DAG
             "extract_data": "extract_data",
         }
         return mapping.get(action_type, action_type)

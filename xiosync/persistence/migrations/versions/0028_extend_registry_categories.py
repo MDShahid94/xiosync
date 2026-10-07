@@ -7,6 +7,7 @@ defined in migration 0005 / revised in 0017.
 Revision ID: 0028_extend_registry_categories
 Revises:     0027_xioflow_memory_tables
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -25,14 +26,12 @@ _ALLOWED = (
     "edge_type",
     "event_type",
     "lifecycle_state",
-    "trigger_type",    # ← added: cron / event / webhook
-    "plugin_type",     # ← added: for future plugin category registry
+    "trigger_type",  # ← added: cron / event / webhook
+    "plugin_type",  # ← added: for future plugin category registry
     "registry_category",  # ← added: meta-categories for registry_categories table
 )
 
-_CHECK_EXPR = "category = ANY (ARRAY[{}])".format(
-    ", ".join(f"'{v}'::text" for v in _ALLOWED)
-)
+_CHECK_EXPR = "category = ANY (ARRAY[{}])".format(", ".join(f"'{v}'::text" for v in _ALLOWED))
 
 
 def upgrade() -> None:
@@ -41,18 +40,12 @@ def upgrade() -> None:
         "ALTER TABLE type_registry "
         "DROP CONSTRAINT IF EXISTS ck_type_registry_ck_type_registry_category_allowed"
     )
-    op.execute(
-        "ALTER TABLE type_registry "
-        "DROP CONSTRAINT IF EXISTS category_allowed"
-    )
+    op.execute("ALTER TABLE type_registry DROP CONSTRAINT IF EXISTS category_allowed")
     op.execute(
         "ALTER TABLE type_registry_aliases "
         "DROP CONSTRAINT IF EXISTS ck_type_registry_aliases_ck_type_registry_aliases_category_allowed"
     )
-    op.execute(
-        "ALTER TABLE type_registry_aliases "
-        "DROP CONSTRAINT IF EXISTS category_allowed"
-    )
+    op.execute("ALTER TABLE type_registry_aliases DROP CONSTRAINT IF EXISTS category_allowed")
 
     # Re-add with extended set
     op.execute(
@@ -68,15 +61,17 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Restore original narrow set
     _OLD_ALLOWED = (
-        "actor_type", "actor_subtype", "capability_type",
-        "operation_type", "edge_type", "event_type", "lifecycle_state",
+        "actor_type",
+        "actor_subtype",
+        "capability_type",
+        "operation_type",
+        "edge_type",
+        "event_type",
+        "lifecycle_state",
     )
-    _OLD_EXPR = "category = ANY (ARRAY[{}])".format(
-        ", ".join(f"'{v}'::text" for v in _OLD_ALLOWED)
-    )
+    _OLD_EXPR = "category = ANY (ARRAY[{}])".format(", ".join(f"'{v}'::text" for v in _OLD_ALLOWED))
     op.execute(
-        "ALTER TABLE type_registry "
-        "DROP CONSTRAINT IF EXISTS ck_type_registry_category_allowed"
+        "ALTER TABLE type_registry DROP CONSTRAINT IF EXISTS ck_type_registry_category_allowed"
     )
     op.execute(
         f"ALTER TABLE type_registry "

@@ -11,33 +11,34 @@ Covers:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # T-2: Data Flow
 # ═══════════════════════════════════════════════════════════════════════════════
-
 from xiosync.domain.workflows import (
     DataFlowError,
-    WorkflowCycleError,
-    WorkflowSpecError,
     resolve_node_inputs,
-    validate_data_flow,
     validate_workflow_dag,
 )
 
 
 def _linear_spec(
-    *, input_from: Any = None, extra_nodes: list[dict[str, Any]] | None = None,
+    *,
+    input_from: Any = None,
+    extra_nodes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build a two-node linear DAG: A → B."""
     nodes = [
         {"id": "A", "capability_id": str(uuid.uuid4())},
-        {"id": "B", "capability_id": str(uuid.uuid4()), **({"input_from": input_from} if input_from is not None else {})},
+        {
+            "id": "B",
+            "capability_id": str(uuid.uuid4()),
+            **({"input_from": input_from} if input_from is not None else {}),
+        },
     ]
     if extra_nodes:
         nodes.extend(extra_nodes)
@@ -155,9 +156,9 @@ class TestResolveNodeInputs:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from xiosync.domain.secrets import (
-    InvalidSecretStateError,
     PROVIDER_TYPES,
     SECRET_STATES,
+    InvalidSecretStateError,
     validate_provider,
     validate_secret_state,
 )
@@ -188,12 +189,12 @@ class TestSecretsDomain:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 from xiosync.domain.triggers import (
-    TRIGGER_TYPES,
     TRIGGER_STATES,
+    TRIGGER_TYPES,
+    next_cron_fire,
     validate_cron_expression,
     validate_trigger_state,
     validate_trigger_type,
-    next_cron_fire,
 )
 
 
@@ -229,16 +230,16 @@ class TestTriggersDomain:
             validate_cron_expression("* * * * * *")
 
     def test_next_cron_fire_advances(self) -> None:
-        now = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
         next_fire = next_cron_fire("*/5 * * * *", now)
         assert next_fire is not None
         assert next_fire > now
 
     def test_next_cron_fire_every_minute(self) -> None:
-        now = datetime(2026, 1, 1, 12, 30, 0, tzinfo=timezone.utc)
+        now = datetime(2026, 1, 1, 12, 30, 0, tzinfo=UTC)
         next_fire = next_cron_fire("* * * * *", now)
         assert next_fire is not None
-        assert next_fire == datetime(2026, 1, 1, 12, 31, 0, tzinfo=timezone.utc)
+        assert next_fire == datetime(2026, 1, 1, 12, 31, 0, tzinfo=UTC)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -247,14 +248,17 @@ class TestTriggersDomain:
 
 from xiosync.domain.authorization import (
     Actor as AuthActor,
-    Decision,
+)
+from xiosync.domain.authorization import (
     Grant,
-    Organization as AuthOrg,
     Resource,
     authorize,
+    get_supported_constraints,
     register_constraint_evaluator,
     unregister_constraint_evaluator,
-    get_supported_constraints,
+)
+from xiosync.domain.authorization import (
+    Organization as AuthOrg,
 )
 
 
@@ -274,6 +278,7 @@ class TestExtensibleConstraints:
 
     def test_custom_constraint_register_and_deny(self) -> None:
         """Register a custom constraint, verify it's checked, then unregister."""
+
         def _always_deny(value: Any, *args: Any) -> bool:
             return False
 
@@ -281,21 +286,32 @@ class TestExtensibleConstraints:
         try:
             assert "test_custom" in get_supported_constraints()
 
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             org_id = uuid.uuid4()
-            actor = AuthActor(id=uuid.uuid4(), organization_id=org_id, state="active", trust_tier="admin")
+            actor = AuthActor(
+                id=uuid.uuid4(), organization_id=org_id, state="active", trust_tier="admin"
+            )
             org = AuthOrg(id=org_id, state="active")
             resource = Resource(type="test", id=uuid.uuid4(), organization_id=org_id)
             grant = Grant(
-                id=uuid.uuid4(), organization_id=org_id, actor_id=actor.id,
-                capability="test.cap", state="active",
+                id=uuid.uuid4(),
+                organization_id=org_id,
+                actor_id=actor.id,
+                capability="test.cap",
+                state="active",
                 constraints={"test_custom": "anything"},
             )
 
             decision = authorize(
-                requested_organization_id=org_id, actor=actor, organization=org,
-                resource=resource, capability="test.cap", operation="read",
-                grants=[grant], arguments={}, now=now,
+                requested_organization_id=org_id,
+                actor=actor,
+                organization=org,
+                resource=resource,
+                capability="test.cap",
+                operation="read",
+                grants=[grant],
+                arguments={},
+                now=now,
             )
             assert not decision.allowed
             assert decision.reason == "constraints_unsatisfied"
@@ -304,47 +320,70 @@ class TestExtensibleConstraints:
 
     def test_custom_constraint_register_and_allow(self) -> None:
         """Register a custom constraint that always allows."""
+
         def _always_allow(value: Any, *args: Any) -> bool:
             return True
 
         register_constraint_evaluator("test_custom_allow", _always_allow)
         try:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             org_id = uuid.uuid4()
-            actor = AuthActor(id=uuid.uuid4(), organization_id=org_id, state="active", trust_tier="admin")
+            actor = AuthActor(
+                id=uuid.uuid4(), organization_id=org_id, state="active", trust_tier="admin"
+            )
             org = AuthOrg(id=org_id, state="active")
             resource = Resource(type="test", id=uuid.uuid4(), organization_id=org_id)
             grant = Grant(
-                id=uuid.uuid4(), organization_id=org_id, actor_id=actor.id,
-                capability="test.cap", state="active",
+                id=uuid.uuid4(),
+                organization_id=org_id,
+                actor_id=actor.id,
+                capability="test.cap",
+                state="active",
                 constraints={"test_custom_allow": "anything"},
             )
 
             decision = authorize(
-                requested_organization_id=org_id, actor=actor, organization=org,
-                resource=resource, capability="test.cap", operation="read",
-                grants=[grant], arguments={}, now=now,
+                requested_organization_id=org_id,
+                actor=actor,
+                organization=org,
+                resource=resource,
+                capability="test.cap",
+                operation="read",
+                grants=[grant],
+                arguments={},
+                now=now,
             )
             assert decision.allowed
         finally:
             unregister_constraint_evaluator("test_custom_allow")
 
     def test_unknown_constraint_denies_by_default(self) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         org_id = uuid.uuid4()
-        actor = AuthActor(id=uuid.uuid4(), organization_id=org_id, state="active", trust_tier="admin")
+        actor = AuthActor(
+            id=uuid.uuid4(), organization_id=org_id, state="active", trust_tier="admin"
+        )
         org = AuthOrg(id=org_id, state="active")
         resource = Resource(type="test", id=uuid.uuid4(), organization_id=org_id)
         grant = Grant(
-            id=uuid.uuid4(), organization_id=org_id, actor_id=actor.id,
-            capability="test.cap", state="active",
+            id=uuid.uuid4(),
+            organization_id=org_id,
+            actor_id=actor.id,
+            capability="test.cap",
+            state="active",
             constraints={"completely_unknown_constraint": True},
         )
 
         decision = authorize(
-            requested_organization_id=org_id, actor=actor, organization=org,
-            resource=resource, capability="test.cap", operation="read",
-            grants=[grant], arguments={}, now=now,
+            requested_organization_id=org_id,
+            actor=actor,
+            organization=org,
+            resource=resource,
+            capability="test.cap",
+            operation="read",
+            grants=[grant],
+            arguments={},
+            now=now,
         )
         assert not decision.allowed
 
@@ -359,8 +398,8 @@ class TestExtensibleConstraints:
 # P-4: Version Governance Middleware
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from starlette.testclient import TestClient
 from fastapi import FastAPI
+from starlette.testclient import TestClient
 
 
 class TestVersionGovernanceMiddleware:
@@ -438,13 +477,15 @@ class TestConfigKeys:
 
     def test_api_deprecation_config_registered(self) -> None:
         from xiosync.platform.config import _KNOWN_PREFIXED_KEYS
+
         assert "XIOSYNC_API_DEPRECATION_CONFIG" in _KNOWN_PREFIXED_KEYS
 
     def test_cross_org_sharing_registered(self) -> None:
         from xiosync.platform.config import _KNOWN_PREFIXED_KEYS
+
         assert "XIOSYNC_ENABLE_CROSS_ORG_SHARING" in _KNOWN_PREFIXED_KEYS
 
     def test_sharing_enabled_registered(self) -> None:
         from xiosync.platform.config import _KNOWN_PREFIXED_KEYS
-        assert "XIOSYNC_SHARING_ENABLED" in _KNOWN_PREFIXED_KEYS
 
+        assert "XIOSYNC_SHARING_ENABLED" in _KNOWN_PREFIXED_KEYS

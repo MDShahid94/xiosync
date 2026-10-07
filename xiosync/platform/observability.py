@@ -88,12 +88,12 @@ def setup_opentelemetry(service_name: str = "xiosync-api") -> bool:
     """
     try:
         from opentelemetry import trace
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-        from opentelemetry.sdk.resources import Resource
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
         from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
     except ImportError:
         logger.info("opentelemetry_not_available: install opentelemetry-sdk to enable tracing")
         return False
@@ -131,7 +131,8 @@ def get_metrics_app() -> Any | None:
 
         # Register default process and platform collectors.
         try:
-            from prometheus_client import ProcessCollector, PlatformCollector
+            from prometheus_client import PlatformCollector, ProcessCollector
+
             ProcessCollector(registry=registry)
             PlatformCollector(registry=registry)
         except Exception:

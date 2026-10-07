@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Mapping
+from typing import Any
 
-from sqlalchemy import select, update, delete
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from xiosync.domain.context import OrgContext
@@ -178,7 +179,7 @@ class BrowserPoolService:
 
         now = datetime.now(UTC)
         old_instances = pool.max_instances
-        
+
         self._session.execute(
             update(BrowserPool)
             .where(BrowserPool.id == pool_id)
@@ -221,9 +222,7 @@ class BrowserPoolService:
         self._session.flush()
 
         self._session.expire(pool)
-        fresh_pool = self._session.scalar(
-            select(BrowserPool).where(BrowserPool.id == pool_id)
-        )
+        fresh_pool = self._session.scalar(select(BrowserPool).where(BrowserPool.id == pool_id))
         return _record(fresh_pool)  # type: ignore
 
     def destroy_pool(
@@ -242,10 +241,8 @@ class BrowserPoolService:
             raise BrowserPoolNotFoundError(pool_id)
 
         now = datetime.now(UTC)
-        
-        self._session.execute(
-            delete(BrowserPool).where(BrowserPool.id == pool_id)
-        )
+
+        self._session.execute(delete(BrowserPool).where(BrowserPool.id == pool_id))
 
         op_id = new_id()
         self._session.add(

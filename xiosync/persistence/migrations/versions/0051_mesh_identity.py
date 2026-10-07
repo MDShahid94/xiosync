@@ -7,6 +7,7 @@ Create Date: 2026-09-21
 Stable serial for mesh nodes, Colab account → mesh node binding,
 and reform of account_ip_bindings to use identity_id.
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -15,6 +16,7 @@ revision = "0051"
 down_revision = "0050"
 branch_labels = None
 depends_on = None
+
 
 def upgrade():
     op.execute("""
@@ -46,6 +48,7 @@ def upgrade():
     ALTER TABLE xiogrid_account_ip_bindings ALTER COLUMN google_account DROP NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_aib_identity ON xiogrid_account_ip_bindings(organization_id, identity_id) WHERE identity_id IS NOT NULL;
     """)
+
 
 def downgrade():
     op.execute("""

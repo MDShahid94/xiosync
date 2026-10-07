@@ -26,6 +26,7 @@ Usage:
 Run this ONCE in Colab with Drive FUSE mounted at /content/drive.
 Safe to re-run: canonical files are skipped, DB is idempotent (ON CONFLICT DO UPDATE).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -36,34 +37,42 @@ from pathlib import Path
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
 ap = argparse.ArgumentParser(description="Rename XIOBR TS state files to XIOSYNC canonical format")
-ap.add_argument("--dry-run",    action="store_true", help="Print actions without executing")
-ap.add_argument("--drive-root", default=os.environ.get("XIO_DRIVE_ROOT",
-                "/content/drive/MyDrive/XIOSYNC-Shared"),
-                help="Path to XIOSYNC-Shared Drive folder (default: /content/drive/MyDrive/XIOSYNC-Shared)")
-ap.add_argument("--db-url",     default=os.environ.get("DATABASE_URL", ""),
-                help="PostgreSQL DSN — needed to update storage_objects.object_key in DB")
-ap.add_argument("--no-db",      action="store_true", help="Skip DB update (Drive rename only)")
+ap.add_argument("--dry-run", action="store_true", help="Print actions without executing")
+ap.add_argument(
+    "--drive-root",
+    default=os.environ.get("XIO_DRIVE_ROOT", "/content/drive/MyDrive/XIOSYNC-Shared"),
+    help="Path to XIOSYNC-Shared Drive folder (default: /content/drive/MyDrive/XIOSYNC-Shared)",
+)
+ap.add_argument(
+    "--db-url",
+    default=os.environ.get("DATABASE_URL", ""),
+    help="PostgreSQL DSN — needed to update storage_objects.object_key in DB",
+)
+ap.add_argument("--no-db", action="store_true", help="Skip DB update (Drive rename only)")
 args = ap.parse_args()
 
-DRY        = args.dry_run
+DRY = args.dry_run
 DRIVE_ROOT = Path(args.drive_root)
-DB_URL     = args.db_url
-NO_DB      = args.no_db
+DB_URL = args.db_url
+NO_DB = args.no_db
 
 TS_DIR = DRIVE_ROOT / "ts_states"
 
-def _p(*a): print(*a, flush=True)
+
+def _p(*a):
+    print(*a, flush=True)
 
 
 # ── Node-name prefix normalisation ────────────────────────────────────────────
 
 _PREFIX_MAP = [
     # (pattern, replacement)  — applied left to right, first match wins
-    (re.compile(r"^xiobr--"),    "xiosync--"),
-    (re.compile(r"^xiogrid--"),  "xiosync--"),
+    (re.compile(r"^xiobr--"), "xiosync--"),
+    (re.compile(r"^xiogrid--"), "xiosync--"),
     (re.compile(r"^colab-master$"), "xiosync--default--worker"),
-    (re.compile(r"^colab-"),     "xiosync--default--"),
+    (re.compile(r"^colab-"), "xiosync--default--"),
 ]
+
 
 def _normalise_node_name(raw: str) -> str:
     """Map legacy XIOBR node name to canonical XIOSYNC node name."""
@@ -74,6 +83,7 @@ def _normalise_node_name(raw: str) -> str:
 
 
 # ── Gather candidate files ─────────────────────────────────────────────────────
+
 
 def _gather() -> list[tuple[Path, str]]:
     """Return list of (file_path, canonical_key) for files that need renaming."""
@@ -90,7 +100,7 @@ def _gather() -> list[tuple[Path, str]]:
             # Strip .state suffix to get bare node name
             bare = f.stem  # e.g. "xiobr--default--worker"
             canonical_node = _normalise_node_name(bare)
-            canonical_key  = f"ts_states/TS_{canonical_node}.state"
+            canonical_key = f"ts_states/TS_{canonical_node}.state"
             candidates.append((f, canonical_key))
     else:
         _p(f"  ⚠️  ts_states/ dir not found at {TS_DIR} — will scan root only")
@@ -101,13 +111,14 @@ def _gather() -> list[tuple[Path, str]]:
             continue
         bare = f.stem
         canonical_node = _normalise_node_name(bare)
-        canonical_key  = f"ts_states/TS_{canonical_node}.state"
+        canonical_key = f"ts_states/TS_{canonical_node}.state"
         candidates.append((f, canonical_key))
 
     return candidates
 
 
 # ── DB update helper ───────────────────────────────────────────────────────────
+
 
 def _db_update(renames: list[tuple[str, str]]) -> None:
     """Update storage_objects rows: old_key → new_key."""
@@ -123,6 +134,7 @@ def _db_update(renames: list[tuple[str, str]]) -> None:
 
     try:
         from sqlalchemy import create_engine, text  # noqa: PLC0415
+
         engine = create_engine(DB_URL, pool_pre_ping=True)
         with engine.begin() as conn:
             for old_key, new_key in renames:
@@ -139,7 +151,9 @@ def _db_update(renames: list[tuple[str, str]]) -> None:
                 if result.rowcount:
                     _p(f"    🗄️  DB: updated {result.rowcount} row(s): {old_key} → {new_key}")
                 else:
-                    _p(f"    🗄️  DB: no row found for {old_key} (may have been stored under new key already)")
+                    _p(
+                        f"    🗄️  DB: no row found for {old_key} (may have been stored under new key already)"
+                    )
         _p("  ✅ DB update complete")
     except ImportError:
         _p("  ⚠️  sqlalchemy not available — skipping DB update")
@@ -148,6 +162,7 @@ def _db_update(renames: list[tuple[str, str]]) -> None:
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     _p(f"\n{'[DRY RUN] ' if DRY else ''}XIOSYNC TS State Rename")
@@ -172,9 +187,9 @@ def main() -> None:
     renamed: list[tuple[str, str]] = []  # (old_object_key, new_object_key)
 
     for src_path, canonical_key in candidates:
-        old_rel   = str(src_path.relative_to(DRIVE_ROOT))
-        new_abs   = DRIVE_ROOT / canonical_key
-        conflict  = new_abs.exists() and new_abs != src_path
+        old_rel = str(src_path.relative_to(DRIVE_ROOT))
+        new_abs = DRIVE_ROOT / canonical_key
+        conflict = new_abs.exists() and new_abs != src_path
 
         _p(f"  {old_rel}")
         _p(f"    → {canonical_key}")

@@ -18,9 +18,7 @@ down_revision: str | None = "0013"
 branch_labels = None
 depends_on = None
 
-_ORG_ISOLATION = (
-    "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
-)
+_ORG_ISOLATION = "organization_id = NULLIF(current_setting('app.current_org', true), '')::uuid"
 
 
 def upgrade() -> None:
@@ -95,9 +93,7 @@ def upgrade() -> None:
     # RLS
     op.execute("ALTER TABLE secret_refs ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE secret_refs FORCE ROW LEVEL SECURITY")
-    op.execute(
-        f"CREATE POLICY org_isolation ON secret_refs USING ({_ORG_ISOLATION})"
-    )
+    op.execute(f"CREATE POLICY org_isolation ON secret_refs USING ({_ORG_ISOLATION})")
 
     # ------------------------------------------------------------------
     # R-5: workflow_triggers — cron, event, and webhook triggers
@@ -185,9 +181,7 @@ def upgrade() -> None:
     # RLS
     op.execute("ALTER TABLE workflow_triggers ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE workflow_triggers FORCE ROW LEVEL SECURITY")
-    op.execute(
-        f"CREATE POLICY org_isolation ON workflow_triggers USING ({_ORG_ISOLATION})"
-    )
+    op.execute(f"CREATE POLICY org_isolation ON workflow_triggers USING ({_ORG_ISOLATION})")
 
 
 def downgrade() -> None:

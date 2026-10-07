@@ -126,6 +126,7 @@ class EventService:
 
         # M-1: quota enforcement — check daily event limit before appending.
         from xiosync.services.quotas import QuotaService
+
         QuotaService(self._session).check_daily_events(context.organization_id)
 
         event_id = new_id()
@@ -157,18 +158,23 @@ class EventService:
         # M-3: metering instrumentation — record event_count metric.
         try:
             from xiosync.services.metering import MeteringService
+
             MeteringService(self._session).record_usage(
-                context, metric_type="event_count",
+                context,
+                metric_type="event_count",
             )
         except Exception:
             pass  # Metering is best-effort; never fail the event append.
 
         # R-2: webhook dispatch — find matching subscriptions and log deliveries.
         try:
-            from xiosync.services.webhooks import WebhookService, sign_payload as _sign
+            from xiosync.services.webhooks import WebhookService
+            from xiosync.services.webhooks import sign_payload as _sign
+
             wh_svc = WebhookService(self._session)
             matching = wh_svc.get_matching_subscriptions(
-                context, event_type=event_type,
+                context,
+                event_type=event_type,
             )
             for sub in matching:
                 dispatch_payload = {

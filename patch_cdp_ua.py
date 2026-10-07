@@ -1,6 +1,6 @@
 import re
 
-with open("colab/xiorun_agent.py", "r") as f:
+with open("colab/xiorun_agent.py") as f:
     code = f.read()
 
 replacement = """            # Build CDP UA override dynamically
@@ -37,7 +37,7 @@ code = re.sub(
     r"            driver\.execute_cdp_cmd\(\n                \"Network\.setUserAgentOverride\",(.*?)\"wow64\":          False,\n                    \},\n                \},\n            \)",
     replacement,
     code,
-    flags=re.DOTALL
+    flags=re.DOTALL,
 )
 
 with open("colab/xiorun_agent.py", "w") as f:

@@ -83,11 +83,13 @@ def get_group(name: str, request: Request) -> dict[str, Any] | JSONResponse:
         "organization_id": str(row.organization_id) if row.organization_id else None,
     }
 
-from xiosync.api.router_registry import register_router
+
 from xiosync.api.middleware.rbac import require_capability
+from xiosync.api.router_registry import register_router
+
 register_router(
     router,
-    prefix='/api/v1',
+    prefix="/api/v1",
     tags=["capability_groups"],
     dependencies=[require_capability("capability.manage")],
 )

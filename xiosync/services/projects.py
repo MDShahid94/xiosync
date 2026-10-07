@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Mapping
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -160,17 +161,15 @@ class ProjectService:
         )
         if project is None:
             raise ProjectNotFoundError(project_id)
-            
+
         if project.state == "archived":
             return _record(project)
 
         now = datetime.now(UTC)
         old_state = project.state
-        
+
         self._session.execute(
-            update(Project)
-            .where(Project.id == project_id)
-            .values(state="archived", updated_at=now)
+            update(Project).where(Project.id == project_id).values(state="archived", updated_at=now)
         )
 
         op_id = self._operations.record_operation(
@@ -204,9 +203,7 @@ class ProjectService:
         self._session.flush()
 
         self._session.expire(project)
-        fresh_project = self._session.scalar(
-            select(Project).where(Project.id == project_id)
-        )
+        fresh_project = self._session.scalar(select(Project).where(Project.id == project_id))
         return _record(fresh_project)  # type: ignore
 
     def update_project(
@@ -243,11 +240,7 @@ class ProjectService:
         if len(values) == 1:
             return _record(project)
 
-        self._session.execute(
-            update(Project)
-            .where(Project.id == project_id)
-            .values(**values)
-        )
+        self._session.execute(update(Project).where(Project.id == project_id).values(**values))
 
         op_id = self._operations.record_operation(
             context,
@@ -262,8 +255,7 @@ class ProjectService:
         # Build a JSON-safe payload: exclude datetime values (e.g. updated_at)
         # that JSONB cannot serialise directly.
         event_payload = {
-            k: v.isoformat() if hasattr(v, "isoformat") else v
-            for k, v in values.items()
+            k: v.isoformat() if hasattr(v, "isoformat") else v for k, v in values.items()
         }
         self._events.append(
             context,
@@ -276,9 +268,7 @@ class ProjectService:
             payload=event_payload,
         )
         self._session.flush()
-        
+
         self._session.expire(project)
-        fresh_project = self._session.scalar(
-            select(Project).where(Project.id == project_id)
-        )
+        fresh_project = self._session.scalar(select(Project).where(Project.id == project_id))
         return _record(fresh_project)  # type: ignore

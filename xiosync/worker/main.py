@@ -25,7 +25,7 @@ import os
 import signal
 import sys
 import threading
-from typing import Callable
+from collections.abc import Callable
 
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session as OrmSession
@@ -51,7 +51,7 @@ def _run_loop(
     interval: float,
 ) -> None:
     """Run a worker function in a loop until shutdown is signaled."""
-    logger.info(f"worker_loop_started", extra={"loop": name, "interval": interval})
+    logger.info("worker_loop_started", extra={"loop": name, "interval": interval})
     while not _shutdown.is_set():
         try:
             with OrmSession(engine) as session:
@@ -107,14 +107,14 @@ def main() -> None:
     event_interval = float(os.environ.get("WORKER_EVENT_INTERVAL", "5"))
 
     # Import worker functions.
-    from xiosync.worker.ticker import tick_cron_triggers
-    from xiosync.worker.reaper import reap_expired_leases
-    from xiosync.worker.webhook_dispatcher import dispatch_pending_webhooks
+    from xiosync.subsystems.xiorun.health_loop import tick_xiorun_health
     from xiosync.worker.event_router import evaluate_event_triggers
-    from xiosync.worker.run_dispatcher import dispatch_pending_runs
     from xiosync.worker.pppoe_health import tick_pppoe_health
     from xiosync.worker.pppoe_warmpool import tick_pppoe_warmpool
-    from xiosync.subsystems.xiorun.health_loop import tick_xiorun_health
+    from xiosync.worker.reaper import reap_expired_leases
+    from xiosync.worker.run_dispatcher import dispatch_pending_runs
+    from xiosync.worker.ticker import tick_cron_triggers
+    from xiosync.worker.webhook_dispatcher import dispatch_pending_webhooks
 
     # PPPoE health check interval (default 60s)
     pppoe_health_interval = float(os.environ.get("WORKER_PPPOE_HEALTH_INTERVAL", "60"))
@@ -138,9 +138,9 @@ def main() -> None:
         run_dispatch_interval = float(os.environ.get("WORKER_RUN_DISPATCH_INTERVAL", "5"))
         loops.append(("run-dispatcher", dispatch_pending_runs, run_dispatch_interval))
     if args.mode in ("all",):
-        loops.append(("pppoe-health",   tick_pppoe_health,   pppoe_health_interval))
+        loops.append(("pppoe-health", tick_pppoe_health, pppoe_health_interval))
         loops.append(("pppoe-warmpool", tick_pppoe_warmpool, pppoe_warmpool_interval))
-        loops.append(("xiorun-health",  tick_xiorun_health,  xiorun_health_interval))
+        loops.append(("xiorun-health", tick_xiorun_health, xiorun_health_interval))
 
     if not loops:
         logger.error("no_loops_selected")

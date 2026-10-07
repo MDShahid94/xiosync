@@ -82,19 +82,17 @@ class JsonFormatter(logging.Formatter):
     """
 
     # Email: user@domain → u***@domain
-    _EMAIL_RE = __import__('re').compile(
-        r'\b([a-zA-Z0-9._%+-])[a-zA-Z0-9._%+-]*@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b'
+    _EMAIL_RE = __import__("re").compile(
+        r"\b([a-zA-Z0-9._%+-])[a-zA-Z0-9._%+-]*@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\b"
     )
     # Phone-like: 10+ digits optionally with +, -, spaces
-    _PHONE_RE = __import__('re').compile(
-        r'(?<!\d)(\+?\d[\d\s\-]{8,}\d)(?!\d)'
-    )
+    _PHONE_RE = __import__("re").compile(r"(?<!\d)(\+?\d[\d\s\-]{8,}\d)(?!\d)")
 
     @classmethod
     def _scrub_pii(cls, msg: str) -> str:
         """Mask emails and phone numbers in log message strings."""
-        msg = cls._EMAIL_RE.sub(r'\1***@\2', msg)
-        msg = cls._PHONE_RE.sub('[PHONE_REDACTED]', msg)
+        msg = cls._EMAIL_RE.sub(r"\1***@\2", msg)
+        msg = cls._PHONE_RE.sub("[PHONE_REDACTED]", msg)
         return msg
 
     def format(self, record: logging.LogRecord) -> str:
@@ -113,11 +111,12 @@ class JsonFormatter(logging.Formatter):
         # OpenTelemetry trace context propagation
         try:
             from opentelemetry import trace as _otrace
+
             _span = _otrace.get_current_span()
             _ctx = _span.get_span_context()
             if _ctx and _ctx.trace_id:
-                payload["trace_id"] = format(_ctx.trace_id, '032x')
-                payload["span_id"] = format(_ctx.span_id, '016x')
+                payload["trace_id"] = format(_ctx.trace_id, "032x")
+                payload["span_id"] = format(_ctx.span_id, "016x")
         except (ImportError, Exception):
             pass
 

@@ -205,9 +205,7 @@ def test_self_loop_is_rejected(
         engine.dispose()
 
 
-def test_acyclic_diamond_is_allowed(
-    migrated_database_url: str, app_role_database_url: str
-) -> None:
+def test_acyclic_diamond_is_allowed(migrated_database_url: str, app_role_database_url: str) -> None:
     """A DAG with converging paths (a→b, a→c, b→d, c→d) is not a cycle."""
     organization_id = _seed_org(migrated_database_url)
     a = _seed_actor(migrated_database_url, organization_id)

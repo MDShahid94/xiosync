@@ -9,14 +9,11 @@ Tests:
 
 from __future__ import annotations
 
-import uuid
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
-
 from xiosync.api.routers.capability_groups import router as capability_groups_router
 from xiosync.domain.context import MembershipRole, OrgContext, PlatformRole
 from xiosync.persistence.models.registry import CapabilityGroup

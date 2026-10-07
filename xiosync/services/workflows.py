@@ -8,6 +8,7 @@ This module provides:
 The integration tests in tests/integration/test_workflows.py exercise this
 service end-to-end against a real PostgreSQL schema.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -17,7 +18,6 @@ from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-
 
 # ---------------------------------------------------------------------------
 # Exceptions
@@ -229,8 +229,9 @@ class WorkflowService:
         input_data: dict[str, Any] | None = None,
     ) -> uuid.UUID:
         """Enqueue a task for execution and return its id."""
-        from xiosync.platform.ids import new_id
         import json as _json
+
+        from xiosync.platform.ids import new_id
 
         task_id = new_id()
         self._session.execute(
@@ -257,10 +258,14 @@ class WorkflowService:
 
     def get_task(self, context: Any, task_id: uuid.UUID) -> TaskRecord | None:
         """Fetch a TaskRecord by id, returning None if not found."""
-        row = self._session.execute(
-            text("SELECT * FROM workflow_tasks WHERE id = :id"),
-            {"id": task_id},
-        ).mappings().first()
+        row = (
+            self._session.execute(
+                text("SELECT * FROM workflow_tasks WHERE id = :id"),
+                {"id": task_id},
+            )
+            .mappings()
+            .first()
+        )
         if row is None:
             return None
         return self._row_to_task(row)
@@ -281,10 +286,14 @@ class WorkflowService:
         TaskNotFoundError   – task does not exist
         UnleaseableError    – task is not in ``queued`` state
         """
-        row = self._session.execute(
-            text("SELECT * FROM workflow_tasks WHERE id = :id"),
-            {"id": task_id},
-        ).mappings().first()
+        row = (
+            self._session.execute(
+                text("SELECT * FROM workflow_tasks WHERE id = :id"),
+                {"id": task_id},
+            )
+            .mappings()
+            .first()
+        )
 
         if row is None:
             raise TaskNotFoundError(task_id)
@@ -305,10 +314,14 @@ class WorkflowService:
             {"lease": lease_id, "by": leased_by, "exp": expires_at, "id": task_id},
         )
 
-        updated = self._session.execute(
-            text("SELECT * FROM workflow_tasks WHERE id = :id"),
-            {"id": task_id},
-        ).mappings().first()
+        updated = (
+            self._session.execute(
+                text("SELECT * FROM workflow_tasks WHERE id = :id"),
+                {"id": task_id},
+            )
+            .mappings()
+            .first()
+        )
         assert updated is not None
         return self._row_to_task(updated)
 
@@ -325,10 +338,14 @@ class WorkflowService:
 
         Raises InactiveLeaseError if the lease_id does not match.
         """
-        row = self._session.execute(
-            text("SELECT * FROM workflow_tasks WHERE id = :id"),
-            {"id": task_id},
-        ).mappings().first()
+        row = (
+            self._session.execute(
+                text("SELECT * FROM workflow_tasks WHERE id = :id"),
+                {"id": task_id},
+            )
+            .mappings()
+            .first()
+        )
 
         if row is None or row["lease_id"] != lease_id:
             raise InactiveLeaseError(task_id, "lease_id mismatch")
@@ -339,10 +356,14 @@ class WorkflowService:
             {"exp": expires_at, "id": task_id},
         )
 
-        updated = self._session.execute(
-            text("SELECT * FROM workflow_tasks WHERE id = :id"),
-            {"id": task_id},
-        ).mappings().first()
+        updated = (
+            self._session.execute(
+                text("SELECT * FROM workflow_tasks WHERE id = :id"),
+                {"id": task_id},
+            )
+            .mappings()
+            .first()
+        )
         assert updated is not None
         return self._row_to_task(updated)
 
@@ -363,10 +384,14 @@ class WorkflowService:
         Raises InactiveLeaseError if the lease_id does not match.
         Raises NonCompletableError if the task is in an unexpected state.
         """
-        row = self._session.execute(
-            text("SELECT * FROM workflow_tasks WHERE id = :id"),
-            {"id": task_id},
-        ).mappings().first()
+        row = (
+            self._session.execute(
+                text("SELECT * FROM workflow_tasks WHERE id = :id"),
+                {"id": task_id},
+            )
+            .mappings()
+            .first()
+        )
 
         if row is None:
             raise TaskNotFoundError(task_id)
@@ -389,9 +414,7 @@ class WorkflowService:
             ),
             {"id": task_id},
         )
-        return CompletionOutcome(
-            task_id=task_id, state="completed", result=result, duplicate=False
-        )
+        return CompletionOutcome(task_id=task_id, state="completed", result=result, duplicate=False)
 
     def expire_leases(self, context: Any, *, now: datetime) -> list[uuid.UUID]:
         """Reclaim tasks whose lease has expired back to ``queued``.
@@ -429,13 +452,18 @@ class WorkflowService:
         last_checkpoint: dict[str, Any] | None = None,
     ) -> uuid.UUID:
         """Move a task to the ``dead_letter`` state and create a DLQ record."""
-        from xiosync.platform.ids import new_id
         import json as _json
 
-        task_row = self._session.execute(
-            text("SELECT * FROM workflow_tasks WHERE id = :id"),
-            {"id": task_id},
-        ).mappings().first()
+        from xiosync.platform.ids import new_id
+
+        task_row = (
+            self._session.execute(
+                text("SELECT * FROM workflow_tasks WHERE id = :id"),
+                {"id": task_id},
+            )
+            .mappings()
+            .first()
+        )
         if task_row is None:
             raise TaskNotFoundError(task_id)
 
@@ -460,9 +488,7 @@ class WorkflowService:
                 "reason": failure_reason,
                 "trace": stack_trace,
                 "chk": _json.dumps(last_checkpoint or {}),
-                "inp": _json.dumps(
-                    _json.loads(task_row["input"]) if task_row.get("input") else {}
-                ),
+                "inp": _json.dumps(_json.loads(task_row["input"]) if task_row.get("input") else {}),
                 "att": task_row.get("attempts", 1),
             },
         )
@@ -472,14 +498,16 @@ class WorkflowService:
     # DLQ governance
     # ------------------------------------------------------------------
 
-    def get_dead_letter(
-        self, context: Any, dead_letter_id: uuid.UUID
-    ) -> DeadLetterRecord | None:
+    def get_dead_letter(self, context: Any, dead_letter_id: uuid.UUID) -> DeadLetterRecord | None:
         """Fetch a DeadLetterRecord by id."""
-        row = self._session.execute(
-            text("SELECT * FROM dead_letters WHERE id = :id"),
-            {"id": dead_letter_id},
-        ).mappings().first()
+        row = (
+            self._session.execute(
+                text("SELECT * FROM dead_letters WHERE id = :id"),
+                {"id": dead_letter_id},
+            )
+            .mappings()
+            .first()
+        )
         if row is None:
             return None
         return self._row_to_dl(row)
@@ -496,13 +524,18 @@ class WorkflowService:
         Raises ValueError if the record is not in ``open`` state.
         Raises DeadLetterNotFoundError if not found.
         """
-        from xiosync.platform.ids import new_id
         import json as _json
 
-        row = self._session.execute(
-            text("SELECT * FROM dead_letters WHERE id = :id"),
-            {"id": dead_letter_id},
-        ).mappings().first()
+        from xiosync.platform.ids import new_id
+
+        row = (
+            self._session.execute(
+                text("SELECT * FROM dead_letters WHERE id = :id"),
+                {"id": dead_letter_id},
+            )
+            .mappings()
+            .first()
+        )
         if row is None:
             raise DeadLetterNotFoundError(dead_letter_id)
         if row["state"] != "open":
@@ -540,16 +573,18 @@ class WorkflowService:
         if not explicit_approval:
             raise ValueError("resolve_dead_letter requires explicit_approval=True")
 
-        row = self._session.execute(
-            text("SELECT * FROM dead_letters WHERE id = :id"),
-            {"id": dead_letter_id},
-        ).mappings().first()
+        row = (
+            self._session.execute(
+                text("SELECT * FROM dead_letters WHERE id = :id"),
+                {"id": dead_letter_id},
+            )
+            .mappings()
+            .first()
+        )
         if row is None:
             raise DeadLetterNotFoundError(dead_letter_id)
         if row["state"] != "investigating":
-            raise ValueError(
-                f"dead_letter cannot be resolved: state={row['state']!r}"
-            )
+            raise ValueError(f"dead_letter cannot be resolved: state={row['state']!r}")
 
         self._session.execute(
             text("UPDATE dead_letters SET state='resolved' WHERE id=:id"),

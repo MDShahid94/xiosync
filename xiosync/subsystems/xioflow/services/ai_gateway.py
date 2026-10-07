@@ -39,6 +39,7 @@ Usage::
         output_format="text",
     )
 """
+
 from __future__ import annotations
 
 import abc
@@ -47,13 +48,13 @@ import json
 import logging
 import os
 import shutil
-import subprocess
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 # ── Abstract provider interface ───────────────────────────────────────────────
+
 
 class GenerationProvider(abc.ABC):
     """Interface every AI generation provider must satisfy.
@@ -70,7 +71,7 @@ class GenerationProvider(abc.ABC):
         prompt: str,
         *,
         system: str = "",
-        output_format: str = "text",      # "text" | "json"
+        output_format: str = "text",  # "text" | "json"
         json_schema: dict | None = None,
         temperature: float = 0.2,
         max_tokens: int = 8192,
@@ -113,6 +114,7 @@ class GenerationResult:
 
 # ── AGY CLI Provider ─────────────────────────────────────────────────────────
 
+
 class AGYProvider(GenerationProvider):
     """Antigravity CLI provider — invokes ``agy --print`` as a subprocess.
 
@@ -151,7 +153,9 @@ class AGYProvider(GenerationProvider):
     ) -> GenerationResult:
         if not self._available:
             return GenerationResult(
-                success=False, error="agy binary not found", provider=self.name,
+                success=False,
+                error="agy binary not found",
+                provider=self.name,
             )
 
         full_prompt = f"{system}\n\n{prompt}" if system else prompt
@@ -174,34 +178,45 @@ class AGYProvider(GenerationProvider):
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout + 10,
+                proc.communicate(),
+                timeout=timeout + 10,
             )
             text = stdout.decode("utf-8", errors="replace").strip()
 
             if proc.returncode != 0:
                 err = stderr.decode("utf-8", errors="replace")[-500:]
-                logger.warning("ai_gateway.agy_error", extra={"returncode": proc.returncode, "stderr": err})
+                logger.warning(
+                    "ai_gateway.agy_error", extra={"returncode": proc.returncode, "stderr": err}
+                )
                 return GenerationResult(
-                    success=False, error=f"agy exit {proc.returncode}: {err}",
+                    success=False,
+                    error=f"agy exit {proc.returncode}: {err}",
                     provider=self.name,
                 )
 
             return GenerationResult(
-                text=text, provider=self.name, model=self._model or "agy-default",
+                text=text,
+                provider=self.name,
+                model=self._model or "agy-default",
                 success=True,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return GenerationResult(
-                success=False, error=f"agy timeout ({timeout}s)", provider=self.name,
+                success=False,
+                error=f"agy timeout ({timeout}s)",
+                provider=self.name,
             )
         except Exception as exc:
             return GenerationResult(
-                success=False, error=str(exc), provider=self.name,
+                success=False,
+                error=str(exc),
+                provider=self.name,
             )
 
 
 # ── Gemini API Provider ──────────────────────────────────────────────────────
+
 
 class GeminiAPIProvider(GenerationProvider):
     """Google Gemini API provider (google-generativeai SDK)."""
@@ -222,6 +237,7 @@ class GeminiAPIProvider(GenerationProvider):
 
         try:
             import google.generativeai as genai
+
             genai.configure(api_key=self._api_key)
             self._client = genai
             logger.info("ai_gateway.gemini_ready", extra={"model": model})
@@ -243,7 +259,8 @@ class GeminiAPIProvider(GenerationProvider):
     ) -> GenerationResult:
         if not self._client:
             return GenerationResult(
-                success=False, error="Gemini not configured (no API key)",
+                success=False,
+                error="Gemini not configured (no API key)",
                 provider=self.name,
             )
 
@@ -259,7 +276,8 @@ class GeminiAPIProvider(GenerationProvider):
                 generation_config=config,
             )
             response = await asyncio.to_thread(
-                model.generate_content, prompt,
+                model.generate_content,
+                prompt,
             )
             return GenerationResult(
                 text=response.text.strip(),
@@ -269,11 +287,15 @@ class GeminiAPIProvider(GenerationProvider):
             )
         except Exception as exc:
             return GenerationResult(
-                success=False, error=str(exc), provider=self.name, model=self._model_name,
+                success=False,
+                error=str(exc),
+                provider=self.name,
+                model=self._model_name,
             )
 
 
 # ── OpenAI API Provider ──────────────────────────────────────────────────────
+
 
 class OpenAIAPIProvider(GenerationProvider):
     """OpenAI Chat Completions provider."""
@@ -293,6 +315,7 @@ class OpenAIAPIProvider(GenerationProvider):
             return
         try:
             from openai import AsyncOpenAI
+
             self._client = AsyncOpenAI(api_key=self._api_key)
             logger.info("ai_gateway.openai_ready", extra={"model": model})
         except ImportError:
@@ -311,7 +334,9 @@ class OpenAIAPIProvider(GenerationProvider):
     ) -> GenerationResult:
         if not self._client:
             return GenerationResult(
-                success=False, error="OpenAI not configured", provider=self.name,
+                success=False,
+                error="OpenAI not configured",
+                provider=self.name,
             )
 
         try:
@@ -332,19 +357,28 @@ class OpenAIAPIProvider(GenerationProvider):
             response = await self._client.chat.completions.create(**kwargs)
             text = response.choices[0].message.content or ""
             return GenerationResult(
-                text=text.strip(), provider=self.name, model=self._model,
+                text=text.strip(),
+                provider=self.name,
+                model=self._model,
                 success=True,
-                usage={"prompt_tokens": response.usage.prompt_tokens,
-                       "completion_tokens": response.usage.completion_tokens}
-                if response.usage else {},
+                usage={
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                }
+                if response.usage
+                else {},
             )
         except Exception as exc:
             return GenerationResult(
-                success=False, error=str(exc), provider=self.name, model=self._model,
+                success=False,
+                error=str(exc),
+                provider=self.name,
+                model=self._model,
             )
 
 
 # ── Custom HTTP Provider ─────────────────────────────────────────────────────
+
 
 class CustomHTTPProvider(GenerationProvider):
     """Generic HTTP endpoint provider — any service implementing the protocol.
@@ -375,20 +409,26 @@ class CustomHTTPProvider(GenerationProvider):
     ) -> GenerationResult:
         if not self._url:
             return GenerationResult(
-                success=False, error="No custom AI URL configured", provider=self.name,
+                success=False,
+                error="No custom AI URL configured",
+                provider=self.name,
             )
 
         try:
             import httpx
+
             async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(self._url, json={
-                    "prompt": prompt,
-                    "system": system,
-                    "output_format": output_format,
-                    "json_schema": json_schema,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                })
+                resp = await client.post(
+                    self._url,
+                    json={
+                        "prompt": prompt,
+                        "system": system,
+                        "output_format": output_format,
+                        "json_schema": json_schema,
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                    },
+                )
                 resp.raise_for_status()
                 data = resp.json()
                 return GenerationResult(
@@ -399,7 +439,9 @@ class CustomHTTPProvider(GenerationProvider):
                 )
         except Exception as exc:
             return GenerationResult(
-                success=False, error=str(exc), provider=self.name,
+                success=False,
+                error=str(exc),
+                provider=self.name,
             )
 
 
@@ -420,6 +462,7 @@ def register_provider(name: str, cls: type[GenerationProvider]) -> None:
 
 
 # ── AIGateway — the main entry point ─────────────────────────────────────────
+
 
 class AIGateway:
     """Universal AI generation gateway for XIOSYNC.
@@ -447,8 +490,10 @@ class AIGateway:
         elif isinstance(provider, str):
             cls = _PROVIDER_REGISTRY.get(provider)
             if not cls:
-                raise ValueError(f"Unknown AI provider: {provider!r}. "
-                                 f"Available: {list(_PROVIDER_REGISTRY.keys())}")
+                raise ValueError(
+                    f"Unknown AI provider: {provider!r}. "
+                    f"Available: {list(_PROVIDER_REGISTRY.keys())}"
+                )
             self._provider = cls()
         else:
             self._provider = self._auto_detect()

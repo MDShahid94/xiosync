@@ -4,6 +4,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 class DOMInspector:
     """
     JavaScript injection engine for extracting interactive elements from a web page.
@@ -12,7 +13,7 @@ class DOMInspector:
     def __init__(self, page):
         """
         Initialize the DOMInspector.
-        
+
         Args:
             page: Playwright page object.
         """
@@ -21,7 +22,7 @@ class DOMInspector:
     async def get_interactive_elements(self) -> tuple[str, dict[int, dict]]:
         """
         Injects a JS script into the page to find and extract all visible interactive elements.
-        
+
         Returns:
             A tuple containing:
             - dom_string: compact LLM-friendly format like '[42] <button> "Submit Order"'
@@ -132,13 +133,13 @@ class DOMInspector:
         dom_string_parts = []
 
         for item in elements_data:
-            node_id = item['node_id']
+            node_id = item["node_id"]
             node_map[node_id] = item
 
-            tag = item['tag']
-            text = item['text']
+            tag = item["tag"]
+            text = item["text"]
 
-            dom_string_parts.append(f"[{node_id}] <{tag}> \"{text}\"")
+            dom_string_parts.append(f'[{node_id}] <{tag}> "{text}"')
 
         dom_string = "\n".join(dom_string_parts)
 
@@ -354,4 +355,3 @@ class DOMInspector:
         if result is None:
             return {"place_value": {}, "face_value": {}}
         return result
-
