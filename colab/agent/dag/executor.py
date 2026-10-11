@@ -467,15 +467,128 @@ async def _execute_dag_run(
                         _s_endpoint = _params.get("endpoint", "")
 
                         if _intent == "resolve_exit_proxy":
-                            # Resolve exit proxy from worker env (no HTTP call needed)
-                            _vars["proxy_url"] = os.environ.get(
-                                "XIORUN_PROXY",
-                                os.environ.get("PROXY_URL", "socks5://127.0.0.1:19055"),
-                            )
-                            _step_ok = True
-                            logger.info(
-                                f"dag_run.step: {_intent} [script] proxy={_vars['proxy_url']}"
-                            )
+                            # ── Dynamic proxy resolution ────────────────────────
+                            # Priority: 1) PPPoE exit node → 2) SSH SOCKS5 tunnel
+                            _resolved_proxy = None
+                            _resolved_ip = None
+                            _xio_base = os.environ.get("XIORUN_XIOSYNC_BASE", "")
+                            _xio_secret = os.environ.get("XIORUN_INTERNAL_SECRET", "")
+
+                            # ── 1. Try PPPoE exit nodes via XIOSYNC API ────────
+                            if _xio_base and _xio_secret:
+                                try:
+                                    import urllib.request as _urq_proxy
+                                    _req = _urq_proxy.Request(
+                                        f"{_xio_base}/api/v1/pppoe/nodes",
+                                        headers={"X-XIOSYNC-Internal": _xio_secret},
+                                    )
+                                    _resp = _urq_proxy.urlopen(_req, timeout=10)
+                                    import json as _json_proxy
+                                    _nodes = _json_proxy.loads(_resp.read()).get("nodes", [])
+                                    _idle = [
+                                        n for n in _nodes
+                                        if n.get("state") == "idle"
+                                        and n.get("proxy_state") == "running"
+                                    ]
+                                    logger.info(
+                                        f"resolve_exit_proxy: {len(_idle)} idle PPPoE slots"
+                                    )
+                                    # Test up to 5 idle slots for Google reachability
+                                    import subprocess as _sp_proxy
+                                    for _slot in _idle[:5]:
+                                        _p_url = _slot.get("proxy_url", "")
+                                        _p_ip = _slot.get("public_ip", "")
+                                        try:
+                                            _test = _sp_proxy.run(
+                                                [
+                                                    "curl", "-s", "--max-time", "6",
+                                                    "--proxy", _p_url,
+                                                    "https://accounts.google.com",
+                                                    "-o", "/dev/null", "-w", "%{http_code}",
+                                                ],
+                                                capture_output=True, text=True, timeout=10,
+                                            )
+                                            if _test.stdout.strip() not in ("", "000"):
+                                                _resolved_proxy = _p_url
+                                                _resolved_ip = _p_ip
+                                                logger.info(
+                                                    f"resolve_exit_proxy: PPPoE slot "
+                                                    f"{_slot.get('slot')} OK → {_p_url}"
+                                                )
+                                                break
+                                            else:
+                                                logger.debug(
+                                                    f"resolve_exit_proxy: PPPoE slot "
+                                                    f"{_slot.get('slot')} dead"
+                                                )
+                                        except Exception:
+                                            pass
+                                except Exception as _pex:
+                                    logger.warning(
+                                        f"resolve_exit_proxy: PPPoE fetch failed: {_pex}"
+                                    )
+
+                            # ── 2. Fallback: SSH SOCKS5 tunnel ─────────────────
+                            if not _resolved_proxy:
+                                from agent.network.ssh_tunnel import SSH_PROXY_URL
+                                _ssh_proxy = SSH_PROXY_URL or os.environ.get(
+                                    "XIORUN_PROXY",
+                                    os.environ.get("PROXY_URL", "socks5://127.0.0.1:19055"),
+                                )
+                                # Verify SSH proxy is alive
+                                try:
+                                    _test2 = _sp_proxy.run(
+                                        [
+                                            "curl", "-s", "--max-time", "8",
+                                            "--proxy", _ssh_proxy,
+                                            "https://accounts.google.com",
+                                            "-o", "/dev/null", "-w", "%{http_code}",
+                                        ],
+                                        capture_output=True, text=True, timeout=12,
+                                    )
+                                    if _test2.stdout.strip() not in ("", "000"):
+                                        _resolved_proxy = _ssh_proxy
+                                        # Get public IP through SSH tunnel
+                                        try:
+                                            _ip_r = _sp_proxy.run(
+                                                [
+                                                    "curl", "-s", "--max-time", "5",
+                                                    "--proxy", _ssh_proxy,
+                                                    "https://api.ipify.org",
+                                                ],
+                                                capture_output=True, text=True, timeout=8,
+                                            )
+                                            _resolved_ip = _ip_r.stdout.strip()
+                                        except Exception:
+                                            pass
+                                        logger.info(
+                                            f"resolve_exit_proxy: SSH fallback OK → "
+                                            f"{_ssh_proxy} (ip={_resolved_ip})"
+                                        )
+                                    else:
+                                        logger.error(
+                                            "resolve_exit_proxy: SSH proxy unreachable"
+                                        )
+                                except Exception as _sex:
+                                    logger.error(
+                                        f"resolve_exit_proxy: SSH proxy test failed: {_sex}"
+                                    )
+
+                            if _resolved_proxy:
+                                _vars["proxy_url"] = _resolved_proxy
+                                if _resolved_ip:
+                                    _vars["exit_node_public_ip"] = _resolved_ip
+                                _step_ok = True
+                                logger.info(
+                                    f"dag_run.step: {_intent} [script] "
+                                    f"proxy={_resolved_proxy} ip={_resolved_ip}"
+                                )
+                            else:
+                                logger.error(
+                                    "dag_run.step: resolve_exit_proxy FAILED — "
+                                    "no PPPoE or SSH proxy reachable"
+                                )
+                                _step_ok = False
 
                         elif _s_endpoint:
                             # Resolve {{var}} tokens in ALL params

@@ -91,7 +91,9 @@
         "email": "{{email}}",
         "password": "{{password}}",
         "totp_secret": "{{totp_secret}}",
-        "proxy_url": "{{proxy_url}}"
+        "proxy_url": "{{proxy_url}}",
+        "exit_node_public_ip": "{{exit_node_public_ip}}",
+        "identity_id": "{{identity_id}}"
       },
       "output_var": "ucSessionId",
       "previous_node_id": "phase0_browser_check",
