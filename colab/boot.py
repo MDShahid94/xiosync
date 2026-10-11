@@ -1141,29 +1141,42 @@ _p("═" * 60)
 _run("pkill -f 'xiorun_agent.py' > /dev/null 2>&1", silent=True)
 time.sleep(1)
 
-# Fetch xiorun_agent.py from XIOSYNC (served at /api/v1/workers/xiorun-agent.py)
-# Use ASSET_BASE (bootstrap/Cloudflare URL) — reachable before Tailscale connects.
-# Falls back to local copy if unreachable.
+# Try tarball first (modular agent), fall back to monolith
+_AGENT_TAR_URL = f"{ASSET_BASE}/api/v1/workers/xiorun-agent.tar.gz"
 _AGENT_URL = f"{ASSET_BASE}/api/v1/workers/xiorun-agent.py"
+_AGENT_DIR = "/tmp/xiorun_worker"
 _AGENT_PATH = "/tmp/xiorun_agent.py"
 
 _fetched = False
 try:
-    import urllib.request as _urq  # noqa
+    import urllib.request as _urq
+    import tarfile as _tf
 
-    _urq.urlretrieve(_AGENT_URL, _AGENT_PATH)
+    _tar_path = "/tmp/xiorun-agent.tar.gz"
+    _urq.urlretrieve(_AGENT_TAR_URL, _tar_path)
+    os.makedirs(_AGENT_DIR, exist_ok=True)
+    with _tf.open(_tar_path, "r:gz") as _t:
+        _t.extractall(_AGENT_DIR)
+    # The entrypoint is at _AGENT_DIR/xiorun_agent.py
+    _AGENT_PATH = os.path.join(_AGENT_DIR, "xiorun_agent.py")
     _fetched = True
-    _p("  ✅ Fetched xiorun_agent.py from XIOSYNC")
-except Exception as _fe:
-    _p(f"  ⚠️  Could not fetch xiorun_agent.py from XIOSYNC ({_fe}) — checking local copy…")
-    # Fallback: local copy bundled in the Colab environment
-    _local_agent = os.path.join(LOCAL_ROOT, "xiorun_agent.py")
-    if os.path.exists(_local_agent):
-        shutil.copy(_local_agent, _AGENT_PATH)
+    _p("  ✅ Fetched xiorun-agent package (modular)")
+except Exception as _te:
+    _p(f"  ⚠️  Tarball fetch failed ({_te}) — trying monolith…")
+    try:
+        _urq.urlretrieve(_AGENT_URL, _AGENT_PATH)
         _fetched = True
-        _p("  ✅ Using local copy of xiorun_agent.py")
-    else:
-        _p("  ❌ xiorun_agent.py not available — browser sessions will NOT work")
+        _p("  ✅ Fetched xiorun_agent.py (monolith fallback)")
+    except Exception as _fe:
+        _p(f"  ⚠️  Could not fetch xiorun_agent.py ({_fe}) — checking local copy…")
+        # Fallback: local copy bundled in the Colab environment
+        _local_agent = os.path.join(LOCAL_ROOT, "xiorun_agent.py")
+        if os.path.exists(_local_agent):
+            shutil.copy(_local_agent, _AGENT_PATH)
+            _fetched = True
+            _p("  ✅ Using local copy of xiorun_agent.py")
+        else:
+            _p("  ❌ xiorun_agent.py not available — browser sessions will NOT work")
 
 _agent_proc: subprocess.Popen | None = None
 
@@ -1203,6 +1216,7 @@ if _fetched:
         # ─────────────────────────────────────────────────────────────────────
         "DISPLAY": ":99",
     }
+    _agent_env["PYTHONPATH"] = _AGENT_DIR + ":" + _agent_env.get("PYTHONPATH", "")
 
     # ── Write SSH proxy private key so agent can SSH to Mac ──────────────────
     _proxy_ssh_key_pem = C.get("proxy_ssh_key", "")
@@ -1219,6 +1233,7 @@ if _fetched:
         stdout=_agent_log,
         stderr=_agent_log,
     )
+
     atexit.register(lambda: _agent_proc.terminate() if _agent_proc else None)
 
     # Wait for agent to be ready (max 35s — agent starts noVNC + SOCKS5 + patchright at boot)

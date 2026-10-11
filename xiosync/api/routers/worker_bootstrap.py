@@ -648,6 +648,38 @@ def serve_xiorun_agent():
 
 
 @router.get(
+    "/workers/xiorun-agent.tar.gz",
+    summary="[Public] Download the xiorun-agent package as tarball",
+    include_in_schema=True,
+)
+def serve_xiorun_agent_package():
+    """Serve colab/agent/ as a tarball for modular deployment."""
+    import io
+    import pathlib
+    import tarfile
+    from fastapi.responses import StreamingResponse
+
+    _root = pathlib.Path(__file__).parent.parent.parent.parent
+    agent_dir = _root / "colab" / "agent"
+    if not agent_dir.exists():
+        raise HTTPException(status_code=404, detail="agent package not found")
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        tar.add(str(agent_dir), arcname="agent")
+        # Also add the entrypoint
+        entrypoint = _root / "colab" / "xiorun_agent.py"
+        if entrypoint.exists():
+            tar.add(str(entrypoint), arcname="xiorun_agent.py")
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/gzip",
+        headers={"Content-Disposition": "attachment; filename=xiorun-agent.tar.gz"},
+    )
+
+
+@router.get(
     "/workers/google-signin.mjs",
     summary="[Public] Download the latest google-signin.mjs workflow",
     include_in_schema=True,
