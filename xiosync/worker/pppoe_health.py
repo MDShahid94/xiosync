@@ -130,7 +130,7 @@ def reconcile_pool_capacity(session: Any) -> int:
             text("""
             SELECT COUNT(*) AS idle_slots
             FROM   xiogrid_pppoe_exit_nodes
-            WHERE  state = 'idle'
+            WHERE  state IN ('idle', 'assigned')
         """)
         ).scalar()
         or 0

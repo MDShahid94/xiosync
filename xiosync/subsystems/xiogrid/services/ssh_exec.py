@@ -7,6 +7,7 @@ Parameterized by PPPoEHost so any registered host works identically.
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -77,7 +78,7 @@ def vm_script(
     Scripts live in host.vm_scripts_dir (default: /usr/local/bin/xiogrid/).
     All scripts run as sudo on the VM.
     """
-    arg_str = " ".join(str(a) for a in args)
+    arg_str = " ".join(shlex.quote(str(a)) for a in args)
     cmd = f"sudo {host.vm_scripts_dir}/{script} {arg_str}".rstrip()
     return ssh_run(
         user_at_host=f"{host.vm_ssh_user}@{host.vm_ssh_host}",

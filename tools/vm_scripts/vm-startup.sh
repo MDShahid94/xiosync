@@ -43,6 +43,15 @@ ip link set "${PARENT_IFACE}" promisc on
 modprobe ppp_generic 2>/dev/null || true
 modprobe pppoe      2>/dev/null || true
 
+# ── 2b. Enable IP forwarding and NAT masquerade for PPPoE traffic ─────────────
+echo "[$(date -Iseconds)] Enabling IP forwarding + NAT masquerade"
+sysctl -w net.ipv4.ip_forward=1
+sysctl -w net.ipv4.conf.all.rp_filter=2    # Loose mode for multi-homed PPPoE
+# MASQUERADE outgoing packets through ppp+ interfaces (any PPP slot)
+iptables -t nat -C POSTROUTING -o ppp+ -j MASQUERADE 2>/dev/null || \
+iptables -t nat -A POSTROUTING -o ppp+ -j MASQUERADE
+echo "[$(date -Iseconds)] IP forwarding + masquerade enabled"
+
 # ── 3. Wait for Tailscale overlay (up to 60s) ─────────────────────────────────
 echo "[$(date -Iseconds)] Waiting for Tailscale..."
 TS_IP=""

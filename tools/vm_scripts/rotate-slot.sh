@@ -6,7 +6,7 @@ set -euo pipefail
 SLOT="$1"
 PPP="ppp${SLOT}"
 
-PID=$(pgrep -f "unit ${SLOT}" 2>/dev/null | head -1 || true)
+PID=$(pgrep -f "unit ${SLOT}( |$)" 2>/dev/null | head -1 || true)
 if [[ -z "$PID" ]]; then
     echo "not_running"
     exit 0

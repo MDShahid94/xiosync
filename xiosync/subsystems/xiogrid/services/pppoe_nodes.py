@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import case, select, update
 from sqlalchemy.orm import Session
 
 from xiosync.domain.context import OrgContext
@@ -515,7 +515,7 @@ class PPPoENodeService:
             )
             .order_by(
                 # Prefer preferred_host first
-                (PPPoEExitNode.host_id != preferred_host_id).cast(type_=PPPoEExitNode.host_id.type)
+                case((PPPoEExitNode.host_id == preferred_host_id, 0), else_=1)
                 if preferred_host_id
                 else PPPoEExitNode.last_seen.asc().nullsfirst(),
                 PPPoEExitNode.last_seen.asc().nullsfirst(),

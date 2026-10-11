@@ -28,10 +28,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/proxy", tags=["Proxy Tunnel"])
 
 _INTERNAL_SECRET = os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
-_ALLOWED_HOSTS = {
-    "100.106.81.15",  # xiogrid-exit-vm-1
-}
-_ALLOWED_PORT_RANGE = (10000, 10010)  # PPPoE SOCKS5 slots only
+_ALLOWED_HOSTS: set[str] | None = None  # None = allow any registered PPPoE host
+_ALLOWED_PORT_RANGE = (10000, 10981)  # PPPoE SOCKS5 slots only
 
 
 @router.websocket("/tunnel")
@@ -58,7 +56,7 @@ async def proxy_tunnel(
         await ws.close(code=4400, reason="bad target format, expected HOST:PORT")
         return
 
-    if host not in _ALLOWED_HOSTS:
+    if _ALLOWED_HOSTS is not None and host not in _ALLOWED_HOSTS:
         await ws.close(code=4403, reason=f"host {host!r} not in allowlist")
         return
 

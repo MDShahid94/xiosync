@@ -18,5 +18,8 @@ fi
 ip route replace default dev "$PPP" table "$TABLE" 2>/dev/null || true
 # Add rule: from worker_ts_ip → lookup table
 ip rule add from "$WORKER_TS_IP" lookup "$TABLE" priority 50 2>/dev/null || true
+# Also route any locally-originated packet bound to ppp{slot} via this table
+# (needed for SOCKS5 proxy SO_BINDTODEVICE to reach the internet)
+ip rule add oif "$PPP" lookup "$TABLE" priority 40 2>/dev/null || true
 
 echo "assigned slot=${SLOT} worker=${WORKER_TS_IP} table=${TABLE}"
