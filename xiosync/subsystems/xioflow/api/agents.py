@@ -436,3 +436,63 @@ async def get_agent_run(
         raise HTTPException(status_code=404, detail="Agent run not found")
 
     return dict(row)
+
+
+# ── Multi-Agent Coordination ─────────────────────────────────────────────
+
+
+class CoordinateRequest(BaseModel):
+    goal: str = Field(..., min_length=1)
+    tasks: list[dict[str, Any]] = Field(
+        ...,
+        min_length=1,
+        description="List of tasks with description, agent_type, depends_on, etc.",
+    )
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/coordinate")
+async def coordinate_agents(
+    body: CoordinateRequest,
+    request=None,
+    db: Session = Depends(_get_db),
+):
+    """Execute a multi-agent coordination plan.
+
+    Decomposes a cross-domain goal into parallelizable sub-tasks,
+    auto-assigns agents by capability, manages data dependencies,
+    and aggregates results.
+
+    Example body:
+    ```json
+    {
+      "goal": "Sign into Google, extract billing, post to Slack",
+      "tasks": [
+        {"description": "Sign into Google accounts", "agent_type": "browser_automation", "domain": "accounts.google.com"},
+        {"description": "Extract billing data", "agent_type": "data_extraction", "depends_on": ["task_0"]},
+        {"description": "Post summary to Slack", "agent_type": "system_admin", "depends_on": ["task_1"]}
+      ]
+    }
+    ```
+    """
+    from starlette.requests import Request  # noqa: PLC0415
+
+    if isinstance(request, Request):
+        org_id = _get_org_id(request)
+    else:
+        raise HTTPException(status_code=403, detail="Request context required")
+
+    from xiosync.subsystems.xioflow.engine.coordinator import (  # noqa: PLC0415
+        MultiAgentCoordinator,
+    )
+
+    coordinator = MultiAgentCoordinator(session=db)
+    result = await coordinator.coordinate(
+        org_id=org_id,
+        goal=body.goal,
+        tasks=body.tasks,
+        context=body.context,
+    )
+
+    return result
+
