@@ -10,7 +10,7 @@ import subprocess
 import time
 from typing import Any
 
-from colab.agent.config import INTERNAL_SECRET, PPPOE_PROXY, XIOSYNC_BASE, _WS_SOCKS5_PORT
+from agent.config import INTERNAL_SECRET, PPPOE_PROXY, XIOSYNC_BASE, _WS_SOCKS5_PORT
 
 logger = logging.getLogger("xiorun_agent.network.socks5_bridge")
 

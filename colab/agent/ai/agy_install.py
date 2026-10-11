@@ -12,7 +12,7 @@ logger = logging.getLogger('xiorun_agent')
 DRIVE_ROOT = os.environ.get('XIO_DRIVE_ROOT', '/content/drive/MyDrive/XIOSYNC-Shared')
 
 try:
-    from colab.agent.ai.agy_cli import _is_agy_installed, _is_agy_authenticated, _AGY_BIN
+    from agent.ai.agy_cli import _is_agy_installed, _is_agy_authenticated, _AGY_BIN
 except ImportError:
     try:
         from agent.ai.agy_cli import _is_agy_installed, _is_agy_authenticated, _AGY_BIN
@@ -22,21 +22,21 @@ except ImportError:
 # Fallback imports from xiorun_agent if available
 def _resolve_ip_geo(ip):
     try:
-        import colab.xiorun_agent as _agent
+        import xiorun_agent as _agent
         return _agent._resolve_ip_geo(ip)
     except Exception:
         return {'timezone': 'America/New_York', 'country': 'US'}
 
 def _get_runtime_public_ip():
     try:
-        import colab.xiorun_agent as _agent
+        import xiorun_agent as _agent
         return _agent._get_runtime_public_ip()
     except Exception:
         return None
 
 def _load_profile_fingerprint(pid, root):
     try:
-        import colab.xiorun_agent as _agent
+        import xiorun_agent as _agent
         return _agent._load_profile_fingerprint(pid, root)
     except Exception:
         return {}
@@ -50,7 +50,7 @@ _PATCHRIGHT_CHROME = _find_patchright_chromium()
 _STEALTH_UA_CHROME = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.6778.108 Safari/537.36'
 
 try:
-    import colab.xiorun_agent as _agent
+    import xiorun_agent as _agent
     _STEALTH_JS = _agent._STEALTH_JS
 except Exception:
     _STEALTH_JS = ''

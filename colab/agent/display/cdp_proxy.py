@@ -19,7 +19,7 @@ logger = logging.getLogger("xiorun_agent")
 router = APIRouter()
 
 try:
-    from colab.agent.state import _cdp_expose_ports, _cdp_forwarders
+    from agent.state import _cdp_expose_ports, _cdp_forwarders
 except ImportError:
     try:
         from agent.state import _cdp_expose_ports, _cdp_forwarders
@@ -33,7 +33,7 @@ _local_sessions: dict[str, dict[str, Any]] = {}
 
 def _get_sessions_dict() -> dict[str, dict[str, Any]]:
     try:
-        from colab.agent.state import _sessions as _st_sess
+        from agent.state import _sessions as _st_sess
         return _st_sess
     except ImportError:
         try:
@@ -41,7 +41,7 @@ def _get_sessions_dict() -> dict[str, dict[str, Any]]:
             return _st_sess
         except ImportError:
             try:
-                import colab.xiorun_agent as _agent  # noqa: PLC0415
+                import xiorun_agent as _agent  # noqa: PLC0415
                 return _agent._sessions
             except (ImportError, AttributeError):
                 return _local_sessions

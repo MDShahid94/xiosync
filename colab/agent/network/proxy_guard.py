@@ -6,8 +6,8 @@ import asyncio
 import logging
 import re
 
-from colab.agent.config import NODE_NAME, XIOSYNC_BASE, XIOSYNC_TOKEN
-from colab.agent.state import _sessions
+from agent.config import NODE_NAME, XIOSYNC_BASE, XIOSYNC_TOKEN
+from agent.state import _sessions
 
 logger = logging.getLogger("xiorun_agent.network.proxy_guard")
 

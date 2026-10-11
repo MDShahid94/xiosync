@@ -7,7 +7,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from colab.agent.models import HITLNotice, HITLResumedBy, HITLState
+from agent.models import HITLNotice, HITLResumedBy, HITLState
 
 # ── Session registry ───────────────────────────────────────────────────────────
 # session_id → {"browser": Browser, "pid": int, "port": int,

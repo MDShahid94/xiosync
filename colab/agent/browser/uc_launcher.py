@@ -11,8 +11,8 @@ import subprocess
 import zipfile
 from typing import Any
 
-from colab.agent.config import _CHROME_VERSION, CHROME_EXECUTABLE
-from colab.agent.stealth.stealth_js import _STEALTH_JS
+from agent.config import _CHROME_VERSION, CHROME_EXECUTABLE
+from agent.stealth.stealth_js import _STEALTH_JS
 
 logger = logging.getLogger("xiorun_agent.browser.uc_launcher")
 

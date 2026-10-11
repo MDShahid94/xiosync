@@ -16,8 +16,8 @@ from typing import Any
 from fastapi import HTTPException
 from fastapi.responses import PlainTextResponse
 
-from colab.agent.browser.capacity import detect_runtime_capacity
-from colab.agent.config import (
+from agent.browser.capacity import detect_runtime_capacity
+from agent.config import (
     CHROMIUM_ARGS,
     DRIVE_ROOT,
     NODE_NAME,
@@ -29,17 +29,17 @@ from colab.agent.config import (
     _SSH_PROXY_URL,
     _STEALTH_UA_CHROME,
 )
-from colab.agent.models import (
+from agent.models import (
     InjectCookiesRequest,
     LaunchRequest,
     NavigateRequest,
     TerminateRequest,
 )
-from colab.agent.network.geo import _get_runtime_public_ip, _my_tailscale_ip, _resolve_ip_geo
-from colab.agent.network.proxy_guard import _proxy_probe_loop
-from colab.agent.state import _sessions, _sessions_lock, _uc_drivers
-from colab.agent.stealth.fingerprint import _load_profile_fingerprint
-from colab.agent.stealth.stealth_js import _STEALTH_JS
+from agent.network.geo import _get_runtime_public_ip, _my_tailscale_ip, _resolve_ip_geo
+from agent.network.proxy_guard import _proxy_probe_loop
+from agent.state import _sessions, _sessions_lock, _uc_drivers
+from agent.stealth.fingerprint import _load_profile_fingerprint
+from agent.stealth.stealth_js import _STEALTH_JS
 
 logger = logging.getLogger("xiorun_agent.browser.patchright_launcher")
 

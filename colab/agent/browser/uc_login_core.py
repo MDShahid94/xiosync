@@ -21,7 +21,7 @@ from typing import Any
 
 from selenium.webdriver.common.by import By
 
-from colab.agent.browser.cdp_primitives import (
+from agent.browser.cdp_primitives import (
     cdp_clear_input,
     cdp_click_element,
     cdp_eval,
@@ -31,12 +31,12 @@ from colab.agent.browser.cdp_primitives import (
     safe_get,
     uc_sleep,
 )
-from colab.agent.browser.uc_launcher import _launch_uc_chrome_for_login
-from colab.agent.config import NODE_NAME, _CHROME_VERSION, _NOVNC_URL, XIOSYNC_BASE
-from colab.agent.models import HITLNotice, HITLState
-from colab.agent.network.geo import _resolve_ip_geo
-from colab.agent.state import _hitl_store
-from colab.agent.stealth.stealth_js import _STEALTH_JS
+from agent.browser.uc_launcher import _launch_uc_chrome_for_login
+from agent.config import NODE_NAME, _CHROME_VERSION, _NOVNC_URL, XIOSYNC_BASE
+from agent.models import HITLNotice, HITLState
+from agent.network.geo import _resolve_ip_geo
+from agent.state import _hitl_store
+from agent.stealth.stealth_js import _STEALTH_JS
 
 logger = logging.getLogger("xiorun_agent.browser.uc_login_core")
 

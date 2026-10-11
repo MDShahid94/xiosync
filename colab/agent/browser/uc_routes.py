@@ -13,7 +13,7 @@ import re
 import uuid
 from typing import Any
 
-from colab.agent.config import (
+from agent.config import (
     DRIVE_ROOT,
     INTERNAL_SECRET,
     NODE_NAME,
@@ -22,8 +22,8 @@ from colab.agent.config import (
     _SSH_PROXY_URL,
     _STEALTH_UA_CHROME,
 )
-from colab.agent.display.cdp_proxy import cdp_expose
-from colab.agent.models import (
+from agent.display.cdp_proxy import cdp_expose
+from agent.models import (
     CDPExposeRequest,
     HITLNotice,
     HITLState,
@@ -31,8 +31,8 @@ from colab.agent.models import (
     UCNavigateRequest,
     UCScreenshotRequest,
 )
-from colab.agent.network.geo import _my_tailscale_ip, _resolve_ip_timezone
-from colab.agent.state import _hitl_store, _sessions, _uc_pending_drivers
+from agent.network.geo import _my_tailscale_ip, _resolve_ip_timezone
+from agent.state import _hitl_store, _sessions, _uc_pending_drivers
 
 logger = logging.getLogger("xiorun_agent.browser.uc_routes")
 
@@ -41,9 +41,9 @@ XIOSYNC_INTERNAL_SECRET = INTERNAL_SECRET
 
 
 def _get_run_uc_login_sync():
-    """Lazily import _run_uc_login_sync from colab.xiorun_agent if not in local module."""
+    """Lazily import _run_uc_login_sync from xiorun_agent if not in local module."""
     try:
-        from colab.xiorun_agent import _run_uc_login_sync  # noqa: PLC0415
+        from xiorun_agent import _run_uc_login_sync  # noqa: PLC0415
         return _run_uc_login_sync
     except ImportError:
         import xiorun_agent  # noqa: PLC0415

@@ -666,7 +666,11 @@ def serve_xiorun_agent_package():
 
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        tar.add(str(agent_dir), arcname="agent")
+        def _exclude_pycache(ti):
+            if "__pycache__" in ti.name:
+                return None
+            return ti
+        tar.add(str(agent_dir), arcname="agent", filter=_exclude_pycache)
         # Also add the entrypoint
         entrypoint = _root / "colab" / "xiorun_agent.py"
         if entrypoint.exists():

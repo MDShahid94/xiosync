@@ -8,7 +8,7 @@ import logging
 import os
 from typing import Any
 
-from colab.agent.stealth.stealth_js import _CHROME_VERSION
+from agent.stealth.stealth_js import _CHROME_VERSION
 
 logger = logging.getLogger("xiorun_agent.stealth.fingerprint")
 

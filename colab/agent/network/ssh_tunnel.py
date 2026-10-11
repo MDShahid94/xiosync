@@ -8,7 +8,7 @@ import subprocess
 import time
 from typing import Any
 
-from colab.agent.config import (
+from agent.config import (
     DRIVE_ROOT,
     NODE_NAME,
     PROXY_LOCAL_PORT,

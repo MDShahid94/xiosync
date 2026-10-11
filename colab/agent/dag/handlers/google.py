@@ -9,7 +9,7 @@ import os
 from typing import Any
 
 try:
-    from colab.agent.display.novnc import get_novnc_url
+    from agent.display.novnc import get_novnc_url
 except ImportError:
     try:
         from agent.display.novnc import get_novnc_url

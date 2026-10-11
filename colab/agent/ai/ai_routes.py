@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 try:
-    from colab.agent.ai.agy_cli import (
+    from agent.ai.agy_cli import (
         _AGY_BIN,
         _is_agy_authenticated,
         _is_agy_installed,
@@ -28,7 +28,7 @@ except ImportError:
         pass
 
 try:
-    from colab.agent.ai.agy_install import ai_install_agy, ai_restore_agy_creds
+    from agent.ai.agy_install import ai_install_agy, ai_restore_agy_creds
 except ImportError:
     try:
         from agent.ai.agy_install import ai_install_agy, ai_restore_agy_creds

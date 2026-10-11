@@ -9,7 +9,7 @@ import os
 logger = logging.getLogger("xiorun_agent")
 
 try:
-    from colab.agent.dag.executor import _execute_dag_run
+    from agent.dag.executor import _execute_dag_run
 except ImportError:
     try:
         from agent.dag.executor import _execute_dag_run

@@ -18,7 +18,7 @@ from typing import Any
 logger = logging.getLogger("xiorun_agent")
 
 try:
-    from colab.agent.display.novnc import _NOVNC_URL, start_novnc_supervisor
+    from agent.display.novnc import _NOVNC_URL, start_novnc_supervisor
 except ImportError:
     try:
         from agent.display.novnc import _NOVNC_URL, start_novnc_supervisor
@@ -27,7 +27,7 @@ except ImportError:
             pass
 
 try:
-    from colab.agent.dag.poll_loop import _dag_poll_loop
+    from agent.dag.poll_loop import _dag_poll_loop
 except ImportError:
     try:
         from agent.dag.poll_loop import _dag_poll_loop
@@ -48,7 +48,7 @@ def get_ssh_proxy_url() -> str | None:
 
 def _get_active_sessions() -> dict[str, Any]:
     try:
-        from colab.agent.state import _sessions as _st_sess
+        from agent.state import _sessions as _st_sess
         return _st_sess
     except ImportError:
         try:
@@ -56,7 +56,7 @@ def _get_active_sessions() -> dict[str, Any]:
             return _st_sess
         except ImportError:
             try:
-                import colab.xiorun_agent as _agent  # noqa: PLC0415
+                import xiorun_agent as _agent  # noqa: PLC0415
                 return _agent._sessions
             except (ImportError, AttributeError):
                 return {}
@@ -64,7 +64,7 @@ def _get_active_sessions() -> dict[str, Any]:
 
 def _get_active_uc_drivers() -> dict[str, Any]:
     try:
-        from colab.agent.state import _uc_drivers as _st_drv
+        from agent.state import _uc_drivers as _st_drv
         return _st_drv
     except ImportError:
         try:
@@ -72,7 +72,7 @@ def _get_active_uc_drivers() -> dict[str, Any]:
             return _st_drv
         except ImportError:
             try:
-                import colab.xiorun_agent as _agent  # noqa: PLC0415
+                import xiorun_agent as _agent  # noqa: PLC0415
                 return _agent._uc_drivers
             except (ImportError, AttributeError):
                 return {}
@@ -81,7 +81,7 @@ def _get_active_uc_drivers() -> dict[str, Any]:
 
 def _load_profile_fp(pid: str, root: str) -> dict:
     try:
-        import colab.xiorun_agent as _agent  # noqa: PLC0415
+        import xiorun_agent as _agent  # noqa: PLC0415
         return _agent._load_profile_fingerprint(pid, root)
     except (ImportError, AttributeError):
         return {}
@@ -458,7 +458,7 @@ async def _lifespan(application):
             )
             _stealth_template = ""
             try:
-                import colab.xiorun_agent as _agent  # noqa: PLC0415
+                import xiorun_agent as _agent  # noqa: PLC0415
                 _stealth_template = _agent._STEALTH_JS
             except Exception:
                 pass

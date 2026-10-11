@@ -7,7 +7,7 @@ import logging
 from fastapi import FastAPI
 
 try:
-    from colab.agent.server.lifespan import _lifespan
+    from agent.server.lifespan import _lifespan
 except ImportError:
     try:
         from agent.server.lifespan import _lifespan
@@ -28,7 +28,7 @@ app = FastAPI(
 
 # Import and include modular routers
 try:
-    from colab.agent.display.cdp_proxy import router as cdp_router
+    from agent.display.cdp_proxy import router as cdp_router
     app.include_router(cdp_router)
 except ImportError:
     try:
@@ -38,7 +38,7 @@ except ImportError:
         logger.warning("app: cdp_proxy router not available")
 
 try:
-    from colab.agent.ai.ai_routes import router as ai_router
+    from agent.ai.ai_routes import router as ai_router
     app.include_router(ai_router)
 except ImportError:
     try:

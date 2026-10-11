@@ -10,7 +10,7 @@ from typing import Any
 logger = logging.getLogger("xiorun_agent")
 
 try:
-    from colab.agent.dag.retry import _dom_retry_backoff
+    from agent.dag.retry import _dom_retry_backoff
 except ImportError:
     try:
         from agent.dag.retry import _dom_retry_backoff
@@ -27,7 +27,7 @@ except ImportError:
                     _delay = min(_delay * 2, 10.0)
 
 try:
-    from colab.agent.dag.handlers.google import _DAG_POST_ACTION_HANDLERS
+    from agent.dag.handlers.google import _DAG_POST_ACTION_HANDLERS
 except ImportError:
     try:
         from agent.dag.handlers.google import _DAG_POST_ACTION_HANDLERS
@@ -42,7 +42,7 @@ def get_ssh_proxy_url() -> str | None:
     if _SSH_PROXY_URL:
         return _SSH_PROXY_URL
     try:
-        from colab.agent.server.lifespan import get_ssh_proxy_url as _g
+        from agent.server.lifespan import get_ssh_proxy_url as _g
         return _g()
     except ImportError:
         try:
