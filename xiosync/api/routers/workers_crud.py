@@ -115,6 +115,8 @@ class SelfEnrollRequest(_S):
     worker_org_secret: str
     runtime_type: str = "colab"  # colab | vm | mac | docker
     tailscale_ip: str | None = None
+    tailscale_ipv6: str | None = None
+    ts_ipv6: str | None = None
     reported_caps: list[str] = []
     software_version: str | None = None
     public_key: str = ""  # optional — can be empty for ephemeral workers
@@ -122,6 +124,8 @@ class SelfEnrollRequest(_S):
 
 class HeartbeatRequest(_S):
     tailscale_ip: str | None = None
+    tailscale_ipv6: str | None = None
+    ts_ipv6: str | None = None
     reported_caps: list[str] | None = None
 
 

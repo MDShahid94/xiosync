@@ -65,6 +65,7 @@ class XIOSyncClient:
         password: str,
         worker_org_secret: str = "",
         worker_ts_ip: str = "",
+        worker_ts_ipv6: str = "",
         timeout: int = 90,
     ) -> None:
         self.base_url = base_url.rstrip("/")
@@ -73,6 +74,7 @@ class XIOSyncClient:
         self.password = password
         self.worker_org_secret = worker_org_secret
         self.worker_ts_ip = worker_ts_ip
+        self.worker_ts_ipv6 = worker_ts_ipv6
         self.timeout = timeout
 
         self._access_token: str | None = None
@@ -86,12 +88,31 @@ class XIOSyncClient:
         session_id: str,
         worker_ts_ip: str,
         preferred_host_id: str | None = None,
+        worker_ts_ipv6: str | None = None,
     ) -> dict[str, Any]:
         """Acquire an idle PPPoE slot (auto-provisions if pool empty)."""
         body: dict[str, Any] = {"session_id": session_id, "worker_ts_ip": worker_ts_ip}
+        v6 = worker_ts_ipv6 or self.worker_ts_ipv6
+        if v6:
+            body["worker_ts_ipv6"] = v6
         if preferred_host_id:
             body["preferred_host_id"] = preferred_host_id
         return self._post("/api/v1/pppoe/nodes/acquire", body)
+
+    def assign_slot(
+        self,
+        host_id: str,
+        slot: int,
+        session_id: str,
+        worker_ts_ip: str,
+        worker_ts_ipv6: str | None = None,
+    ) -> dict[str, Any]:
+        """Call POST /pppoe/nodes/{host_id}/{slot}/assign to set up VM routing."""
+        body: dict[str, Any] = {"session_id": session_id, "worker_ts_ip": worker_ts_ip}
+        v6 = worker_ts_ipv6 or self.worker_ts_ipv6
+        if v6:
+            body["worker_ts_ipv6"] = v6
+        return self._post(f"/api/v1/pppoe/nodes/{host_id}/{slot}/assign", body)
 
     def release_slot(self, host_id: str, slot: int) -> dict[str, Any]:
         """Return a slot to the idle pool."""
@@ -118,15 +139,19 @@ class XIOSyncClient:
         """
         if not self.worker_org_secret:
             raise ValueError("worker_org_secret is required for self_enroll()")
+        payload: dict[str, Any] = {
+            "worker_org_secret": self.worker_org_secret,
+            "runtime_type": runtime_type,
+            "tailscale_ip": self.worker_ts_ip,
+            "reported_caps": reported_caps or ["browser.run", "pppoe.use", "xioflow.execute"],
+            "software_version": software_version,
+        }
+        if self.worker_ts_ipv6:
+            payload["tailscale_ipv6"] = self.worker_ts_ipv6
+            payload["ts_ipv6"] = self.worker_ts_ipv6
         return self._post(
             "/api/v1/workers/self-enroll",
-            {
-                "worker_org_secret": self.worker_org_secret,
-                "runtime_type": runtime_type,
-                "tailscale_ip": self.worker_ts_ip,
-                "reported_caps": reported_caps or ["browser.run", "pppoe.use", "xioflow.execute"],
-                "software_version": software_version,
-            },
+            payload,
         )
 
     def heartbeat(
@@ -139,6 +164,9 @@ class XIOSyncClient:
         Call this from the keep-alive loop every 30s.
         """
         body: dict[str, Any] = {"tailscale_ip": self.worker_ts_ip}
+        if self.worker_ts_ipv6:
+            body["tailscale_ipv6"] = self.worker_ts_ipv6
+            body["ts_ipv6"] = self.worker_ts_ipv6
         if reported_caps:
             body["reported_caps"] = reported_caps
         return self._post(f"/api/v1/workers/{enrollment_id}/heartbeat", body)
@@ -332,7 +360,8 @@ def make_client_from_env() -> XIOSyncClient:
 
     Optional:
         XIOSYNC_WORKER_SECRET  — for self_enroll()
-        XIOSYNC_TS_IP          — this worker's Tailscale IP
+        XIOSYNC_TS_IP          — this worker's Tailscale IPv4
+        XIOSYNC_TS_IPV6        — this worker's Tailscale IPv6
     """
     import os
 
@@ -343,4 +372,5 @@ def make_client_from_env() -> XIOSyncClient:
         password=os.environ["XIOSYNC_PASSWORD"],
         worker_org_secret=os.environ.get("XIOSYNC_WORKER_SECRET", ""),
         worker_ts_ip=os.environ.get("XIOSYNC_TS_IP", ""),
+        worker_ts_ipv6=os.environ.get("XIOSYNC_TS_IPV6", ""),
     )

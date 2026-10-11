@@ -824,6 +824,8 @@ class _SelfEnrollReq(_S):
     worker_org_secret: str
     runtime_type: str = "colab"
     tailscale_ip: str | None = None
+    tailscale_ipv6: str | None = None
+    ts_ipv6: str | None = None
     reported_caps: list[str] = []
     software_version: str | None = None
     public_key: str = ""

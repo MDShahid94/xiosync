@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# xiogrid/assign-route.sh <worker_ts_ip> <slot>
+# xiogrid/assign-route.sh <worker_ts_ip> <slot> [worker_ts_ipv6]
 # Adds an ip rule so traffic FROM worker_ts_ip exits via ppp{slot}.
 # Table = 1000 + slot (avoids clash with system tables 0-255).
 set -euo pipefail
 WORKER_TS_IP="$1"
 SLOT="$2"
+WORKER_TS_IPV6="${3:-}"
 TABLE=$((1000 + SLOT))
 PPP="ppp${SLOT}"
 
@@ -21,5 +22,12 @@ ip rule add from "$WORKER_TS_IP" lookup "$TABLE" priority 50 2>/dev/null || true
 # Also route any locally-originated packet bound to ppp{slot} via this table
 # (needed for SOCKS5 proxy SO_BINDTODEVICE to reach the internet)
 ip rule add oif "$PPP" lookup "$TABLE" priority 40 2>/dev/null || true
+
+# IPv6 dual-stack routing
+ip -6 route replace default dev "$PPP" table "$TABLE" 2>/dev/null || true
+if [ -n "$WORKER_TS_IPV6" ]; then
+    ip -6 rule add from "$WORKER_TS_IPV6" lookup "$TABLE" priority 50 2>/dev/null || true
+fi
+ip -6 rule add oif "$PPP" lookup "$TABLE" priority 40 2>/dev/null || true
 
 echo "assigned slot=${SLOT} worker=${WORKER_TS_IP} table=${TABLE}"

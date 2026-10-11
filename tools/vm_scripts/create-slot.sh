@@ -2,7 +2,7 @@
 # xiogrid/create-slot.sh <slot>
 # Creates macvlan mv{slot} + starts pppd unit {slot}.
 # Blocks up to 35s waiting for public IP.
-# Output: "up <public_ip> <cgnat_ip>"  or  "connecting unknown unknown"
+# Output: "up <public_ip> <cgnat_ip> <proxy_url> <pub_v6> <cgnat_v6>"  or  "connecting unknown unknown none none none"
 #
 # PPPoE credentials injected by XIOSYNC at deploy time (sed replacement):
 PPPOE_USER="__PPPOE_USER__"
@@ -50,6 +50,7 @@ if ! pgrep -f "unit ${SLOT}[^0-9]" &>/dev/null; then
     # holdoff 10 = 10s between reconnect attempts (avoids BRAS rate-limit).
     nohup pppd plugin rp-pppoe.so "${MV}" \
         user "${PPPOE_USER}" password "${PPPOE_PASS}" \
+        +ipv6 ipv6cp-accept-local \
         noauth nodefaultroute noipdefault \
         persist maxfail 0 holdoff 10 \
         lcp-echo-interval 20 lcp-echo-failure 4 \
@@ -64,6 +65,10 @@ for i in $(seq 1 35); do
         CGNAT=$(ip addr show "${PPP}" 2>/dev/null | awk '/inet /{print $2}' | cut -d/ -f1 || true)
         PUB=$(curl --interface "${PPP}" -s --max-time 4 https://api.ipify.org 2>/dev/null || true)
         if [[ -n "${PUB}" ]]; then
+            # Detect IPv6 addresses
+            PUB_V6=$(curl --interface "${PPP}" -6 -s --max-time 4 https://api6.ipify.org 2>/dev/null || true)
+            CGNAT_V6=$(ip addr show "${PPP}" 2>/dev/null | awk '/inet6 .* scope global/{print $2}' | cut -d/ -f1 || true)
+
             # ── Start per-slot SOCKS5 proxy ─────────────────────────────────
             # Each slot gets its own Python SOCKS5 proxy on port 10000+slot.
             # Routes via ppp{slot} using SO_BINDTODEVICE.
@@ -73,10 +78,10 @@ for i in $(seq 1 35); do
             /usr/local/bin/xiogrid/start-proxy.sh "${SLOT}" > /dev/null 2>&1 || true
             PROXY_URL="socks5://${TS_IP}:${PROXY_PORT}"
 
-            echo "up ${PUB} ${CGNAT:-unknown} ${PROXY_URL}"
+            echo "up ${PUB} ${CGNAT:-unknown} ${PROXY_URL} ${PUB_V6:-none} ${CGNAT_V6:-none}"
             exit 0
         fi
     fi
 done
 
-echo "connecting unknown unknown none"
+echo "connecting unknown unknown none none none"

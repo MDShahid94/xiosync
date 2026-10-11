@@ -216,6 +216,7 @@ class PPPoENodeService:
         slot: int,
         worker_ts_ip: str,
         session_id: str,
+        worker_ts_ipv6: str | None = None,
     ) -> PPPoESlotRecord:
         """Add policy routing rule on VM and mark slot as assigned."""
         host = self._get_host(host_id)
@@ -224,11 +225,15 @@ class PPPoENodeService:
         if node.state != PPPoESlotState.IDLE:
             raise ValueError(f"Slot {slot} on {host.name!r} not idle (state={node.state!r})")
 
-        vm_script(host, "assign-route.sh", worker_ts_ip, slot, timeout=8).require_ok()
+        args = [worker_ts_ip, slot]
+        if worker_ts_ipv6:
+            args.append(worker_ts_ipv6)
+        vm_script(host, "assign-route.sh", *args, timeout=8).require_ok()
 
         now = datetime.now(UTC)
         node.state = PPPoESlotState.ASSIGNED
         node.assigned_worker_ts_ip = worker_ts_ip
+        node.assigned_worker_ts_ipv6 = worker_ts_ipv6
         node.assigned_session_id = session_id
         node.assigned_at = now
         node.total_sessions_served += 1
@@ -243,10 +248,14 @@ class PPPoENodeService:
         node = self._get_node(host_id, slot)
 
         if node.assigned_worker_ts_ip:
-            vm_script(host, "release-route.sh", node.assigned_worker_ts_ip, slot, timeout=8)
+            rel_args = [node.assigned_worker_ts_ip, slot]
+            if node.assigned_worker_ts_ipv6:
+                rel_args.append(node.assigned_worker_ts_ipv6)
+            vm_script(host, "release-route.sh", *rel_args, timeout=8)
 
         node.state = PPPoESlotState.IDLE
         node.assigned_worker_ts_ip = None
+        node.assigned_worker_ts_ipv6 = None
         node.assigned_session_id = None
         node.assigned_at = None
         self._db.flush()
@@ -261,6 +270,7 @@ class PPPoENodeService:
         worker_ts_ip: str,
         preferred_host_id: uuid.UUID | None = None,
         google_account: str | None = None,
+        worker_ts_ipv6: str | None = None,
     ) -> PPPoESlotRecord:
         """Acquire a residential exit slot and assign it to the requesting worker.
 
@@ -304,7 +314,11 @@ class PPPoENodeService:
                     binding.last_public_ip = node.public_ip
                     self._db.flush()
                     return self.assign_to_worker(
-                        binding.host_id, binding.ppp_slot, worker_ts_ip, session_id
+                        binding.host_id,
+                        binding.ppp_slot,
+                        worker_ts_ip,
+                        session_id,
+                        worker_ts_ipv6=worker_ts_ipv6,
                     )
 
                 # Bound slot is down — try rotating to get a fresh IP on the same slot
@@ -323,7 +337,11 @@ class PPPoENodeService:
                             binding.total_sessions += 1
                             self._db.flush()
                             return self.assign_to_worker(
-                                binding.host_id, binding.ppp_slot, worker_ts_ip, session_id
+                                binding.host_id,
+                                binding.ppp_slot,
+                                worker_ts_ip,
+                                session_id,
+                                worker_ts_ipv6=worker_ts_ipv6,
                             )
                     except Exception:
                         pass  # rotate failed — fall through to pick a fresh slot
@@ -340,9 +358,13 @@ class PPPoENodeService:
             # Provision — blocks until pppd connects and slot is IDLE
             self.provision_slot(ctx, host.id, slot)
             # Immediately assign to the requesting worker
-            record = self.assign_to_worker(host.id, slot, worker_ts_ip, session_id)
+            record = self.assign_to_worker(
+                host.id, slot, worker_ts_ip, session_id, worker_ts_ipv6=worker_ts_ipv6
+            )
         else:
-            record = self.assign_to_worker(host.id, node.ppp_slot, worker_ts_ip, session_id)
+            record = self.assign_to_worker(
+                host.id, node.ppp_slot, worker_ts_ip, session_id, worker_ts_ipv6=worker_ts_ipv6
+            )
 
         # ── 3. Create or update account binding for new accounts ─────────────
         if google_account:

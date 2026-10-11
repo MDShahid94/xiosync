@@ -63,6 +63,9 @@ class PPPoEHost(Base):
     # Tailscale VM IP — Colab workers use this as exit-node target
     # e.g. "100.Y.Y.Y" after `tailscale up --advertise-exit-node` on VM
     tailscale_vm_ts_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    tailscale_vm_ts_ipv6: Mapped[str | None] = mapped_column(
+        String(45), nullable=True, doc="Dual-stack host management"
+    )
 
     # Capacity
     max_slots: Mapped[int] = mapped_column(Integer, nullable=False, default=981)
@@ -155,6 +158,20 @@ class PPPoEExitNode(Base):
     # 223.181.x.x or 97.28.x.x (secondary Airtel pool)
     cgnat_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
     # 100.12.x.x (VM-side CGNAT address)
+
+    # IPv6 dual-stack columns
+    public_ipv6: Mapped[str | None] = mapped_column(
+        String(45), nullable=True, doc="Public IPv6 from PPPoE slot"
+    )
+    ipv6_prefix: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, doc="Delegated /64 or /56 prefix"
+    )
+    assigned_worker_ts_ipv6: Mapped[str | None] = mapped_column(
+        String(45), nullable=True, doc="Worker Tailscale IPv6"
+    )
+    proxy_url_v6: Mapped[str | None] = mapped_column(
+        String(120), nullable=True, doc="Dual-stack SOCKS5 endpoint"
+    )
 
     # Current worker assignment
     assigned_worker_ts_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)

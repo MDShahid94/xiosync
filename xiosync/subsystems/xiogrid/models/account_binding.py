@@ -5,7 +5,15 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -67,3 +75,6 @@ class AccountIpBinding(Base):
 
     # Cache last known public IP — informational only, slot is the source of truth
     last_public_ip: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_public_ipv6: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, doc="IPv6 account stickiness"
+    )

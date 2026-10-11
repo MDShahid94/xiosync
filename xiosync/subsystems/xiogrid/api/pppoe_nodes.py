@@ -62,6 +62,9 @@ class AssignRequest(_M):
     # Pass the Google account email to enable per-account IP pinning.
     # "etathyaghar@gmail.com" → always returns same PPPoE slot → same residential IP.
     google_account: str | None = None
+    worker_ts_ipv6: str | None = None
+    tailscale_ipv6: str | None = None
+    ts_ipv6: str | None = None
 
 
 # ── Host endpoints ───────────────────────────────────────────────────
@@ -222,12 +225,14 @@ def provision_batch(payload: BatchProvisionRequest, request: Request) -> dict[st
 def acquire_any(payload: AssignRequest, request: Request) -> dict[str, Any]:
     from xiosync.subsystems.xiogrid.services.pppoe_nodes import PPPoENodeService
 
+    worker_ipv6 = payload.worker_ts_ipv6 or payload.tailscale_ipv6 or payload.ts_ipv6
     node = PPPoENodeService(request.state.org_session).acquire_any(
         request.state.org_context,
         session_id=payload.session_id,
         worker_ts_ip=payload.worker_ts_ip,
         preferred_host_id=payload.preferred_host_id,
         google_account=payload.google_account,
+        worker_ts_ipv6=worker_ipv6,
     )
     return _slot_json(node)
 
@@ -253,8 +258,9 @@ def assign_slot(
 ) -> dict[str, Any]:
     from xiosync.subsystems.xiogrid.services.pppoe_nodes import PPPoENodeService
 
+    worker_ipv6 = payload.worker_ts_ipv6 or payload.tailscale_ipv6 or payload.ts_ipv6
     node = PPPoENodeService(request.state.org_session).assign_to_worker(
-        host_id, slot, payload.worker_ts_ip, payload.session_id
+        host_id, slot, payload.worker_ts_ip, payload.session_id, worker_ts_ipv6=worker_ipv6
     )
     return _slot_json(node)
 

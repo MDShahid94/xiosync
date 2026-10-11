@@ -514,6 +514,7 @@ _p("  Phase 1: Tailscale")
 _p("═" * 60)
 
 _my_ts_ip: str = ""
+_my_ts_ipv6: str = ""
 _ts_online: bool = False
 
 # _NODE_IDENTITY is derived at config load (top of file): "xiogrid--default--master"
@@ -724,6 +725,21 @@ else:
                 if _ts_online
                 else "  ⚠️  tailscale up OK but no IP returned"
             )
+
+            # Capture Tailscale IPv6 address
+            _ip6_out = subprocess.run(
+                [_ts_bin, "ip", "-6"],
+                capture_output=True, text=True, timeout=10
+            )
+            _my_ts_ipv6 = _ip6_out.stdout.strip() if _ip6_out.returncode == 0 else ""
+            if _my_ts_ipv6:
+                print(f"  TS IPv6: {_my_ts_ipv6}")
+
+            # Store Tailscale IPs in config dict C
+            C["tailscale_ip"] = _my_ts_ip
+            C["tailscale_ipv6"] = _my_ts_ipv6
+            C["ts_ip"] = _my_ts_ip
+            C["ts_ipv6"] = _my_ts_ipv6
         else:
             _ts_err = (_ts_up.stdout + _ts_up.stderr).strip()
             _p(f"  ⚠️  tailscale up failed (rc={_ts_up.returncode}): {_ts_err[:200]}")
@@ -1051,19 +1067,23 @@ def _xiosync_post(path: str, data: dict, *, timeout: int = 15) -> dict:
 
 if XIOSYNC_BASE and WORKER_SECRET:
     try:
+        _enr_payload = {
+            "worker_org_secret": WORKER_SECRET,
+            "runtime_type": "colab",
+            "tailscale_ip": _my_ts_ip,
+            "reported_caps": [
+                "browser.run",
+                "xiorun.agent",
+                "xioflow.execute",
+            ],
+            "software_version": "xiosync-boot-v1.0",
+        }
+        if _my_ts_ipv6:
+            _enr_payload["tailscale_ipv6"] = _my_ts_ipv6
+            _enr_payload["ts_ipv6"] = _my_ts_ipv6
         _enr = _xiosync_post(
             "/api/v1/workers/self-enroll",
-            {
-                "worker_org_secret": WORKER_SECRET,
-                "runtime_type": "colab",
-                "tailscale_ip": _my_ts_ip,
-                "reported_caps": [
-                    "browser.run",
-                    "xiorun.agent",
-                    "xioflow.execute",
-                ],
-                "software_version": "xiosync-boot-v1.0",
-            },
+            _enr_payload,
         )
         _ENROLLMENT_ID = _enr.get("enrollment_id")
         _p(
@@ -1084,14 +1104,16 @@ def _heartbeat_loop() -> None:
 
     while True:
         try:
+            _hb_data = {
+                "tailscale_ip": _my_ts_ip,
+                "reported_caps": ["browser.run", "xiorun.agent", "xioflow.execute"],
+            }
+            if _my_ts_ipv6:
+                _hb_data["tailscale_ipv6"] = _my_ts_ipv6
+                _hb_data["ts_ipv6"] = _my_ts_ipv6
             req = _urq.Request(
                 f"{XIOSYNC_BASE}/api/v1/workers/{_ENROLLMENT_ID}/heartbeat",
-                data=json.dumps(
-                    {
-                        "tailscale_ip": _my_ts_ip,
-                        "reported_caps": ["browser.run", "xiorun.agent", "xioflow.execute"],
-                    }
-                ).encode(),
+                data=json.dumps(_hb_data).encode(),
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {XIOSYNC_TOKEN}",
@@ -1173,6 +1195,11 @@ if _fetched:
         # ── WS SOCKS5 bridge (primary — bypasses Tailscale ACL via XIOSYNC HTTPS) ──
         "XIORUN_INTERNAL_SECRET": INTERNAL_SECRET,
         "XIORUN_PPPOE_PROXY": C.get("pppoe_proxy", ""),
+        # ── Tailscale IP addresses (dual-stack) ──────────────────────────────
+        "XIOSYNC_TS_IP": _my_ts_ip,
+        "XIOSYNC_TS_IPV6": _my_ts_ipv6,
+        "TAILSCALE_IP": _my_ts_ip,
+        "TAILSCALE_IPV6": _my_ts_ipv6,
         # ─────────────────────────────────────────────────────────────────────
         "DISPLAY": ":99",
     }
@@ -1295,6 +1322,8 @@ _p("\n" + "═" * 60)
 _p("  Boot complete ✅")
 _p(f"  Node:          {NODE_NAME}")
 _p(f"  Tailscale IP:  {_my_ts_ip or 'not connected'}")
+if _my_ts_ipv6:
+    _p(f"  Tailscale IPv6: {_my_ts_ipv6}")
 _p(f"  XIOSYNC:       {XIOSYNC_BASE or BOOTSTRAP_XIOSYNC_BASE or 'not configured'}")
 _p(f"  xiorun_agent:  :{XIORUN_PORT} (PID {_agent_proc.pid if _agent_proc else 'N/A'})")
 _p(f"  Enrollment ID: {_ENROLLMENT_ID or 'not enrolled'}")
