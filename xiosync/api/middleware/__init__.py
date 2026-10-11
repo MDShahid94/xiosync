@@ -38,6 +38,7 @@ _PUBLIC_AUTH_PATHS = frozenset(
         # boot.py is public (no secrets inside); config fetch validates by token.
         "/api/v1/workers/boot.py",
         "/api/v1/workers/xiorun-agent.py",
+        "/api/v1/workers/xiorun-agent.tar.gz",
         "/api/v1/workers/patchright-boot.py",
         # Notebook self-update — workers fetch to check/download latest version.
         "/api/v1/workers/notebook.ipynb",
