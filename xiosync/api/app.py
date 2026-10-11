@@ -324,6 +324,17 @@ def create_app(
         dependencies=[require_capability("workflow.manage")],
     )
 
+    # --- XIOFLOW: Orchestrator control plane (queue, workers, SLA, escalations)
+    from xiosync.subsystems.xioflow.api.orchestrator import (
+        router as xioflow_orchestrator_router,
+    )
+
+    application.include_router(
+        xioflow_orchestrator_router,
+        prefix="/api/v1",
+        dependencies=[require_capability("workflow.manage")],
+    )
+
     # --- XIOVIEW: universal browser session observation (WS stream + remote control)
     from xiosync.subsystems.xioview.api.observe import (
         public_router as xioview_public_router,
