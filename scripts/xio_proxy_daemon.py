@@ -41,6 +41,7 @@ import subprocess
 import threading
 import time
 import urllib.request
+from typing import Any
 
 PROXY_HOST = "127.0.0.1"
 PROXY_PORT = 19056  # Mac SOCKS5 exit port on worker (19056 avoids tailscaled range 1055-10xxx)
@@ -51,8 +52,8 @@ ADMIN_PASS = os.environ.get("XIOSYNC_ADMIN_PASS", "Xiogrid2026!Admin")
 ADMIN_USER = os.environ.get("XIOSYNC_ADMIN_EMAIL", "admin@xiogrid.dev")
 ORG_ID = os.environ.get("XIOSYNC_ORG_ID", "00000000-0000-7000-8000-000000000000")
 
-# {(worker_ip, label): Popen}  — label e.g. "mac" or "slot:0"
-_tunnels: dict[tuple[str, str], subprocess.Popen] = {}
+# {(worker_ip, label): Popen | {'proc': Popen, 'slots': list[int]}}
+_tunnels: dict[tuple[str, str], Any] = {}
 _lock = threading.Lock()
 
 
@@ -135,10 +136,15 @@ def _start_socks5_server() -> None:
 def _ssh_reverse(
     worker_ip: str, remote_port: int, local_host: str, local_port: int, label: str
 ) -> None:
-    """Push ssh -R remote_port:local_host:local_port to worker (idempotent)."""
+    """Push ssh -R remote_port:local_host:local_port to worker (idempotent).
+
+    DEPRECATED: Use _push_bundled_tunnels / _build_bundled_ssh_cmd instead to
+    batch port forwards into a single SSH command and avoid SSH process storms.
+    """
     key = (worker_ip, label)
     with _lock:
-        proc = _tunnels.get(key)
+        val = _tunnels.get(key)
+        proc = val.get("proc") if isinstance(val, dict) else val
         if proc and proc.poll() is None:
             return
 
@@ -177,17 +183,83 @@ def _ssh_reverse(
         print(f"  ❌ [{label}] error: {e}", flush=True)
 
 
+def _build_bundled_ssh_cmd(worker_ip: str, vm_ip: str, slots: list[int]) -> list[str]:
+    """Build a single SSH command with multiple -R flags for all slots of a worker."""
+    cmd = [
+        "ssh",
+        "-i",
+        SSH_KEY,
+        "-N",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "ServerAliveInterval=30",
+        "-o",
+        "ServerAliveCountMax=3",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        "-o",
+        "BatchMode=yes",
+    ]
+    for slot in sorted(slots):
+        worker_port = PPPOE_BASE + slot
+        vm_port = 10000 + slot
+        cmd.extend(["-R", f"{worker_port}:{vm_ip}:{vm_port}"])
+    cmd.append(f"root@{worker_ip}")
+    return cmd
+
+
+def _push_bundled_tunnels(worker_ip: str, vm_ip: str, slots: list[int]) -> None:
+    """Push bundled reverse SSH tunnel for all slots to worker (idempotent)."""
+    if not slots:
+        return
+    key = (worker_ip, "bundle")
+    sorted_slots = sorted(slots)
+    with _lock:
+        val = _tunnels.get(key)
+        if isinstance(val, dict):
+            proc = val.get("proc")
+            existing_slots = val.get("slots", [])
+            if proc and proc.poll() is None and set(existing_slots) == set(sorted_slots):
+                return
+            # If slots changed or proc died, terminate old proc if still running
+            if proc and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    proc.kill()
+
+    cmd = _build_bundled_ssh_cmd(worker_ip, vm_ip, sorted_slots)
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(2)
+        if proc.poll() is None:
+            with _lock:
+                _tunnels[key] = {"proc": proc, "slots": sorted_slots}
+            slot_desc = (
+                f"{len(sorted_slots)} slots ({PPPOE_BASE + sorted_slots[0]}..{PPPOE_BASE + sorted_slots[-1]})"
+                if len(sorted_slots) > 1
+                else f"slot {sorted_slots[0]} ({PPPOE_BASE + sorted_slots[0]})"
+            )
+            print(
+                f"  ✅ [bundle] worker {worker_ip} ← {slot_desc} → VM {vm_ip} (PID {proc.pid})",
+                flush=True,
+            )
+        else:
+            print(f"  ⚠️  [bundle] tunnel to {worker_ip} failed (rc={proc.returncode})", flush=True)
+    except Exception as e:
+        print(f"  ❌ [bundle] error to {worker_ip}: {e}", flush=True)
+
+
 def _push_all_tunnels(worker_ip: str, vm_ip: str | None, active_slots: list[int]) -> None:
     """Push Mac SOCKS5 tunnel + all PPPoE slot relays to one worker."""
     # 1. Mac SOCKS5 exit
     _ssh_reverse(worker_ip, PROXY_PORT, PROXY_HOST, PROXY_PORT, "mac-socks5")
 
-    # 2. PPPoE slot relays: worker:10100+slot → Mac → VM:10000+slot
-    if vm_ip:
-        for slot in active_slots:
-            worker_port = PPPOE_BASE + slot
-            vm_port = 10000 + slot
-            _ssh_reverse(worker_ip, worker_port, vm_ip, vm_port, f"pppoe-slot{slot}")
+    # 2. Bundled PPPoE slot relays: batch all slots for this worker into one SSH process
+    if vm_ip and active_slots:
+        _push_bundled_tunnels(worker_ip, vm_ip, active_slots)
 
 
 # ── XIOSYNC API helpers ──────────────────────────────────────────────────────
@@ -253,6 +325,35 @@ def _enrolled_worker_ips() -> list[str]:
 # ── Watchdog ─────────────────────────────────────────────────────────────────
 
 
+def _check_tunnels(vm_ip: str | None = None) -> list[tuple[str, str]]:
+    """Check health of tunnels, reap dead ones, and respawn dead bundles if vm_ip is provided."""
+    reaped: list[tuple[str, str]] = []
+    respawn_bundles: list[tuple[str, list[int]]] = []
+    with _lock:
+        dead = []
+        for key, val in list(_tunnels.items()):
+            proc = val.get("proc") if isinstance(val, dict) else val
+            if proc is not None and proc.poll() is not None:
+                dead.append(key)
+                if isinstance(val, dict) and "slots" in val:
+                    worker_ip, _ = key
+                    respawn_bundles.append((worker_ip, val["slots"]))
+        for key in dead:
+            del _tunnels[key]
+            reaped.append(key)
+            print(f"  🔄 Reaping dead tunnel: {key}", flush=True)
+
+    if vm_ip:
+        for worker_ip, slots in respawn_bundles:
+            print(
+                f"  ♻️  Respawning dead bundle for {worker_ip} ({len(slots)} slots)",
+                flush=True,
+            )
+            _push_bundled_tunnels(worker_ip, vm_ip, slots)
+
+    return reaped
+
+
 def _watchdog(
     static_workers: list[str], auto_discover: bool, vm_ip: str | None, static_slots: list[int]
 ) -> None:
@@ -274,13 +375,8 @@ def _watchdog(
                 continue
             _push_all_tunnels(ip, vm_ip, slots)
 
-        # Reap dead tunnels
-        with _lock:
-            dead = [k for k, p in _tunnels.items() if p.poll() is not None]
-            for k in dead:
-                del _tunnels[k]
-                if dead:
-                    print(f"  🔄 Reaping dead tunnel: {k}", flush=True)
+        # Reap dead tunnels and respawn dead bundles
+        _check_tunnels(vm_ip)
 
         time.sleep(30)
 
@@ -350,8 +446,10 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\n👋 Shutting down...")
         with _lock:
-            for proc in _tunnels.values():
-                proc.terminate()
+            for val in _tunnels.values():
+                proc = val.get("proc") if isinstance(val, dict) else val
+                if proc and proc.poll() is None:
+                    proc.terminate()
 
 
 if __name__ == "__main__":

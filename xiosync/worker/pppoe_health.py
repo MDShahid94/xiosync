@@ -12,7 +12,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
 from xiosync.subsystems.xiogrid.domain.pppoe import PPPoESlotState
@@ -42,7 +42,10 @@ def tick_pppoe_health(session: Session) -> int:
         .where(PPPoEExitNode.state.in_(active_states))
         .join(PPPoEHost, PPPoEExitNode.host_id == PPPoEHost.id)
         .where(PPPoEHost.state == "active")
-        .order_by(PPPoEExitNode.last_health_check.asc().nullsfirst())
+        .order_by(
+            case((PPPoEExitNode.state == PPPoESlotState.ASSIGNED, 0), else_=1),
+            PPPoEExitNode.last_health_check.asc().nullsfirst(),
+        )
         .limit(50)  # check at most 50 per tick to avoid blocking the worker
     ).all()
 
@@ -50,6 +53,7 @@ def tick_pppoe_health(session: Session) -> int:
         return 0
 
     checked = 0
+    assigned_dropped = 0
     for node in nodes:
         host = session.get(PPPoEHost, node.host_id)
         if not host:
@@ -78,7 +82,41 @@ def tick_pppoe_health(session: Session) -> int:
                 if node.state == PPPoESlotState.RECONNECTING:
                     node.state = PPPoESlotState.IDLE
             else:
-                if node.state == PPPoESlotState.IDLE:
+                if node.state == PPPoESlotState.ASSIGNED:
+                    # Session dropped while assigned — release routing rule to prevent blackhole routing
+                    if node.assigned_worker_ts_ip:
+                        try:
+                            vm_script(
+                                host,
+                                "release-route.sh",
+                                node.assigned_worker_ts_ip,
+                                node.ppp_slot,
+                                timeout=8,
+                            )
+                        except Exception as _r_err:
+                            logger.warning(
+                                "pppoe_release_route_error",
+                                extra={
+                                    "host": host.name,
+                                    "slot": node.ppp_slot,
+                                    "error": str(_r_err),
+                                },
+                            )
+                    logger.warning(
+                        "pppoe_assigned_slot_down",
+                        extra={
+                            "host": host.name,
+                            "slot": node.ppp_slot,
+                            "worker_ts_ip": node.assigned_worker_ts_ip,
+                            "session_id": node.assigned_session_id,
+                        },
+                    )
+                    node.state = PPPoESlotState.RECONNECTING
+                    node.assigned_worker_ts_ip = None
+                    node.assigned_session_id = None
+                    node.assigned_at = None
+                    assigned_dropped += 1
+                elif node.state == PPPoESlotState.IDLE:
                     node.state = PPPoESlotState.RECONNECTING
                     logger.warning(
                         "pppoe_slot_down",
@@ -101,6 +139,14 @@ def tick_pppoe_health(session: Session) -> int:
 
     if checked:
         session.flush()
+
+    if assigned_dropped > 0:
+        try:
+            from xiosync.worker.pppoe_warmpool import tick_pppoe_warmpool
+
+            tick_pppoe_warmpool(session, force=True)
+        except Exception as _wp_err:
+            logger.warning("warmpool_trigger_failed: %s", _wp_err)
 
     # Sync browser pool max_instances with live IDLE slot count
     try:

@@ -27,12 +27,12 @@ _INTERVAL_S: float = 120.0  # run at most once per 2 minutes
 BATCH_SIZE: int = 3  # max slots to provision per tick per host
 
 
-def tick_pppoe_warmpool(session: Session) -> int:
+def tick_pppoe_warmpool(session: Session, *, force: bool = False) -> int:
     """Top up idle slot pool toward warm_pool_target. Returns slots provisioned."""
     global _LAST_RUN
 
     now = datetime.now(UTC)
-    if _LAST_RUN and (now - _LAST_RUN).total_seconds() < _INTERVAL_S:
+    if not force and _LAST_RUN and (now - _LAST_RUN).total_seconds() < _INTERVAL_S:
         return 0
 
     _LAST_RUN = now

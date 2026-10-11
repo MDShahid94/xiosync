@@ -159,16 +159,17 @@ class PPPoENodeService:
         ctx: OrgContext,
         host_id: uuid.UUID,
         slots: list[int],
-        batch_size: int = 25,
+        batch_size: int = 5,
         batch_pause_s: float = 2.0,
     ) -> list[PPPoESlotRecord]:
-        """Provision N slots. Batched in waves of 25 to respect BRAS pacing."""
+        """Provision N slots. Batched in waves of 5 to respect BRAS pacing."""
         import time
 
         records: list[PPPoESlotRecord] = []
         for i in range(0, len(slots), batch_size):
             batch = slots[i : i + batch_size]
-            with concurrent.futures.ThreadPoolExecutor(max_workers=batch_size) as ex:
+            # Limited to 5 to stay under sshd MaxStartups (default 10:30:100)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(batch_size, 5)) as ex:
                 futs = {ex.submit(self.provision_slot, ctx, host_id, s): s for s in batch}
                 for fut in concurrent.futures.as_completed(futs):
                     slot = futs[fut]
@@ -397,9 +398,22 @@ class PPPoENodeService:
                 ):
                     node.state = PPPoESlotState.IDLE
             else:
-                if node.state == PPPoESlotState.IDLE:
+                if node.state == PPPoESlotState.ASSIGNED:
+                    if node.assigned_worker_ts_ip:
+                        vm_script(
+                            host,
+                            "release-route.sh",
+                            node.assigned_worker_ts_ip,
+                            node.ppp_slot,
+                            timeout=8,
+                        )
                     node.state = PPPoESlotState.RECONNECTING
-                elif node.state not in (PPPoESlotState.ASSIGNED,):
+                    node.assigned_worker_ts_ip = None
+                    node.assigned_session_id = None
+                    node.assigned_at = None
+                elif node.state == PPPoESlotState.IDLE:
+                    node.state = PPPoESlotState.RECONNECTING
+                else:
                     node.state = PPPoESlotState.DOWN
             self._db.flush()
 
@@ -414,7 +428,8 @@ class PPPoENodeService:
             )
         ).all()
         results: dict[int, dict[str, Any]] = {}
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
+        # Limited to 5 to stay under sshd MaxStartups (default 10:30:100)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
             futs = {
                 ex.submit(self.health_check_slot, host_id, n.ppp_slot): n.ppp_slot for n in nodes
             }
