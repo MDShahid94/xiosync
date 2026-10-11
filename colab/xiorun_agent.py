@@ -6462,7 +6462,8 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
                 f"cdp_ws={_cdp_ws}"
             )
 
-            # Write fingerprint JSON for this profile
+            # Write enriched fingerprint JSON for this profile
+            # Drive file = fast local cache; vault = encrypted cross-runtime source of truth
             try:
                 import datetime as _dt
                 import json as _json
@@ -6472,22 +6473,138 @@ async def run_uc_login(req: UCLoginRequest) -> dict:
                     if (hasattr(req, "identity_id") and req.identity_id)
                     else req.email.split("@")[0]
                 )
+                _prfl_serial_fp = getattr(req, "profile_serial", 0) or 0
+
+                # ── Derive hardware/display attributes from the UA string ──────
+                # These must be CONSISTENT across sessions — any mismatch triggers
+                # Google's new-device signal. Seeds ensure deterministic noise.
+                _ua_fp = result.get("ua_string", "")
+                _tz_fp = result.get("timezone", "UTC")
+                _lo_fp = result.get("locale", "en-US")
+
+                # Derive platform from UA (Windows/Mac/Linux/Android/iOS)
+                if "Windows" in _ua_fp:
+                    _platform = "Win32"
+                    _screen_w, _screen_h = 1920, 1080
+                    _color_depth = 24
+                    _hw_concurrency = 8
+                    _device_memory = 8
+                    _max_touch = 0
+                elif "Macintosh" in _ua_fp:
+                    _platform = "MacIntel"
+                    _screen_w, _screen_h = 2560, 1440
+                    _color_depth = 30
+                    _hw_concurrency = 10
+                    _device_memory = 16
+                    _max_touch = 0
+                elif "Linux" in _ua_fp:
+                    _platform = "Linux x86_64"
+                    _screen_w, _screen_h = 1920, 1080
+                    _color_depth = 24
+                    _hw_concurrency = 4
+                    _device_memory = 4
+                    _max_touch = 0
+                else:
+                    _platform = "Win32"
+                    _screen_w, _screen_h = 1920, 1080
+                    _color_depth = 24
+                    _hw_concurrency = 8
+                    _device_memory = 8
+                    _max_touch = 0
+
+                # WebGL renderer/vendor — seeded from canvas_seed for consistency
+                _c_seed = result.get("canvas_seed", 0)
+                _webgl_renderers = [
+                    ("ANGLE (NVIDIA, NVIDIA GeForce RTX 3080 Direct3D11 vs_5_0 ps_5_0, D3D11)", "Google Inc. (NVIDIA)"),
+                    ("ANGLE (Intel, Intel(R) UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)", "Google Inc. (Intel)"),
+                    ("ANGLE (AMD, AMD Radeon RX 6700 XT Direct3D11 vs_5_0 ps_5_0, D3D11)", "Google Inc. (AMD)"),
+                    ("ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 Ti Direct3D11 vs_5_0 ps_5_0, D3D11)", "Google Inc. (NVIDIA)"),
+                ]
+                _webgl_renderer, _webgl_vendor = _webgl_renderers[_c_seed % len(_webgl_renderers)]
+
                 _fp_data = {
+                    # ── Identity ──────────────────────────────────────────────
                     "profile_id": _prfl_id,
+                    "profile_serial": _prfl_serial_fp,
                     "email": req.email,
+                    "identity_id": req.identity_id if hasattr(req, "identity_id") else "",
+                    # ── Noise seeds (deterministic per-profile) ────────────────
                     "canvas_seed": result.get("canvas_seed", 0),
                     "audio_seed": result.get("audio_seed", 0),
                     "webgl_seed": result.get("webgl_seed", 0),
-                    "ua": result.get("ua_string", ""),
-                    "timezone": result.get("timezone", "UTC"),
-                    "locale": result.get("locale", "en-US"),
+                    # ── Navigator / UA ─────────────────────────────────────────
+                    "ua": _ua_fp,
+                    "platform": _platform,
+                    "vendor": "Google Inc.",
+                    "language": _lo_fp,
+                    "languages": [_lo_fp, _lo_fp.split("-")[0]],
+                    "hardware_concurrency": _hw_concurrency,
+                    "device_memory": _device_memory,
+                    "max_touch_points": _max_touch,
+                    # ── Screen / Display ───────────────────────────────────────
+                    "screen_width": _screen_w,
+                    "screen_height": _screen_h,
+                    "color_depth": _color_depth,
+                    "pixel_ratio": 1.0 if _color_depth == 24 else 2.0,
+                    # ── WebGL ──────────────────────────────────────────────────
+                    "webgl_renderer": _webgl_renderer,
+                    "webgl_vendor": _webgl_vendor,
+                    # ── Locale / Time ──────────────────────────────────────────
+                    "timezone": _tz_fp,
+                    "locale": _lo_fp,
+                    # ── Meta ───────────────────────────────────────────────────
                     "created_at": _dt.datetime.now(_dt.UTC).isoformat(),
+                    "updated_at": _dt.datetime.now(_dt.UTC).isoformat(),
+                    "schema_version": 2,
                 }
-                _fp_path = f"/content/drive/MyDrive/XIOSYNC-Shared/profiles/PRFL_{_prfl_id}.fingerprint.json"
-                os.makedirs(os.path.dirname(_fp_path), exist_ok=True)
-                with open(_fp_path, "w") as _ff:
+
+                # ── Save to Drive (fast local cache, named by PRFL-NNN for scan) ──
+                # Canonical path: profiles/PRFL-047.fingerprint.json (serial-based)
+                # Also write hex-id path for backward compatibility
+                _prfl_label = f"PRFL-{_prfl_serial_fp:03d}" if _prfl_serial_fp else f"PRFL_{_prfl_id}"
+                _fp_path_serial = os.path.join(
+                    DRIVE_ROOT, "profiles", f"{_prfl_label}.fingerprint.json"
+                )
+                _fp_path_hex = os.path.join(
+                    DRIVE_ROOT, "profiles", f"PRFL_{_prfl_id}.fingerprint.json"
+                )
+                os.makedirs(os.path.dirname(_fp_path_serial), exist_ok=True)
+                with open(_fp_path_serial, "w") as _ff:
                     _json.dump(_fp_data, _ff, indent=2)
-                logger.info(f"run-uc-login: fingerprint saved → {_fp_path}")
+                # Symlink hex-id path → serial path for backward compat
+                if _fp_path_hex != _fp_path_serial and not os.path.exists(_fp_path_hex):
+                    try:
+                        os.symlink(_fp_path_serial, _fp_path_hex)
+                    except Exception:
+                        with open(_fp_path_hex, "w") as _ff2:
+                            _json.dump(_fp_data, _ff2, indent=2)
+                logger.info(f"run-uc-login: fingerprint saved → {_fp_path_serial} (schema_v2, {len(_fp_data)} fields)")
+
+                # ── Vault the fingerprint (encrypted, survives Drive wipe) ────
+                # Key: identities/{identity_id}/fingerprint
+                # Only vault if we have a real identity_id (not a fallback)
+                _vault_iid = req.identity_id if (hasattr(req, "identity_id") and req.identity_id) else ""
+                if _vault_iid and XIOSYNC_BASE:
+                    try:
+                        import httpx as _hx_fp  # noqa: PLC0415
+
+                        _fp_vault_key = f"identities/{_vault_iid}/fingerprint"
+                        # Re-use the internal persist-session endpoint pattern
+                        _fp_r = _hx_fp.post(
+                            f"{XIOSYNC_BASE}/api/v1/xioflow/events/vault-fingerprint-internal",
+                            headers={"X-XIOSYNC-Internal": XIOSYNC_INTERNAL_SECRET,
+                                     "Content-Type": "application/json"},
+                            json={"fingerprint": _fp_data, "identity_id": _vault_iid,
+                                  "org_id": "00000000-0000-7000-8000-000000000000"},
+                            timeout=8,
+                        )
+                        if _fp_r.status_code == 200:
+                            logger.info(f"run-uc-login: fingerprint vaulted → {_fp_vault_key}")
+                        else:
+                            logger.warning(f"run-uc-login: fingerprint vault HTTP {_fp_r.status_code}")
+                    except Exception as _fve:
+                        logger.warning(f"run-uc-login: fingerprint vault skipped ({_fve})")
+
             except Exception as _fe:
                 logger.warning(f"run-uc-login: fingerprint save failed: {_fe}")
 
@@ -7795,7 +7912,7 @@ def _load_profile_fingerprint(profile_id: str, drive_root: str) -> dict:
 
     fp_path = os.path.join(drive_root, "profiles", f"{profile_id}.fingerprint.json")
 
-    # Try loading from Drive
+    # 1. Try loading from Drive (fast local cache)
     if os.path.isfile(fp_path):
         try:
             with open(fp_path) as _f:
@@ -7805,6 +7922,43 @@ def _load_profile_fingerprint(profile_id: str, drive_root: str) -> dict:
             return fp
         except Exception as _e:
             logger.warning(f"profile_fingerprint: load failed for {profile_id}: {_e}")
+
+    # 2. Drive file missing — try vault (encrypted cross-runtime source of truth)
+    # This restores fingerprint consistency on a fresh runtime before Drive is populated.
+    # Requires identity_id, which is embedded in the profile_id for hex-id paths.
+    _xio = os.environ.get("XIORUN_XIOSYNC_BASE", os.environ.get("XIOSYNC_BASE", ""))
+    _secret = os.environ.get("XIORUN_INTERNAL_SECRET", os.environ.get("XIOSYNC_INTERNAL_SECRET", ""))
+    if _xio and _secret:
+        try:
+            import httpx as _hx_lp  # noqa: PLC0415
+
+            # profile_id may be hex (ede96456f2ac4c0f) or PRFL-047 — try both as identity_id hint
+            # For PRFL-NNN paths we don't have identity_id here, so this only works for hex paths
+            if len(profile_id.replace("-", "")) == 16 and not profile_id.startswith("PRFL-"):
+                # Reconstruct UUID from hex-id (first 16 chars of stripped UUID)
+                _iid_hint = profile_id  # used as partial key — vault lookup is by identity_id
+                _vr = _hx_lp.get(
+                    f"{_xio}/api/v1/xioflow/events/vault-fingerprint-internal",
+                    params={"identity_id": _iid_hint},
+                    headers={"X-XIOSYNC-Internal": _secret},
+                    timeout=5,
+                )
+                if _vr.status_code == 200:
+                    _vd = _vr.json()
+                    if _vd.get("found") and _vd.get("fingerprint"):
+                        fp = _vd["fingerprint"]
+                        _PROFILE_FINGERPRINT_CACHE[profile_id] = fp
+                        # Write to Drive so next call is fast
+                        try:
+                            os.makedirs(os.path.dirname(fp_path), exist_ok=True)
+                            with open(fp_path, "w") as _f:
+                                json.dump(fp, _f, indent=2)
+                        except Exception:
+                            pass
+                        logger.info(f"profile_fingerprint: restored {profile_id} from vault")
+                        return fp
+        except Exception as _ve:
+            logger.debug(f"profile_fingerprint: vault lookup skipped ({_ve})")
 
     # Generate from preset
     try:

@@ -949,3 +949,105 @@ def resolve_identity_internal(
         "identity_id": str(row[0]),
         "profile_serial": int(row[1] or 0),
     }
+
+
+# ── Fingerprint vault: store enriched fingerprint in vaulted_secrets ──────────
+@internal_router.post(
+    "/vault-fingerprint-internal",
+    status_code=200,
+    summary="[Worker-internal] Vault the enriched browser fingerprint for an identity",
+)
+def vault_fingerprint_internal(payload: dict, request: Request) -> dict:
+    """Stores the full fingerprint JSON (seeds, UA, hardware, display, WebGL)
+    into vaulted_secrets under key 'identities/{identity_id}/fingerprint'.
+
+    Drive file (PRFL-NNN.fingerprint.json) is the fast local cache.
+    This vault entry is the encrypted source of truth — survives Drive wipe,
+    and is readable by any future worker runtime that needs to restore stealth
+    consistency without re-running the UC login flow.
+
+    Payload: {fingerprint: dict, identity_id: str, org_id: str}
+    """
+    import json as _j
+
+    from sqlalchemy.orm import Session as _Sess
+
+    from xiosync.platform.engine_ref import get_engine
+    from xiosync.subsystems.vault.service import VaultService
+
+    fingerprint = payload.get("fingerprint")
+    identity_id = payload.get("identity_id", "")
+    org_id = payload.get("org_id", "00000000-0000-7000-8000-000000000000")
+
+    if not fingerprint or not identity_id:
+        raise HTTPException(status_code=400, detail="fingerprint and identity_id are required")
+
+    vault_key = f"identities/{identity_id}/fingerprint"
+    org_uuid = uuid.UUID(org_id) if isinstance(org_id, str) else org_id
+
+    # Build a minimal OrgContext for VaultService
+    from types import SimpleNamespace
+    _ctx = SimpleNamespace(
+        organization_id=org_uuid,
+        actor_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+        is_service=True,
+        scopes=frozenset(),
+    )
+
+    with _Sess(get_engine()) as sess:
+        vault = VaultService(sess)
+        vault.put_secret(
+            _ctx,
+            vault_key,
+            _j.dumps(fingerprint),
+            secret_type="generic",
+            description=f"Browser fingerprint for {fingerprint.get('email', identity_id)} (schema_v{fingerprint.get('schema_version', 1)})",
+            platform_global=False,
+        )
+        sess.commit()
+
+    logger.info(
+        "fingerprint.vaulted",
+        extra={
+            "identity_id": identity_id,
+            "vault_key": vault_key,
+            "fields": len(fingerprint),
+            "schema_version": fingerprint.get("schema_version", 1),
+        },
+    )
+    return {"ok": True, "vault_key": vault_key, "fields": len(fingerprint)}
+
+
+@internal_router.get(
+    "/vault-fingerprint-internal",
+    status_code=200,
+    summary="[Worker-internal] Retrieve vaulted fingerprint for an identity",
+)
+def get_fingerprint_internal(request: Request, identity_id: str) -> dict:
+    """Retrieve the encrypted fingerprint for an identity to restore stealth
+    consistency on a fresh runtime (before the Drive file is accessible).
+    """
+    import json as _j
+
+    from sqlalchemy.orm import Session as _Sess
+
+    from xiosync.platform.engine_ref import get_engine
+    from xiosync.subsystems.vault.service import VaultService
+
+    vault_key = f"identities/{identity_id}/fingerprint"
+    from types import SimpleNamespace
+    _ctx = SimpleNamespace(
+        organization_id=uuid.UUID("00000000-0000-7000-8000-000000000000"),
+        actor_id=uuid.UUID("00000000-0000-0000-0000-000000000000"),
+        is_service=True,
+        scopes=frozenset(),
+    )
+
+    with _Sess(get_engine()) as sess:
+        vault = VaultService(sess)
+        try:
+            raw = vault.get_secret(_ctx, vault_key, allow_platform=False)
+        except Exception:
+            return {"found": False, "fingerprint": None}
+
+    return {"found": True, "fingerprint": _j.loads(raw)}
