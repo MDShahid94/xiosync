@@ -315,6 +315,15 @@ def create_app(
         dependencies=[require_capability("workflow.manage")],
     )
 
+    # --- XIOFLOW: AI Agent actors (cognitive goal execution)
+    from xiosync.subsystems.xioflow.api.agents import router as xioflow_agents_router
+
+    application.include_router(
+        xioflow_agents_router,
+        prefix="/api/v1",
+        dependencies=[require_capability("workflow.manage")],
+    )
+
     # --- XIOVIEW: universal browser session observation (WS stream + remote control)
     from xiosync.subsystems.xioview.api.observe import (
         public_router as xioview_public_router,
