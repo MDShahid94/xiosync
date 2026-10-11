@@ -202,6 +202,8 @@ class EdgeRepository:
         weight: float | None,
         state: str,
         properties: dict[str, Any] | None = None,
+        version: int = 1,
+        superseded_by: uuid.UUID | None = None,
     ) -> uuid.UUID:
         edge_id = new_id()
         self._session.add(
@@ -215,19 +217,29 @@ class EdgeRepository:
                 weight=weight,
                 state=state,
                 properties=properties or {},
+                version=version,
+                superseded_by=superseded_by,
             )
         )
         self._session.flush()
         return edge_id
 
-    def get_edge(self, context: OrgContext, edge_id: uuid.UUID) -> EdgeRecord | None:
-        row = self._session.scalar(
+    def get_edge(self, context: OrgContext, edge_id: uuid.UUID):
+        """Get a single edge by ID."""
+        return self._session.scalar(
             select(Edge).where(
-                Edge.organization_id == context.organization_id,
                 Edge.id == edge_id,
+                Edge.organization_id == context.organization_id,
             )
         )
-        return None if row is None else _edge_record(row)
+
+    def supersede_edge(self, context: OrgContext, old_id: uuid.UUID, new_id: uuid.UUID) -> None:
+        """Mark old edge as superseded by new edge."""
+        self._session.execute(
+            update(Edge)
+            .where(Edge.id == old_id, Edge.organization_id == context.organization_id)
+            .values(superseded_by=new_id, state="inactive")
+        )
 
 
 class MemoryRepository:

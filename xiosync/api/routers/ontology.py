@@ -25,6 +25,13 @@ class CreateEdgeRequest(_S):
     properties: dict[str, Any] | None = None
 
 
+class UpdateEdgeRequest(_S):
+    edge_type: str | None = None
+    weight: float | None = None
+    state: str | None = None
+    properties: dict[str, Any] | None = None
+
+
 class CreateMemoryRequest(_S):
     owner_actor_id: uuid.UUID
     kind: str
@@ -65,6 +72,35 @@ def create_edge(payload: CreateEdgeRequest, request: Request) -> dict[str, Any] 
             },
         )
     return {"id": str(edge_id)}
+
+
+@router.put("/edges/{edge_id}", status_code=201, summary="Update an edge (creates new version)", response_model=None)
+def update_edge(edge_id: uuid.UUID, payload: UpdateEdgeRequest, request: Request) -> dict[str, Any] | JSONResponse:
+    from sqlalchemy.orm import Session as OrmSession
+
+    from xiosync.domain.context import OrgContext
+    from xiosync.persistence.ontology import EdgeRepository
+    from xiosync.services.ontology import EdgeService
+
+    ctx = cast(OrgContext, request.state.org_context)
+    session = cast(OrmSession, request.state.org_session)
+    svc = EdgeService(EdgeRepository(session))
+    try:
+        new_id = svc.update_edge(
+            ctx,
+            edge_id=edge_id,
+            edge_type=payload.edge_type,
+            weight=payload.weight,
+            state=payload.state,
+            properties=payload.properties,
+        )
+    except Exception as exc:
+        return JSONResponse(
+            status_code=422,
+            media_type="application/problem+json",
+            content={"type": "https://xiosync.dev/problems/edge_error", "title": "Edge update failed", "status": 422, "detail": str(exc)},
+        )
+    return {"id": str(new_id)}
 
 
 @router.post("/memories", status_code=201, summary="Create a memory entry", response_model=None)

@@ -27,17 +27,32 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from xiosync.protocols.subsystem_interfaces import ScriptRunnerProtocol
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from xiosync.platform.ids import new_id
-from xiosync.subsystems.xiogrid.services.script_runner import ScriptRunner, ScriptRunnerError
 
 logger = logging.getLogger(__name__)
 
-_runner = ScriptRunner()  # singleton — reused across ticks, stateless
+_runner: Any | None = None  # singleton — reused across ticks, stateless; initialized lazily
+
+
+def _get_script_runner() -> Any:
+    """Return the ScriptRunner singleton, creating it lazily if not yet initialized."""
+    global _runner
+    if _runner is not None:
+        return _runner
+    from xiosync.subsystems.xiogrid.services.script_runner import (  # noqa: PLC0415
+        ScriptRunner,
+    )
+
+    _runner = ScriptRunner()
+    return _runner
 
 # ── XIOVIEW page registry ─────────────────────────────────────────────────────
 # All page lookups delegate to XIORunRuntimePool — the single source of truth.
@@ -478,7 +493,12 @@ def _execute_script(
     session_id: uuid.UUID | None,
 ) -> dict[str, Any]:
     try:
-        run_result = _runner.run(
+        from xiosync.subsystems.xiogrid.services.script_runner import (  # noqa: PLC0415
+            ScriptRunnerError,
+        )
+
+        runner = _get_script_runner()
+        run_result = runner.run(
             script_ref=script_ref,
             context=context,
             session_id=session_id,
@@ -491,7 +511,7 @@ def _execute_script(
             "error": run_result.error,
             "stdout_tail": run_result.stdout[-500:] if run_result.stdout else "",
         }
-    except ScriptRunnerError as exc:
+    except Exception as exc:
         return {"success": False, "status": "launch_error", "error": str(exc)}
 
 
@@ -697,7 +717,7 @@ async def _execute_dag_async(
         circuit_breaker,
         branch_evaluator,
         page,
-        script_runner=_runner,  # reuse module-level singleton — no per-node instantiation
+        script_runner=_get_script_runner(),  # reuse module-level singleton — no per-node instantiation
     )
 
     try:

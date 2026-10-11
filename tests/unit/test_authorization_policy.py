@@ -272,6 +272,19 @@ def test_payload_carries_the_granted_grant_id_on_allow() -> None:
     assert payload["grant_id"] == str(decision.grant_id)
 
 
+def test_wildcard_grant_allows_any_capability() -> None:
+    wildcard_grant = GrantRecord(
+        uuid.uuid4(), _ORG_ID, _ACTOR_ID, "*", "active", {}, None
+    )
+    repository = _repository(actor=_actor(), organization=_organization(), grants=[wildcard_grant])
+
+    decision = _authorize(repository)
+
+    assert decision.allowed is True
+    assert decision.grant_id == wildcard_grant.id
+
+
+
 # --------------------------------------------------------------------------- #
 # Fail-closed on infrastructure errors
 # --------------------------------------------------------------------------- #

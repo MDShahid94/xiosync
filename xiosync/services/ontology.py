@@ -133,6 +133,42 @@ class EdgeService:
             properties=properties or {},
         )
 
+    def update_edge(
+        self,
+        context: OrgContext,
+        *,
+        edge_id: uuid.UUID,
+        edge_type: str | None = None,
+        weight: float | None = None,
+        state: str | None = None,
+        properties: dict[str, Any] | None = None,
+    ) -> uuid.UUID:
+        """Create a new version of an edge (append-only).
+
+        The old edge is marked as superseded and set to 'inactive'.
+        A new edge is created with incremented version.
+        """
+        old_edge = self._repository.get_edge(context, edge_id)
+        if old_edge is None:
+            raise ValueError(f"Edge {edge_id} not found")
+
+        new_id = self._repository.insert_edge(
+            context,
+            source_id=old_edge.source_id,
+            target_id=old_edge.target_id,
+            edge_type=edge_type or old_edge.edge_type,
+            graph_class=old_edge.graph_class,
+            weight=weight if weight is not None else old_edge.weight,
+            state=state or old_edge.state,
+            properties=properties if properties is not None else (old_edge.properties or {}),
+            version=old_edge.version + 1,
+            superseded_by=None,
+        )
+        # Mark old edge as superseded
+        self._repository.supersede_edge(context, edge_id, new_id)
+        return new_id
+
+
 
 class MemoryService:
     """Use-case orchestration for versioned Memory (doc 04 §2.1)."""

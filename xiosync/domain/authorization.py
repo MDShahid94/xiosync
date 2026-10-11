@@ -315,7 +315,7 @@ def authorize(
             for grant in grants
             if grant.organization_id == requested_organization_id
             and grant.actor_id == actor.id
-            and grant.capability == capability
+            and (grant.capability == capability or grant.capability == "*")
             and grant.state == "active"
             and (grant.expires_at is None or grant.expires_at > now)
         ]

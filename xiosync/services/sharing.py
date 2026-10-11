@@ -47,6 +47,7 @@ class ShareRecord:
     state: str
     created_at: datetime
     expires_at: datetime | None
+    parent_share_id: uuid.UUID | None = None
 
 
 class ShareNotFoundError(ValueError):
@@ -72,6 +73,7 @@ def _record(row: ResourceShare) -> ShareRecord:
         state=row.state,
         created_at=row.created_at,
         expires_at=row.expires_at,
+        parent_share_id=row.parent_share_id,
     )
 
 
@@ -97,6 +99,7 @@ class SharingService:
         target_org_id: uuid.UUID | None = None,
         permissions: list[str] | None = None,
         expires_at: datetime | None = None,
+        parent_share_id: uuid.UUID | None = None,
     ) -> ShareRecord:
         """Share a resource with another organization (or publicly)."""
         self._check_enabled()
@@ -119,6 +122,7 @@ class SharingService:
             resource_id=resource_id,
             permissions=perms,
             expires_at=expires_at,
+            parent_share_id=parent_share_id,
         )
         self._session.add(row)
         self._session.flush()
@@ -129,19 +133,40 @@ class SharingService:
         context: OrgContext,
         share_id: uuid.UUID,
     ) -> ShareRecord:
-        """Revoke a resource share."""
-        row = self._session.scalar(
-            select(ResourceShare).where(
-                ResourceShare.source_org_id == context.organization_id,
-                ResourceShare.id == share_id,
+        """Revoke a share and all its delegation descendants."""
+        from sqlalchemy import text
+
+        # Cascade revocation via recursive CTE
+        result = self._session.execute(
+            text("""
+            WITH RECURSIVE share_tree AS (
+                SELECT id
+                FROM resource_shares
+                WHERE id = :root_id
+                  AND source_org_id = :org_id
+                  AND state = 'active'
+                UNION ALL
+                SELECT rs.id
+                FROM resource_shares rs
+                JOIN share_tree st ON rs.parent_share_id = st.id
+                WHERE rs.state = 'active'
             )
+            UPDATE resource_shares SET state = 'revoked'
+            WHERE id IN (SELECT id FROM share_tree)
+              AND state = 'active'
+            RETURNING id
+            """),
+            {"root_id": share_id, "org_id": context.organization_id},
         )
-        if row is None:
-            raise ShareNotFoundError(
-                f"share {share_id} not found for org {context.organization_id}"
-            )
-        row.state = "revoked"
+        revoked_ids = [row[0] for row in result.fetchall()]
         self._session.flush()
+
+        if not revoked_ids:
+            from xiosync.services.sharing import ShareNotFoundError
+            raise ShareNotFoundError(share_id)
+
+        # Return the root share record
+        row = self._session.get(ResourceShare, share_id)
         return _record(row)
 
     def list_shares(

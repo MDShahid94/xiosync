@@ -497,6 +497,23 @@ class TestSharingConstants:
         assert session.add.called
         assert session.flush.called
 
+    def test_sharing_with_parent_share_id(self) -> None:
+        session = MagicMock()
+        svc = SharingService(session, enabled=True)
+        ctx = system_context(new_id())
+        res_id = new_id()
+        parent_id = new_id()
+        rec = svc.create_share(
+            ctx,
+            resource_type="capability",
+            resource_id=res_id,
+            parent_share_id=parent_id,
+        )
+        assert rec.parent_share_id == parent_id
+        assert session.add.called
+        added_row = session.add.call_args[0][0]
+        assert added_row.parent_share_id == parent_id
+
 
 class TestSharesRouter:
     def test_create_share_router(self) -> None:
@@ -542,6 +559,8 @@ class TestSharesRouter:
         mock_row.created_at = datetime.now(UTC)
         mock_row.expires_at = None
         session.scalar.return_value = mock_row
+        session.execute.return_value.fetchall.return_value = [(share_id,)]
+        session.get.return_value = mock_row
         req.state.org_session = session
         resp = revoke_share(share_id, req)
         assert isinstance(resp, dict)

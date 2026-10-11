@@ -171,6 +171,11 @@ class Edge(Base):
             ["actors.organization_id", "actors.id"],
             name="fk_edges_target_same_org",
         ),
+        ForeignKeyConstraint(
+            ["organization_id", "superseded_by"],
+            ["edges.organization_id", "edges.id"],
+            name="fk_edges_superseded_by_same_org",
+        ),
         # Graph class fixes the acyclicity rule (doc 03 §3); the value itself is
         # a closed schema set, unlike edge_type which is registry-validated.
         CheckConstraint(
@@ -196,6 +201,14 @@ class Edge(Base):
     properties: Mapped[dict[str, Any]] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb"),
         doc="Arbitrary key-value properties on this edge (property graph support)",
+    )
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("1"),
+        doc="Monotonically increasing version for this edge"
+    )
+    superseded_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+        doc="Points to the newer version of this edge (append-only versioning)"
     )
     created_at: Mapped[datetime] = mapped_column(
         _timestamptz, nullable=False, server_default=text("now()")

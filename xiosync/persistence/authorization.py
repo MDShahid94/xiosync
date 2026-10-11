@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from xiosync.domain.context import OrgContext
@@ -74,7 +74,7 @@ class AuthorizationRepository:
             .where(
                 Grant.organization_id == context.organization_id,
                 Grant.actor_id == context.actor_id,
-                Capability.name == capability_name,
+                or_(Capability.name == capability_name, Capability.name == "*"),
             )
         ).all()
         return [

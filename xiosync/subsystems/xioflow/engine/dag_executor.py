@@ -6,6 +6,14 @@ import re
 import time
 from urllib.parse import urlparse
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from xiosync.protocols.subsystem_interfaces import (
+        ScriptRunnerProtocol,
+        ViewRegistryProtocol,
+    )
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,7 +69,8 @@ class DAGExecutor:
         max_concurrent: int = 5,
         max_execution_depth: int = 50,
         max_viewport_tier: int = 5,
-        script_runner=None,  # injected ScriptRunner singleton; created lazily if None
+        script_runner: ScriptRunnerProtocol | None = None,  # injected ScriptRunner singleton; created lazily if None
+        view_registry: ViewRegistryProtocol | None = None,
     ):
         """
         Initialize the DAGExecutor.
@@ -81,6 +90,17 @@ class DAGExecutor:
         # ScriptRunner: prefer the injected singleton (run_dispatcher._runner),
         # fall back to a new instance only when running standalone (tests, etc.)
         self._script_runner = script_runner
+        self._view_registry = view_registry
+
+    def _get_script_runner(self):
+        if self._script_runner is not None:
+            return self._script_runner
+        from xiosync.subsystems.xiogrid.services.script_runner import (  # noqa: PLC0415
+            ScriptRunner,
+        )
+
+        self._script_runner = ScriptRunner()
+        return self._script_runner
 
     async def execute_workflow(
         self, intent: str, org_id: str, context: dict, execution_context: dict | None = None
@@ -416,15 +436,7 @@ class DAGExecutor:
                 self.circuit_breaker.record_failure()
                 return False
             try:
-                from xiosync.subsystems.xiogrid.services.script_runner import (  # noqa: PLC0415
-                    ScriptRunner,
-                )
-
-                # Reuse the injected singleton; create a new instance only as last resort.
-                runner = self._script_runner
-                if runner is None:
-                    runner = ScriptRunner()
-                    self._script_runner = runner  # cache for subsequent nodes in this run
+                runner = self._get_script_runner()
                 proxy_url = execution_context.get("proxy_url") or None
                 run_result = runner.run(
                     script_ref=script_ref,

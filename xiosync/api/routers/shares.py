@@ -21,6 +21,7 @@ class CreateShareRequest(_S):
     resource_id: uuid.UUID
     target_org_id: uuid.UUID | None = None
     permissions: list[str] | None = Field(default=None)
+    parent_share_id: uuid.UUID | None = None
 
 
 @router.post("/shares", status_code=201, summary="Create a resource share", response_model=None)
@@ -40,6 +41,7 @@ def create_share(payload: CreateShareRequest, request: Request) -> dict[str, Any
             resource_id=payload.resource_id,
             target_org_id=payload.target_org_id,
             permissions=payload.permissions,
+            parent_share_id=payload.parent_share_id,
         )
     except Exception as exc:
         return JSONResponse(

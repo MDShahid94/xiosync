@@ -729,4 +729,37 @@ class BootstrapService:
         self._session.add_all([identity, membership])
         self._session.flush()
         logger.info("genesis: admin identity created — email=%s", email)
+
+        # Grant wildcard capability to org owner on bootstrap
+        from xiosync.persistence.models.authorization import Capability, Grant
+
+        # Ensure a '*' wildcard capability exists
+        wildcard_cap = self._session.scalar(
+            select(Capability).where(
+                Capability.organization_id == GENESIS_ORG_ID,
+                Capability.name == "*",
+            )
+        )
+        if not wildcard_cap:
+            wildcard_cap = Capability(
+                id=new_id(),
+                organization_id=GENESIS_ORG_ID,
+                name="*",
+                description="Wildcard capability — matches all permissions",
+                state="active",
+            )
+            self._session.add(wildcard_cap)
+            self._session.flush()
+
+        owner_grant = Grant(
+            id=new_id(),
+            organization_id=GENESIS_ORG_ID,
+            actor_id=BOOTSTRAP_HUMAN_ACTOR_ID,
+            capability_id=wildcard_cap.id,
+            state="active",
+            granted_by=BOOTSTRAP_HUMAN_ACTOR_ID,  # self-granted on bootstrap
+        )
+        self._session.add(owner_grant)
+        self._session.flush()
+
         return identity_id

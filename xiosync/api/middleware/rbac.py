@@ -104,6 +104,12 @@ def _check_role(
     before the more expensive grant-based authorization.
     """
     if context.platform_role == PlatformRole.PLATFORM_ADMIN:
+        logger.info(
+            "platform_admin_access: actor=%s org=%s capability=%s",
+            context.actor_id,
+            context.organization_id,
+            group_name,
+        )
         return True
 
     min_role = _DEFAULT_MIN_ROLE.get(group_name)

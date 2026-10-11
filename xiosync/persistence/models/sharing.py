@@ -13,6 +13,7 @@ from datetime import datetime
 from sqlalchemy import (
     CheckConstraint,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Text,
     text,
@@ -42,6 +43,16 @@ class ResourceShare(Base):
         Index("ix_resource_shares_source_org", "source_org_id"),
         Index("ix_resource_shares_target_org", "target_org_id"),
         Index("ix_resource_shares_resource", "resource_type", "resource_id"),
+        ForeignKeyConstraint(
+            ["parent_share_id"],
+            ["resource_shares.id"],
+            name="fk_resource_shares_parent",
+        ),
+        Index(
+            "ix_resource_shares_parent",
+            "parent_share_id",
+            postgresql_where=text("parent_share_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
@@ -73,3 +84,8 @@ class ResourceShare(Base):
         server_default=text("now()"),
     )
     expires_at: Mapped[datetime | None] = mapped_column(_ts)
+    parent_share_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+        doc="Parent share for delegation chains — revocation cascades up",
+    )
