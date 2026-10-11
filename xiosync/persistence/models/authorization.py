@@ -58,6 +58,10 @@ class Capability(Base):
     retry_policy: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     version: Mapped[int] = mapped_column(nullable=False, server_default=text("1"))
     state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'active'"))
+    requires: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb"),
+        doc="Prerequisite capability IDs that must be granted first"
+    )
 
 
 class Grant(Base):
@@ -84,6 +88,13 @@ class Grant(Base):
             "capability_id",
             postgresql_where=text("state = 'active'"),
         ),
+        ForeignKeyConstraint(
+            ["organization_id", "parent_grant_id"],
+            ["grants.organization_id", "grants.id"],
+            name="fk_grants_parent_grant_same_org",
+        ),
+        Index("ix_grants_parent_grant_id", "parent_grant_id",
+              postgresql_where=text("parent_grant_id IS NOT NULL")),
     )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=new_id)
     organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -98,6 +109,15 @@ class Grant(Base):
     expires_at: Mapped[datetime | None] = mapped_column(_ts)
     created_at: Mapped[datetime] = mapped_column(_ts, nullable=False, server_default=text("now()"))
     revoked_at: Mapped[datetime | None] = mapped_column(_ts)
+    # Delegation provenance (C-1 fix)
+    granted_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("actors.id"), nullable=True,
+        doc="Actor who authorized this grant — audit trail"
+    )
+    parent_grant_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True,
+        doc="FK to parent grant for delegation chain traversal"
+    )
 
 
 class Event(Base):

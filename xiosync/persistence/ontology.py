@@ -108,6 +108,29 @@ class EdgeRepository:
             or 0
         ) > 0
 
+    def type_registry_value_exists(
+        self, context: OrgContext, *, category: str, value: str
+    ) -> bool:
+        """Check if a type_registry entry exists for (category, value) in core or org namespace."""
+        from sqlalchemy import func, or_, select
+
+        from xiosync.persistence.models.ontology import TypeRegistry
+
+        return (
+            self._session.scalar(
+                select(func.count()).select_from(TypeRegistry).where(
+                    TypeRegistry.category == category,
+                    TypeRegistry.value == value,
+                    TypeRegistry.state == "active",
+                    or_(
+                        TypeRegistry.organization_id.is_(None),
+                        TypeRegistry.organization_id == context.organization_id,
+                    ),
+                )
+            )
+            or 0
+        ) > 0
+
     def load_adjacency(
         self, context: OrgContext, graph_class: str
     ) -> dict[uuid.UUID, set[uuid.UUID]]:

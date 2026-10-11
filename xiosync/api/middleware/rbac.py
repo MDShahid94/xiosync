@@ -213,6 +213,7 @@ def require_capability(group_name: str) -> Any:
         if org_session is not None:
             from xiosync.persistence.authorization import AuthorizationRepository
             from xiosync.services.authorization import AuthorizationService
+            from xiosync.services.sharing import build_share_checker
 
             repo = AuthorizationRepository(org_session)
             grants = repo.list_grants(context, group_name)
@@ -228,6 +229,7 @@ def require_capability(group_name: str) -> Any:
                     resource_organization_id=context.organization_id,
                     arguments={},
                     now=datetime.now(UTC),
+                    share_checker=build_share_checker(org_session),
                 )
                 if not decision.allowed:
                     logger.warning(

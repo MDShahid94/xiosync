@@ -13,6 +13,11 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from xiosync.domain.authorization import ShareChecker
+
 from xiosync.domain.context import OrgContext
 from xiosync.persistence.models.sharing import ResourceShare
 from xiosync.platform.ids import new_id
@@ -22,6 +27,7 @@ __all__ = [
     "ShareRecord",
     "SharingDisabledError",
     "SharingService",
+    "build_share_checker",
 ]
 
 SHAREABLE_TYPES = frozenset({"capability", "artifact", "workflow", "plugin"})
@@ -101,6 +107,9 @@ class SharingService:
             )
 
         perms = permissions or ["read"]
+        from xiosync.domain.sharing import validate_share_permissions
+
+        validate_share_permissions(perms)
         share_id = new_id()
         row = ResourceShare(
             id=share_id,
@@ -176,3 +185,39 @@ class SharingService:
         if resource_type is not None:
             stmt = stmt.where(ResourceShare.resource_type == resource_type)
         return [_record(row) for row in self._session.scalars(stmt).all()]
+
+
+def build_share_checker(session: Session) -> ShareChecker:
+    """Build a ShareChecker that enforces granular permissions via JSONB containment."""
+    from sqlalchemy import func, or_, select
+    from xiosync.persistence.models.sharing import ResourceShare
+
+    def check(
+        resource_type: str,
+        resource_id: uuid.UUID,
+        requesting_org_id: uuid.UUID,
+        required_permission: str,
+    ) -> bool:
+        return (
+            session.scalar(
+                select(func.count())
+                .select_from(ResourceShare)
+                .where(
+                    ResourceShare.resource_type == resource_type,
+                    ResourceShare.resource_id == resource_id,
+                    ResourceShare.state == "active",
+                    or_(
+                        ResourceShare.target_org_id == requesting_org_id,
+                        ResourceShare.target_org_id.is_(None),
+                    ),
+                    or_(
+                        ResourceShare.expires_at.is_(None),
+                        ResourceShare.expires_at > func.now(),
+                    ),
+                    ResourceShare.permissions.contains([required_permission]),
+                )
+            )
+            or 0
+        ) > 0
+
+    return check

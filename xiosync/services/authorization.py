@@ -14,6 +14,7 @@ from xiosync.domain.authorization import (
     Organization,
     RateChecker,
     Resource,
+    ShareChecker,
     authorize,
 )
 from xiosync.domain.context import OrgContext
@@ -41,6 +42,7 @@ class AuthorizationService:
         arguments: Mapping[str, Any],
         now: datetime,
         rate_checker: RateChecker | None = None,
+        share_checker: ShareChecker | None = None,
     ) -> Decision:
         # Auto-build a rate checker if a rate limiter is available and
         # no explicit checker was provided.
@@ -89,6 +91,7 @@ class AuthorizationService:
                 arguments=arguments,
                 now=now,
                 rate_checker=rate_checker,
+                share_checker=share_checker,
             )
         except Exception:
             decision = Decision(False, uuid.uuid4(), "authorization_lookup_failed")
@@ -112,3 +115,91 @@ class AuthorizationService:
                 False, decision.decision_id, "policy_event_emission_failed", decision.grant_id
             )
         return decision
+
+    def revoke_grant(
+        self,
+        context: OrgContext,
+        *,
+        grant_id: uuid.UUID,
+        now: datetime,
+    ) -> int:
+        """Revoke a grant and all its delegation descendants via recursive CTE."""
+        from sqlalchemy import text as sa_text
+        result = self._repository._session.execute(
+            sa_text("""
+            WITH RECURSIVE delegation_tree AS (
+                SELECT id, organization_id
+                FROM grants
+                WHERE id = :root_id
+                  AND organization_id = :org_id
+                  AND state = 'active'
+                UNION ALL
+                SELECT g.id, g.organization_id
+                FROM grants g
+                JOIN delegation_tree dt ON g.parent_grant_id = dt.id
+                                        AND g.organization_id = dt.organization_id
+                WHERE g.state = 'active'
+            )
+            UPDATE grants SET state = 'revoked', revoked_at = :now
+            WHERE id IN (SELECT id FROM delegation_tree)
+              AND state = 'active'
+            """),
+            {"root_id": grant_id, "org_id": context.organization_id, "now": now},
+        )
+        self._repository._session.flush()
+        return result.rowcount
+
+    def create_grant(
+        self,
+        context: OrgContext,
+        *,
+        actor_id: uuid.UUID,
+        capability_id: uuid.UUID,
+        granted_by: uuid.UUID | None = None,
+        parent_grant_id: uuid.UUID | None = None,
+        constraints: dict | None = None,
+        expires_at: datetime | None = None,
+    ) -> uuid.UUID:
+        """Create a grant with provenance tracking and prerequisite enforcement."""
+        from sqlalchemy import func, select
+        from xiosync.persistence.models.authorization import Capability, Grant
+
+        # Load capability to check prerequisites
+        cap = self._repository._session.scalar(
+            select(Capability).where(
+                Capability.id == capability_id,
+                Capability.organization_id == context.organization_id,
+            )
+        )
+        if cap is None:
+            raise ValueError(f"Capability {capability_id} not found")
+
+        # Verify prerequisites are satisfied
+        for prereq_id in (cap.requires or []):
+            prereq_uuid = uuid.UUID(prereq_id) if isinstance(prereq_id, str) else prereq_id
+            has_prereq = self._repository._session.scalar(
+                select(func.count()).select_from(Grant).where(
+                    Grant.organization_id == context.organization_id,
+                    Grant.actor_id == actor_id,
+                    Grant.capability_id == prereq_uuid,
+                    Grant.state == "active",
+                )
+            )
+            if not has_prereq:
+                raise ValueError(
+                    f"Prerequisite capability {prereq_id} not granted to actor {actor_id}"
+                )
+
+        grant = Grant(
+            organization_id=context.organization_id,
+            actor_id=actor_id,
+            capability_id=capability_id,
+            state="active",
+            constraints=constraints or {},
+            expires_at=expires_at,
+            granted_by=granted_by or context.actor_id,
+            parent_grant_id=parent_grant_id,
+        )
+        self._repository._session.add(grant)
+        self._repository._session.flush()
+        return grant.id

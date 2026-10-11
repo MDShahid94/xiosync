@@ -100,6 +100,14 @@ class EdgeService:
         """
         validate_graph_class(graph_class)
 
+        # Validate edge_type against type_registry (INV-EDGE-3)
+        if not self._repository.type_registry_value_exists(
+            context, category="edge_type", value=edge_type
+        ):
+            from xiosync.domain.ontology import InvalidEdgeTypeError
+
+            raise InvalidEdgeTypeError(edge_type)
+
         if not self._repository.actor_exists(context, source_id):
             raise ActorNotInOrganizationError(source_id, "source")
         if not self._repository.actor_exists(context, target_id):

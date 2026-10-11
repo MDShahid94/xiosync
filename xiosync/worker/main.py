@@ -109,6 +109,7 @@ def main() -> None:
     # Import worker functions.
     from xiosync.subsystems.xiorun.health_loop import tick_xiorun_health
     from xiosync.worker.event_router import evaluate_event_triggers
+    from xiosync.worker.grant_reaper import tick_grant_reaper
     from xiosync.worker.pppoe_health import tick_pppoe_health
     from xiosync.worker.pppoe_warmpool import tick_pppoe_warmpool
     from xiosync.worker.reaper import reap_expired_leases
@@ -141,6 +142,7 @@ def main() -> None:
         loops.append(("pppoe-health", tick_pppoe_health, pppoe_health_interval))
         loops.append(("pppoe-warmpool", tick_pppoe_warmpool, pppoe_warmpool_interval))
         loops.append(("xiorun-health", tick_xiorun_health, xiorun_health_interval))
+        loops.append(("grant-reaper", tick_grant_reaper, 60))
 
     if not loops:
         logger.error("no_loops_selected")

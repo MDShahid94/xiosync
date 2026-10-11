@@ -224,11 +224,11 @@ class Decision:
 
 
 RateChecker = Callable[[Mapping[str, Any]], bool]
-ShareChecker = Callable[[str, uuid.UUID, uuid.UUID], bool]
-"""Callable(resource_type, resource_id, requesting_org_id) -> bool.
+ShareChecker = Callable[[str, uuid.UUID, uuid.UUID, str], bool]
+"""Callable(resource_type, resource_id, requesting_org_id, required_permission) -> bool.
 
 Returns True if there is an active, non-expired resource_share granting
-the requesting org access to the resource.
+the requesting org the specified permission on the resource.
 """
 
 
@@ -254,6 +254,17 @@ def _constraints_allow(
         ):
             return False
     return True
+
+
+def _operation_to_share_permission(operation: str, capability: str) -> str:
+    """Map an operation/capability to the required share permission."""
+    if operation in ("read", "list", "get", "describe"):
+        return "read"
+    if operation in ("execute", "run", "invoke"):
+        return "execute"
+    if operation in ("fork", "clone", "copy"):
+        return "fork"
+    return "read"  # default minimum
 
 
 def authorize(
@@ -287,8 +298,9 @@ def authorize(
             return _deny("actor_invalid")
         if resource.organization_id != requested_organization_id:
             # Cross-org: check if a share exists
+            _share_perm = _operation_to_share_permission(operation, capability)
             if share_checker is None or not share_checker(
-                resource.type, resource.id, requested_organization_id
+                resource.type, resource.id, requested_organization_id, _share_perm
             ):
                 return _deny("resource_ownership_mismatch")
             # Share exists — proceed with the actor's own grants

@@ -83,6 +83,16 @@ class GraphCycleError(Exception):
         self.graph_class = graph_class
 
 
+class InvalidEdgeTypeError(ValueError):
+    """Raised when edge_type is not registered in type_registry."""
+
+    def __init__(self, edge_type: str) -> None:
+        super().__init__(
+            f"edge_type {edge_type!r} is not registered in type_registry "
+            f"(category='edge_type'). Register it first or use a well-known type."
+        )
+
+
 def validate_graph_class(graph_class: str) -> None:
     """Reject a ``graph_class`` outside the four recognized classes (doc 03 §3).
 

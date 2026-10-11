@@ -923,13 +923,31 @@ class DAGExecutor:
                 ):
                     return False
         elif execution_mode == "parallel":
+            from xiosync.subsystems.xioflow.engine.branch_vars import BranchVars, merge_branch_results
+
             semaphore = asyncio.Semaphore(self.max_concurrent)
+            # Fork: each branch gets an isolated snapshot
+            branch_vars_list: list[BranchVars] = [
+                BranchVars(self.workflow_vars) for _ in valid_next_nodes
+            ]
 
-            async def exec_with_sem(n):
+            async def exec_with_sem(n, bvars):
                 async with semaphore:
-                    return await self._execute_node(n, execution_context, set(_visited), _depth + 1)
+                    # Temporarily swap self.workflow_vars for this branch's isolated copy
+                    saved = self.workflow_vars
+                    self.workflow_vars = bvars  # BranchVars duck-types dict access
+                    try:
+                        return await self._execute_node(n, execution_context, set(_visited), _depth + 1)
+                    finally:
+                        self.workflow_vars = saved
 
-            results = await asyncio.gather(*(exec_with_sem(n) for n in valid_next_nodes))
+            results = await asyncio.gather(
+                *(exec_with_sem(n, bv) for n, bv in zip(valid_next_nodes, branch_vars_list))
+            )
+
+            # Merge: deterministic last-writer-wins by branch order
+            merge_branch_results(self.workflow_vars, branch_vars_list)
+
             if not all(results):
                 return False
 
