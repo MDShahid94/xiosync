@@ -258,7 +258,7 @@ def _claim_next_pending(session: Session) -> dict[str, Any] | None:
                       AND bs.proxy_url IS NOT NULL
                 WHERE  r.state = 'PENDING'
                   AND  (t.template_type IS NULL OR t.template_type != 'xioflow_dag')
-                ORDER  BY r.started_at
+                ORDER  BY r.priority DESC NULLS LAST, r.started_at ASC
                 LIMIT  1
                 FOR UPDATE OF r SKIP LOCKED
             )

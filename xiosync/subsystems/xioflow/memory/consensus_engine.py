@@ -107,6 +107,13 @@ class ConsensusEngine:
                 node.tier = "project_experimental"
 
         if bayesian < self.settings["archive_threshold"]:
-            node.status = "ARCHIVED"
+            if (node.ref_count or 0) == 0:
+                node.status = "ARCHIVED"
+            else:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    f"Node {node.id} below archive threshold but ref_count={node.ref_count} — skipping archive"
+                )
 
         self.session.commit()

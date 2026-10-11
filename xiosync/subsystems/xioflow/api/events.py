@@ -262,7 +262,7 @@ def claim_pending_dag_run(request: Request) -> dict:
                 WHERE  r.state = 'PENDING'
                   AND  r.organization_id = :org
                   AND  t.template_type = 'xioflow_dag'
-                ORDER  BY r.started_at
+                ORDER  BY r.priority DESC NULLS LAST, r.started_at ASC
                 LIMIT  1
                 FOR UPDATE OF r SKIP LOCKED
             )
@@ -406,7 +406,7 @@ def claim_pending_dag_run_internal(request: Request) -> dict:
                 JOIN   workflow_templates t ON t.id = r.template_id
                 WHERE  r.state = 'PENDING'
                   AND  t.template_type = 'xioflow_dag'
-                ORDER  BY r.started_at
+                ORDER  BY r.priority DESC NULLS LAST, r.started_at ASC
                 LIMIT  1
                 FOR UPDATE OF r SKIP LOCKED
             )

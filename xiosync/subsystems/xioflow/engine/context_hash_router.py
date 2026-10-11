@@ -45,7 +45,14 @@ class ContextHashRouter:
             return (1025, 9999)
 
     async def query_by_viewport_tier(
-        self, domain: str, intent: str, context: dict, tier: int, org_id: str, max_results: int = 20
+        self,
+        domain: str,
+        intent: str,
+        context: dict,
+        tier: int,
+        org_id: str,
+        max_results: int = 20,
+        project_id: str | None = None,
     ) -> list[dict]:
         """Query memory nodes with fallbacks based on tier."""
         dev = context.get("device_type")
@@ -61,6 +68,10 @@ class ContextHashRouter:
             "deleted_at IS NULL",
         ]
         params = {"domain": domain, "intent": intent, "org_id": org_id}
+
+        if project_id:
+            where_clauses.append("project_id = :project_id")
+            params["project_id"] = project_id
 
         if tier == 1:
             where_clauses.extend(

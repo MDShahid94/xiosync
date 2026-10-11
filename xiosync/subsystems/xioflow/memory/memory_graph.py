@@ -108,6 +108,7 @@ class MemoryGraph:
         context_hash: str,
         org_id: str,
         tiers: list[str] | None = None,
+        project_id: str | None = None,
     ) -> dict | None:
         """Queries by lookup_key and tier priority order."""
         if not tiers:
@@ -128,10 +129,15 @@ class MemoryGraph:
                 status="ACTIVE",
             )
             .filter(XioflowMemoryNode.deleted_at.is_(None))
-            .all()
         )
+        if project_id:
+            query = query.filter(
+                XioflowMemoryNode.project_id
+                == (uuid.UUID(project_id) if isinstance(project_id, str) else project_id)
+            )
+        nodes = query.all()
 
-        nodes_by_tier = {n.tier: n for n in query}
+        nodes_by_tier = {n.tier: n for n in nodes}
         for tier in tiers:
             if tier in nodes_by_tier:
                 return nodes_by_tier[tier].__dict__
@@ -154,6 +160,7 @@ class MemoryGraph:
         structure consumed by ``DAGExecutor._execute_node()``.
         """
         visited: set[str] = set()
+        visited_nodes: list[uuid.UUID] = []
 
         def traverse(intent: str, current_depth: int) -> dict | None:
             if current_depth > max_depth or intent in visited:
@@ -162,10 +169,19 @@ class MemoryGraph:
             visited.add(intent)
 
             node = self.lookup_action(
-                domain, intent, context.get("context_hash", "default"), org_id
+                domain,
+                intent,
+                context.get("context_hash", "default"),
+                org_id,
+                project_id=context.get("project_id"),
             )
             if not node:
                 return None
+
+            node_id = node["id"]
+            if isinstance(node_id, str):
+                node_id = uuid.UUID(node_id)
+            visited_nodes.append(node_id)
 
             result: dict = {
                 "id": str(node["id"]),
@@ -194,6 +210,10 @@ class MemoryGraph:
         root = traverse(start_intent, 0)
         if root is None:
             return None
+
+        for node_id in visited_nodes:
+            self.increment_ref_count(node_id)
+
         return {"root": root}
 
     async def aget_workflow_graph(self, domain, start_intent, org_id, context, **kw):
@@ -220,3 +240,15 @@ class MemoryGraph:
         import asyncio
 
         await asyncio.to_thread(self.update_last_used, node_id)
+
+    def increment_ref_count(self, node_id: uuid.UUID) -> None:
+        """Increment ref_count for garbage collection tracking."""
+        node = self.session.query(XioflowMemoryNode).filter_by(id=node_id).first()
+        if node:
+            node.ref_count = (node.ref_count or 0) + 1
+            self.session.commit()
+
+    async def aincrement_ref_count(self, node_id: uuid.UUID) -> None:
+        import asyncio
+
+        await asyncio.to_thread(self.increment_ref_count, node_id)
