@@ -579,3 +579,159 @@ def test_resolve_dead_letter_not_found_returns_404(
     )
 
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Async execution & Operation polling (A-2)
+# ---------------------------------------------------------------------------
+
+
+def test_execute_script_sync(execution_client: tuple[TestClient, MagicMock]) -> None:
+    """POST /execution/script without async parameter runs synchronously and returns 200."""
+    http, _ = execution_client
+    mock_runner = MagicMock()
+    mock_runner.run.return_value = {"output": "hello"}
+    with patch("xiosync.api.routers.execution._get_script_runner", return_value=mock_runner):
+        resp = http.post(
+            "/api/v1/execution/script",
+            json={"language": "python", "script": "print('hello')", "timeout_secs": 10},
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert data["output"] == {"output": "hello"}
+
+
+def test_execute_script_async(execution_client: tuple[TestClient, MagicMock]) -> None:
+    """POST /execution/script?async=true creates pending operation and returns 202 with Location header."""
+    http, _ = execution_client
+    resp = http.post(
+        "/api/v1/execution/script?async=true",
+        json={"language": "python", "script": "print('hello')", "timeout_secs": 10},
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["status"] == "pending"
+    assert "operation_id" in data
+    op_id = data["operation_id"]
+    assert resp.headers["Location"] == f"/api/v1/operations/{op_id}"
+
+
+def test_execute_node_async(execution_client: tuple[TestClient, MagicMock]) -> None:
+    """POST /execution/node?async=true creates pending operation and returns 202 with Location header."""
+    http, _ = execution_client
+    resp = http.post(
+        "/api/v1/execution/node?async=true",
+        json={"action_type": "fetch", "action_params": {"url": "https://example.com"}},
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["status"] == "pending"
+    assert "operation_id" in data
+    op_id = data["operation_id"]
+    assert resp.headers["Location"] == f"/api/v1/operations/{op_id}"
+
+
+def test_get_operation_found(execution_client: tuple[TestClient, MagicMock]) -> None:
+    """GET /execution/operations/{id} returns operation status and details."""
+    http, _ = execution_client
+    op_id = uuid.uuid4()
+    mock_row = MagicMock()
+    mock_row.id = op_id
+    mock_row.operation = "script_execution"
+    mock_row.outcome = "success"
+    mock_row.started_at = datetime.now(UTC)
+    mock_row.completed_at = datetime.now(UTC)
+    mock_row.duration_ms = 120
+    mock_row.artifacts = {"result": "success"}
+
+    with patch("fastapi.Request.state") as mock_state:
+        # Test directly via the router handler with mock session
+        from xiosync.api.routers.execution import get_operation
+        req = MagicMock()
+        req.state.org_context = _CONTEXT
+        req.state.org_session.execute.return_value.fetchone.return_value = mock_row
+
+        res = get_operation(op_id, req)
+        assert res["id"] == str(op_id)
+        assert res["status"] == "success"
+        assert res["duration_ms"] == 120
+        assert res["result"] == {"result": "success"}
+
+
+def test_get_operation_not_found(execution_client: tuple[TestClient, MagicMock]) -> None:
+    """GET /execution/operations/{id} returns 404 when operation is not found."""
+    from fastapi import HTTPException
+    from xiosync.api.routers.execution import get_operation
+    op_id = uuid.uuid4()
+    req = MagicMock()
+    req.state.org_context = _CONTEXT
+    req.state.org_session.execute.return_value.fetchone.return_value = None
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_operation(op_id, req)
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_run_in_background_success() -> None:
+    """_run_in_background updates operation record with outcome=success upon coroutine completion."""
+    from unittest.mock import MagicMock
+    from xiosync.api.routers.execution import _run_in_background
+
+    mock_session = MagicMock()
+    mock_factory = MagicMock()
+    mock_factory.return_value.__enter__.return_value = mock_session
+
+    async def sample_coro():
+        return {"data": 42}
+
+    op_id = uuid.uuid4()
+    org_id = uuid.uuid4()
+
+    await _run_in_background(
+        session_factory=mock_factory,
+        operation_id=op_id,
+        org_id=org_id,
+        coro=sample_coro(),
+    )
+
+    mock_session.execute.assert_called_once()
+    mock_session.commit.assert_called_once()
+    call_args = mock_session.execute.call_args[0]
+    sql_text = str(call_args[0])
+    assert "outcome = 'success'" in sql_text
+    params = mock_session.execute.call_args[0][1]
+    assert params["op_id"] == op_id
+    assert params["org_id"] == org_id
+
+
+@pytest.mark.asyncio
+async def test_run_in_background_failure() -> None:
+    """_run_in_background updates operation record with outcome=failed upon exception."""
+    from unittest.mock import MagicMock
+    from xiosync.api.routers.execution import _run_in_background
+
+    mock_session = MagicMock()
+    mock_factory = MagicMock()
+    mock_factory.return_value.__enter__.return_value = mock_session
+
+    async def failing_coro():
+        raise RuntimeError("execution failed")
+
+    op_id = uuid.uuid4()
+    org_id = uuid.uuid4()
+
+    await _run_in_background(
+        session_factory=mock_factory,
+        operation_id=op_id,
+        org_id=org_id,
+        coro=failing_coro(),
+    )
+
+    mock_session.execute.assert_called_once()
+    mock_session.commit.assert_called_once()
+    call_args = mock_session.execute.call_args[0]
+    sql_text = str(call_args[0])
+    assert "outcome = 'failed'" in sql_text
+

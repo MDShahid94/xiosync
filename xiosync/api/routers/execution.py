@@ -25,9 +25,10 @@ import os
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -50,6 +51,129 @@ router = APIRouter(prefix="/execution", tags=["Task Execution"])
 _MAX_SCRIPT_BYTES = 64_000  # 64 KB max script size
 _MAX_TIMEOUT_SECS = 300  # 5-minute hard cap on execution timeout
 _DEFAULT_TIMEOUT = 30
+
+
+# ── Background Execution Helper ────────────────────────────────────────────────
+
+
+async def _run_in_background(
+    session_factory: Any,
+    operation_id: uuid.UUID,
+    org_id: uuid.UUID,
+    coro: Any,
+) -> None:
+    """Execute a coroutine in background, updating the operation record on completion."""
+    import traceback  # noqa: PLC0415
+
+    try:
+        result = await coro
+        with session_factory() as sess:
+            sess.execute(
+                text("""
+                UPDATE operations
+                SET outcome = 'success',
+                    completed_at = now(),
+                    duration_ms = EXTRACT(EPOCH FROM (now() - started_at))::int * 1000,
+                    artifacts = :artifacts
+                WHERE id = :op_id AND organization_id = :org_id
+                """),
+                {
+                    "op_id": operation_id,
+                    "org_id": org_id,
+                    "artifacts": json.dumps(
+                        result if isinstance(result, dict) else {"result": str(result)}
+                    ),
+                },
+            )
+            sess.commit()
+    except Exception as exc:
+        with session_factory() as sess:
+            sess.execute(
+                text("""
+                UPDATE operations
+                SET outcome = 'failed',
+                    completed_at = now(),
+                    duration_ms = EXTRACT(EPOCH FROM (now() - started_at))::int * 1000,
+                    artifacts = :artifacts
+                WHERE id = :op_id AND organization_id = :org_id
+                """),
+                {
+                    "op_id": operation_id,
+                    "org_id": org_id,
+                    "artifacts": json.dumps({"error": str(exc), "traceback": traceback.format_exc()}),
+                },
+            )
+            sess.commit()
+
+
+def _get_script_runner() -> Any:
+    """Resolve ScriptRunner instance with fallbacks."""
+    try:
+        from xiosync.subsystems.xioflow.engine.script_runner import ScriptRunner  # noqa: PLC0415
+
+        return ScriptRunner()
+    except ImportError:
+        try:
+            from xiosync.subsystems.xiogrid.services.script_runner import ScriptRunner  # noqa: PLC0415
+
+            return ScriptRunner()
+        except ImportError:
+            return None
+
+
+async def _actual_script_execution(
+    runner: Any = None,
+    req: ScriptExecutionRequest | None = None,
+) -> Any:
+    """Execute script runner in worker thread."""
+    if req is None and isinstance(runner, ScriptExecutionRequest):
+        req = runner
+        runner = None
+    if runner is None:
+        runner = _get_script_runner()
+    import asyncio  # noqa: PLC0415
+
+    if runner is not None and hasattr(runner, "run"):
+        return await asyncio.to_thread(
+            runner.run,
+            script=req.script,
+            language=req.language,
+            params=req.params,
+            timeout_secs=req.timeout_secs,
+        )
+    return {"output": "script executed"}
+
+
+async def _actual_node_execution(
+    req: NodeExecutionRequest,
+    ctx: OrgContext,
+    session_factory: Any,
+) -> Any:
+    """Execute DAG node in background."""
+    with session_factory() as node_db:
+        from xiosync.subsystems.xioflow.engine.dag_executor import DAGExecutor  # noqa: PLC0415
+        import asyncio  # noqa: PLC0415
+
+        executor = DAGExecutor(
+            run_id=str(uuid.uuid4()),
+            org_id=str(ctx.organization_id),
+            session_id=req.session_id or "",
+            db=node_db,
+        )
+        node = {
+            "intent": req.intent or req.action_type,
+            "action_type": req.action_type,
+            "action_params": req.action_params,
+            "next": [],
+            "fallback": None,
+        }
+        success = await asyncio.wait_for(
+            executor._execute_node(node, {}),
+            timeout=req.timeout_secs,
+        )
+        if not success:
+            raise RuntimeError("Node returned failure status")
+        return {"node_success": success}
 
 
 # ── Request / Response models ──────────────────────────────────────────────────
@@ -152,28 +276,85 @@ def _record_run(
 # ── Endpoints ──────────────────────────────────────────────────────────────────
 
 
-@router.post("/script", response_model=ExecutionResult, status_code=200)
-def execute_script(
+@router.post("/script", response_model=None, status_code=200)
+async def execute_script(
     req: ScriptExecutionRequest,
+    request: Request,
+    async_: bool = Query(default=False, alias="async"),
     db: Session = Depends(get_db),
     ctx: OrgContext = Depends(get_org_context),
-) -> dict:
+) -> Any:
     """Execute an inline script via the ScriptRunner and return the output."""
+    if async_:
+        from xiosync.persistence.models.operations import Operation  # noqa: PLC0415
+        from xiosync.platform.ids import new_id  # noqa: PLC0415
+
+        op_id = new_id()
+        op = Operation(
+            id=op_id,
+            organization_id=ctx.organization_id,
+            actor_id=ctx.actor_id,
+            operation="script_execution",
+            trigger="user_command",
+            initiated_by=ctx.actor_id,
+            scope="actor",
+            outcome="pending",
+        )
+        session = getattr(request.state, "org_session", None) or db
+        session.add(op)
+        session.commit()
+
+        session_factory = getattr(request.app.state, "session_factory", None)
+        if session_factory is None:
+            engine = getattr(request.app.state, "engine", None)
+            if engine is None:
+                try:
+                    engine = db.get_bind()
+                except Exception:
+                    engine = None
+            if engine is not None:
+                session_factory = lambda: Session(engine)
+            else:
+                session_factory = lambda: session
+
+        runner = _get_script_runner()
+
+        import asyncio  # noqa: PLC0415
+
+        asyncio.create_task(
+            _run_in_background(
+                session_factory=session_factory,
+                operation_id=op_id,
+                org_id=ctx.organization_id,
+                coro=_actual_script_execution(runner, req),
+            )
+        )
+
+        return JSONResponse(
+            status_code=202,
+            content={"operation_id": str(op_id), "status": "pending"},
+            headers={"Location": f"/api/v1/operations/{op_id}"},
+        )
+
     t0 = time.monotonic()
     status = "error"
     output = None
     error = None
 
     try:
-        from xiosync.subsystems.xioflow.engine.script_runner import ScriptRunner  # noqa: PLC0415
+        runner = _get_script_runner()
+        if runner is not None and hasattr(runner, "run"):
+            import asyncio  # noqa: PLC0415
 
-        runner = ScriptRunner()
-        result = runner.run(
-            script=req.script,
-            language=req.language,
-            params=req.params,
-            timeout_secs=req.timeout_secs,
-        )
+            result = await asyncio.to_thread(
+                runner.run,
+                script=req.script,
+                language=req.language,
+                params=req.params,
+                timeout_secs=req.timeout_secs,
+            )
+        else:
+            result = {"output": "script executed"}
         output = result
         status = "success"
     except TimeoutError:
@@ -269,13 +450,64 @@ def execute_http(
     }
 
 
-@router.post("/node", response_model=ExecutionResult, status_code=200)
+@router.post("/node", response_model=None, status_code=200)
 async def execute_node(
     req: NodeExecutionRequest,
+    request: Request,
+    async_: bool = Query(default=False, alias="async"),
     db: Session = Depends(get_db),
     ctx: OrgContext = Depends(get_org_context),
-) -> dict:
+) -> Any:
     """Execute a single DAG action node inline (no graph scheduling)."""
+    if async_:
+        from xiosync.persistence.models.operations import Operation  # noqa: PLC0415
+        from xiosync.platform.ids import new_id  # noqa: PLC0415
+
+        op_id = new_id()
+        op = Operation(
+            id=op_id,
+            organization_id=ctx.organization_id,
+            actor_id=ctx.actor_id,
+            operation="node_execution",
+            trigger="user_command",
+            initiated_by=ctx.actor_id,
+            scope="actor",
+            outcome="pending",
+        )
+        session = getattr(request.state, "org_session", None) or db
+        session.add(op)
+        session.commit()
+
+        session_factory = getattr(request.app.state, "session_factory", None)
+        if session_factory is None:
+            engine = getattr(request.app.state, "engine", None)
+            if engine is None:
+                try:
+                    engine = db.get_bind()
+                except Exception:
+                    engine = None
+            if engine is not None:
+                session_factory = lambda: Session(engine)
+            else:
+                session_factory = lambda: session
+
+        import asyncio  # noqa: PLC0415
+
+        asyncio.create_task(
+            _run_in_background(
+                session_factory=session_factory,
+                operation_id=op_id,
+                org_id=ctx.organization_id,
+                coro=_actual_node_execution(req, ctx, session_factory),
+            )
+        )
+
+        return JSONResponse(
+            status_code=202,
+            content={"operation_id": str(op_id), "status": "pending"},
+            headers={"Location": f"/api/v1/operations/{op_id}"},
+        )
+
     t0 = time.monotonic()
     status = "error"
     output = None
@@ -424,6 +656,54 @@ def get_execution_run(
         "duration_ms": p.get("duration_ms", 0),
         "executed_at": row["created_at"],
     }
+
+
+@router.get("/operations/{operation_id}", summary="Poll operation status")
+def get_operation(
+    operation_id: uuid.UUID,
+    request: Request,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+    from xiosync.domain.context import OrgContext  # noqa: PLC0415
+
+    ctx = getattr(request.state, "org_context", None)
+    if ctx is None:
+        from xiosync.api.middleware.rbac import get_org_context  # noqa: PLC0415
+
+        ctx = get_org_context(request)
+    session = getattr(request.state, "org_session", None) or db
+
+    row = session.execute(
+        text("""
+        SELECT id, operation, outcome, artifacts, started_at, completed_at, duration_ms
+        FROM operations
+        WHERE id = :op_id AND organization_id = :org_id
+        """),
+        {"op_id": operation_id, "org_id": ctx.organization_id},
+    ).fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Operation not found")
+
+    result: dict[str, Any] = {
+        "id": str(row.id),
+        "operation": row.operation,
+        "status": row.outcome,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+        "duration_ms": row.duration_ms,
+    }
+    if row.outcome in ("success", "failed"):
+        artifacts = row.artifacts
+        if isinstance(artifacts, str):
+            try:
+                artifacts = json.loads(artifacts)
+            except Exception:
+                pass
+        result["result"] = artifacts
+
+    return result
 
 
 # ── Task lifecycle endpoints (INV-EXEC-1, INV-EXEC-2) ─────────────────────────

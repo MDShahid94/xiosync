@@ -193,6 +193,10 @@ class Edge(Base):
     graph_class: Mapped[str] = mapped_column(Text, nullable=False)
     weight: Mapped[float | None] = mapped_column(Float)
     state: Mapped[str] = mapped_column(Text, nullable=False)
+    properties: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb"),
+        doc="Arbitrary key-value properties on this edge (property graph support)",
+    )
     created_at: Mapped[datetime] = mapped_column(
         _timestamptz, nullable=False, server_default=text("now()")
     )  # IMM

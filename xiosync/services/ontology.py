@@ -29,7 +29,6 @@ from xiosync.domain.ontology import (
     graph_class_is_acyclic,
     next_version,
     validate_graph_class,
-    would_create_cycle,
 )
 from xiosync.persistence.ontology import EdgeRepository, MemoryRepository
 
@@ -89,6 +88,7 @@ class EdgeService:
         graph_class: str,
         weight: float | None = None,
         state: str = "active",
+        properties: dict[str, Any] | None = None,
     ) -> uuid.UUID:
         """Create an edge, enforcing the graph class, same-org endpoints, and
         per-class acyclicity.
@@ -114,8 +114,12 @@ class EdgeService:
             raise ActorNotInOrganizationError(target_id, "target")
 
         if graph_class_is_acyclic(graph_class):
-            adjacency = self._repository.load_adjacency(context, graph_class)
-            if would_create_cycle(source_id=source_id, target_id=target_id, adjacency=adjacency):
+            if self._repository.would_create_cycle_cte(
+                context,
+                source_id=source_id,
+                target_id=target_id,
+                graph_class=graph_class,
+            ):
                 raise GraphCycleError(source_id, target_id, graph_class)
 
         return self._repository.insert_edge(
@@ -126,6 +130,7 @@ class EdgeService:
             graph_class=graph_class,
             weight=weight,
             state=state,
+            properties=properties or {},
         )
 
 

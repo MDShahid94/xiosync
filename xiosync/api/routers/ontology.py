@@ -22,6 +22,7 @@ class CreateEdgeRequest(_S):
     edge_type: str
     graph_class: str
     weight: float | None = None
+    properties: dict[str, Any] | None = None
 
 
 class CreateMemoryRequest(_S):
@@ -50,6 +51,7 @@ def create_edge(payload: CreateEdgeRequest, request: Request) -> dict[str, Any] 
             edge_type=payload.edge_type,
             graph_class=payload.graph_class,
             weight=payload.weight,
+            properties=payload.properties or {},
         )
     except Exception as exc:
         return JSONResponse(

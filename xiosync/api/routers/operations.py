@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, cast
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
@@ -67,6 +67,52 @@ def list_operations(
         }
         for r in rows
     ]
+
+
+@router.get("/operations/{operation_id}", summary="Poll operation status")
+def get_operation(
+    operation_id: uuid.UUID,
+    request: Request,
+) -> dict[str, Any]:
+    import json
+    from sqlalchemy import text
+    from sqlalchemy.orm import Session as OrmSession
+
+    from xiosync.domain.context import OrgContext
+
+    ctx = cast(OrgContext, request.state.org_context)
+    session = cast(OrmSession, request.state.org_session)
+
+    row = session.execute(
+        text("""
+        SELECT id, operation, outcome, artifacts, started_at, completed_at, duration_ms
+        FROM operations
+        WHERE id = :op_id AND organization_id = :org_id
+        """),
+        {"op_id": operation_id, "org_id": ctx.organization_id},
+    ).fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Operation not found")
+
+    result: dict[str, Any] = {
+        "id": str(row.id),
+        "operation": row.operation,
+        "status": row.outcome,
+        "started_at": row.started_at.isoformat() if row.started_at else None,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+        "duration_ms": row.duration_ms,
+    }
+    if row.outcome in ("success", "failed"):
+        artifacts = row.artifacts
+        if isinstance(artifacts, str):
+            try:
+                artifacts = json.loads(artifacts)
+            except Exception:
+                pass
+        result["result"] = artifacts
+
+    return result
 
 
 @router.post("/events", status_code=201, summary="Append a standalone event", response_model=None)

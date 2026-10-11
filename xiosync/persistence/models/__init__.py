@@ -21,6 +21,7 @@ from xiosync.persistence.models.browser import (
 from xiosync.persistence.models.documents import DocumentCollection, DocumentPage
 from xiosync.persistence.models.identity import (
     Actor,
+    FederatedCredential,
     MemberAuth,
     Membership,
     Organization,
@@ -58,6 +59,7 @@ from xiosync.subsystems.xiogrid.models.exit_node import (  # noqa: F401
 __all__ = [
     "Actor",
     "Artifact",
+    "FederatedCredential",
     "MemberAuth",
     "Base",
     "Capability",

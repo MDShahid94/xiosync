@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.orm import Session
 
@@ -147,6 +147,50 @@ class EdgeRepository:
             adjacency.setdefault(source_id, set()).add(target_id)
         return adjacency
 
+    def would_create_cycle_cte(
+        self,
+        context: OrgContext,
+        *,
+        source_id: uuid.UUID,
+        target_id: uuid.UUID,
+        graph_class: str,
+    ) -> bool:
+        """Check if adding source_id → target_id would create a cycle.
+
+        Uses a PostgreSQL recursive CTE with path tracking to detect cycles.
+        Walks forward from target_id; if source_id is reachable, a cycle exists.
+        """
+        if source_id == target_id:
+            return True
+        result = self._session.scalar(
+            text("""
+            WITH RECURSIVE reachable(node, path) AS (
+                SELECT e.target_id, ARRAY[e.source_id, e.target_id]
+                FROM edges e
+                WHERE e.source_id = :target_id
+                  AND e.organization_id = :org_id
+                  AND e.graph_class = :gc
+                  AND e.state = 'active'
+                UNION ALL
+                SELECT e.target_id, r.path || e.target_id
+                FROM edges e
+                JOIN reachable r ON e.source_id = r.node
+                WHERE e.organization_id = :org_id
+                  AND e.graph_class = :gc
+                  AND e.state = 'active'
+                  AND e.target_id != ALL(r.path)
+            )
+            SELECT EXISTS (SELECT 1 FROM reachable WHERE node = :source_id)
+            """),
+            {
+                "source_id": source_id,
+                "target_id": target_id,
+                "org_id": context.organization_id,
+                "gc": graph_class,
+            },
+        )
+        return bool(result)
+
     def insert_edge(
         self,
         context: OrgContext,
@@ -157,6 +201,7 @@ class EdgeRepository:
         graph_class: str,
         weight: float | None,
         state: str,
+        properties: dict[str, Any] | None = None,
     ) -> uuid.UUID:
         edge_id = new_id()
         self._session.add(
@@ -169,6 +214,7 @@ class EdgeRepository:
                 graph_class=graph_class,
                 weight=weight,
                 state=state,
+                properties=properties or {},
             )
         )
         self._session.flush()

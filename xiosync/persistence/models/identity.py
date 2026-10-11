@@ -168,13 +168,77 @@ class MemberAuth(Base):
     )  # IMM (INV-AUTH-2)
     human_actor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)  # IMM
     email: Mapped[str] = mapped_column(Text, nullable=False)
-    password_hash: Mapped[str] = mapped_column(Text, nullable=False)  # argon2id; never plaintext
+    password_hash: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        doc="argon2id hash; NULL for federated-only auth (no local password)",
+    )
     state: Mapped[str] = mapped_column(Text, nullable=False)
     failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     locked_until: Mapped[datetime | None] = mapped_column(_timestamptz)
     created_at: Mapped[datetime] = mapped_column(
         _timestamptz, nullable=False, server_default=text("now()")
     )  # IMM
+    updated_at: Mapped[datetime | None] = mapped_column(_timestamptz)
+
+
+class FederatedCredential(Base):
+    """External identity provider linkage for SSO/OAuth/OIDC (D-1 fix).
+
+    Links a MemberAuth to one or more external identity providers. A single
+    MemberAuth can have multiple federated credentials (e.g., Google + GitHub).
+    The provider_subject_id is the unique identifier from the external IdP.
+    """
+
+    __tablename__ = "federated_credentials"
+    __table_args__ = (
+        # One external identity per provider
+        UniqueConstraint("provider", "provider_subject_id",
+                         name="uq_federated_provider_subject"),
+        # Same-org FK to member_auth
+        ForeignKeyConstraint(
+            ["organization_id", "member_auth_id"],
+            ["member_auth.organization_id", "member_auth.id"],
+            name="fk_federated_auth_same_org",
+        ),
+        CheckConstraint(
+            "provider IN ('google', 'github', 'microsoft', 'okta', 'saml', 'oidc_custom')",
+            name="ck_federated_provider_allowed",
+        ),
+        CheckConstraint(
+            "state IN ('active', 'revoked')",
+            name="ck_federated_state_allowed",
+        ),
+        Index("ix_federated_member_auth", "member_auth_id"),
+        Index("ix_federated_provider_lookup", "provider", "provider_subject_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=new_id
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    member_auth_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    provider_subject_id: Mapped[str] = mapped_column(
+        Text, nullable=False, doc="Unique user ID from the external IdP"
+    )
+    provider_email: Mapped[str | None] = mapped_column(Text)
+    provider_display_name: Mapped[str | None] = mapped_column(Text)
+    metadata_: Mapped[dict[str, Any]] = mapped_column(
+        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb"),
+        doc="Provider-specific claims, tokens, profile data",
+    )
+    state: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default=text("'active'")
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(_timestamptz)
+    created_at: Mapped[datetime] = mapped_column(
+        _timestamptz, nullable=False, server_default=text("now()")
+    )
     updated_at: Mapped[datetime | None] = mapped_column(_timestamptz)
 
 
