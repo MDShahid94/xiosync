@@ -48,6 +48,10 @@ class CreateTriggerRequest(_S):
         default_factory=dict,
         description="Default context merged into each run's context at fire time",
     )
+    filter_expression: dict[str, Any] | None = Field(
+        default=None,
+        description="JSONPath-like filter: trigger fires only when expression evaluates truthy against event payload",
+    )
     enabled: bool = True
 
 
@@ -69,6 +73,7 @@ class TriggerResponse(_S):
     event_name: str | None = None
     enabled: bool
     context_defaults: dict[str, Any]
+    filter_expression: dict[str, Any] | None = None
     last_fired_at: str | None = None
     created_at: str
 
@@ -83,6 +88,7 @@ def _to_resp(rec: Any) -> TriggerResponse:
         event_name=rec.event_name,
         enabled=rec.enabled,
         context_defaults=rec.context_defaults,
+        filter_expression=getattr(rec, "filter_expression", None),
         last_fired_at=rec.last_fired_at.isoformat() if rec.last_fired_at else None,
         created_at=rec.created_at.isoformat(),
     )
@@ -122,6 +128,7 @@ def create_trigger(payload: CreateTriggerRequest, request: Request) -> TriggerRe
             cron_schedule=payload.cron_schedule,
             event_name=payload.event_name,
             context_defaults=payload.context_defaults,
+            filter_expression=payload.filter_expression,
             enabled=payload.enabled,
         )
     except ValueError as exc:

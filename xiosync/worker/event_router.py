@@ -22,6 +22,7 @@ def evaluate_event_triggers(session: Session, *, limit: int = 100) -> int:
     Returns the number of runs created.
     """
     from xiosync.platform.ids import new_id
+    from xiosync.subsystems.xioflow.domain.trigger_filter import _evaluate_filter  # noqa: PLC0415
 
     created = 0
 
@@ -38,7 +39,8 @@ def evaluate_event_triggers(session: Session, *, limit: int = 100) -> int:
                 e.payload,
                 tr.id        AS trigger_id,
                 tr.template_id,
-                tr.context_defaults
+                tr.context_defaults,
+                tr.filter_expression
             FROM events e
             JOIN xioflow_triggers tr
               ON tr.event_name = e.event_type
@@ -58,6 +60,16 @@ def evaluate_event_triggers(session: Session, *, limit: int = 100) -> int:
     ).fetchall()
 
     for row in matches:
+        filter_expr = getattr(row, "filter_expression", None)
+        if filter_expr:
+            payload = (
+                row.payload
+                if isinstance(row.payload, dict)
+                else (json.loads(row.payload) if isinstance(row.payload, str) else {})
+            )
+            if not _evaluate_filter(filter_expr, payload):
+                continue  # filter didn't match
+
         run_id = new_id()
         ctx = {
             **(row.context_defaults or {}),

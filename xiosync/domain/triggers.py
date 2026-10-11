@@ -13,6 +13,8 @@ __all__ = [
     "InvalidTriggerTypeError",
     "TRIGGER_STATES",
     "TRIGGER_TYPES",
+    "_evaluate_filter",
+    "evaluate_filter",
     "next_cron_fire",
     "validate_cron_expression",
     "validate_trigger_state",
@@ -193,3 +195,65 @@ def _iso_to_cron_dow(cron_dows: set[int]) -> set[int]:
     """Convert cron day-of-week (0=Sun) to Python weekday (0=Mon)."""
     mapping = {0: 6, 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5}
     return {mapping[d] for d in cron_dows if d in mapping}
+
+
+def _evaluate_filter(filter_expr: dict[str, Any] | None, event_payload: dict[str, Any]) -> bool:
+    """Evaluate a filter expression against an event payload.
+
+    Supports simple operators:
+    - {"field": "amount", "op": "gt", "value": 1000}
+    - {"field": "resource_type", "op": "eq", "value": "workflow"}
+    - {"all": [filter1, filter2]}  (AND)
+    - {"any": [filter1, filter2]}  (OR)
+    """
+    if filter_expr is None:
+        return True  # no filter = always match
+
+    if not isinstance(filter_expr, dict):
+        return True
+
+    if "all" in filter_expr:
+        return all(_evaluate_filter(f, event_payload) for f in filter_expr["all"])
+    if "any" in filter_expr:
+        return any(_evaluate_filter(f, event_payload) for f in filter_expr["any"])
+
+    field = filter_expr.get("field", "")
+    op = filter_expr.get("op", "eq")
+    expected = filter_expr.get("value")
+
+    # Navigate nested fields with dot notation
+    actual: Any = event_payload
+    for part in field.split("."):
+        if isinstance(actual, dict):
+            actual = actual.get(part)
+        else:
+            actual = None
+            break
+
+    if op == "eq":
+        return actual == expected
+    if op == "ne":
+        return actual != expected
+    try:
+        if op == "gt":
+            return actual is not None and actual > expected
+        if op == "gte":
+            return actual is not None and actual >= expected
+        if op == "lt":
+            return actual is not None and actual < expected
+        if op == "lte":
+            return actual is not None and actual <= expected
+    except TypeError:
+        return False
+    if op == "in":
+        return actual in (expected or [])
+    if op == "contains":
+        return expected in (actual or [])
+    if op == "exists":
+        return actual is not None
+
+    return True
+
+
+evaluate_filter = _evaluate_filter
+

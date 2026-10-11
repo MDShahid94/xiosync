@@ -124,6 +124,18 @@ def create_app(
     application.state.clock = clock
     application.state.rate_limiter = rate_limiter  # For per-capability rate checking
 
+    from xiosync.api.middleware.problem_detail import (  # noqa: PLC0415
+        http_exception_handler,
+        unhandled_exception_handler,
+        validation_exception_handler,
+    )
+    from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: PLC0415
+    from fastapi.exceptions import RequestValidationError  # noqa: PLC0415
+
+    application.add_exception_handler(StarletteHTTPException, http_exception_handler)
+    application.add_exception_handler(RequestValidationError, validation_exception_handler)
+    application.add_exception_handler(Exception, unhandled_exception_handler)
+
     # P11: Observability — request metrics middleware + optional /metrics.
     from xiosync.platform.observability import (
         ObservabilityMiddleware,
@@ -546,21 +558,6 @@ def create_app(
     # Gap P-4: API version governance middleware.
     application.add_middleware(VersionGovernanceMiddleware)
 
-    @application.exception_handler(RequestValidationError)
-    async def validation_problem(request: Request, exc: RequestValidationError) -> JSONResponse:
-        del exc
-        return JSONResponse(
-            status_code=422,
-            media_type="application/problem+json",
-            content={
-                "type": "https://xiosync.dev/problems/invalid_request",
-                "title": "Invalid request",
-                "status": 422,
-                "code": "invalid_request",
-                "request_id": request.state.request_id,
-            },
-        )
-
     # P2: QuotaExceededError → 429 Too Many Requests (RFC 7807).
     from xiosync.services.quotas import QuotaExceededError
 
@@ -596,24 +593,6 @@ def create_app(
                 "status": 400,
                 "code": "invalid_event",
                 "detail": str(exc),
-                "request_id": getattr(request.state, "request_id", ""),
-            },
-        )
-
-    # P2: Catch-all for unhandled exceptions → 500 (RFC 7807).
-    @application.exception_handler(Exception)
-    async def unhandled_problem(request: Request, exc: Exception) -> JSONResponse:
-        import logging
-
-        logging.getLogger("xiosync.api").exception("unhandled_error", exc_info=exc)
-        return JSONResponse(
-            status_code=500,
-            media_type="application/problem+json",
-            content={
-                "type": "https://xiosync.dev/problems/internal_error",
-                "title": "Internal server error",
-                "status": 500,
-                "code": "internal_error",
                 "request_id": getattr(request.state, "request_id", ""),
             },
         )

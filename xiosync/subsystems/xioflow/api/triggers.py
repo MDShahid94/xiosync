@@ -46,7 +46,7 @@ def _assert_trigger(session: OrmSession, trigger_id: str, org_id: str) -> Any:
         text("""
             SELECT tr.id, tr.trigger_type, tr.cron_schedule, tr.event_name,
                    tr.enabled, tr.context_defaults, tr.last_fired_at, tr.created_at,
-                   tr.template_id,
+                   tr.template_id, tr.filter_expression,
                    t.name AS template_name, t.template_type
             FROM   xioflow_triggers tr
             LEFT JOIN workflow_templates t ON t.id = tr.template_id
@@ -67,6 +67,7 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
         "event_name": row.event_name,
         "enabled": row.enabled,
         "context_defaults": row.context_defaults or {},
+        "filter_expression": getattr(row, "filter_expression", None),
         "template_id": str(row.template_id) if row.template_id else None,
         "template_name": row.template_name,
         "template_type": row.template_type,
@@ -91,6 +92,7 @@ class CreateTriggerRequest(BaseModel):
     cron_schedule: str | None = None
     event_name: str | None = None
     context_defaults: dict[str, Any] = {}
+    filter_expression: dict[str, Any] | None = None
     enabled: bool = True
     model_config = ConfigDict(from_attributes=True)
 
@@ -119,6 +121,7 @@ class UpdateTriggerRequest(BaseModel):
     cron_schedule: str | None = None
     event_name: str | None = None
     context_defaults: dict[str, Any] | None = None
+    filter_expression: dict[str, Any] | None = None
     enabled: bool | None = None
     model_config = ConfigDict(from_attributes=True)
 
@@ -175,10 +178,10 @@ def create_trigger(request: Request, body: CreateTriggerRequest) -> dict[str, An
         text("""
             INSERT INTO xioflow_triggers
               (id, organization_id, template_id, trigger_type, cron_schedule,
-               event_name, enabled, context_defaults, created_at)
+               event_name, enabled, context_defaults, filter_expression, created_at)
             VALUES
               (:id, :org, :tmpl, :ttype, :cron,
-               :event_name, :enabled, cast(:ctx as jsonb), now())
+               :event_name, :enabled, cast(:ctx as jsonb), cast(:fexpr as jsonb), now())
         """),
         {
             "id": trigger_id,
@@ -189,6 +192,7 @@ def create_trigger(request: Request, body: CreateTriggerRequest) -> dict[str, An
             "event_name": body.event_name,
             "enabled": body.enabled,
             "ctx": json.dumps(body.context_defaults),
+            "fexpr": json.dumps(body.filter_expression) if body.filter_expression is not None else None,
         },
     )
     session.commit()
@@ -202,6 +206,7 @@ def create_trigger(request: Request, body: CreateTriggerRequest) -> dict[str, An
         "cron_schedule": body.cron_schedule,
         "event_name": body.event_name,
         "enabled": body.enabled,
+        "filter_expression": body.filter_expression,
         "template_id": str(body.template_id),
     }
 
@@ -232,7 +237,7 @@ def list_triggers(
         text(f"""
             SELECT tr.id, tr.trigger_type, tr.cron_schedule, tr.event_name,
                    tr.enabled, tr.context_defaults, tr.last_fired_at, tr.created_at,
-                   tr.template_id,
+                   tr.template_id, tr.filter_expression,
                    t.name AS template_name, t.template_type
             FROM   xioflow_triggers tr
             LEFT JOIN workflow_templates t ON t.id = tr.template_id
@@ -302,6 +307,9 @@ def update_trigger(
     if body.context_defaults is not None:
         sets.append("context_defaults = cast(:ctx as jsonb)")
         params["ctx"] = json.dumps(body.context_defaults)
+    if body.filter_expression is not None:
+        sets.append("filter_expression = cast(:fexpr as jsonb)")
+        params["fexpr"] = json.dumps(body.filter_expression)
     if body.enabled is not None:
         sets.append("enabled = :enabled")
         params["enabled"] = body.enabled

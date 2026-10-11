@@ -56,6 +56,7 @@ class TriggerRecord:
     context_defaults: dict[str, Any]
     last_fired_at: datetime | None
     created_at: datetime
+    filter_expression: dict[str, Any] | None = None
 
 
 class TriggerNotFoundError(ValueError):
@@ -74,6 +75,7 @@ def _row_to_record(row: Any) -> TriggerRecord:
         context_defaults=dict(row.context_defaults or {}),
         last_fired_at=row.last_fired_at,
         created_at=row.created_at,
+        filter_expression=getattr(row, "filter_expression", None),
     )
 
 
@@ -94,6 +96,7 @@ class XioflowTriggerService:
         cron_schedule: str | None = None,
         event_name: str | None = None,
         context_defaults: dict[str, Any] | None = None,
+        filter_expression: dict[str, Any] | None = None,
         enabled: bool = True,
     ) -> TriggerRecord:
         """Create a new cron or event trigger linked to a template.
@@ -121,10 +124,12 @@ class XioflowTriggerService:
             text("""
                 INSERT INTO xioflow_triggers
                   (id, organization_id, template_id, trigger_type,
-                   cron_schedule, event_name, enabled, context_defaults, created_at)
+                   cron_schedule, event_name, enabled, context_defaults,
+                   filter_expression, created_at)
                 VALUES
                   (:id, :org, :tmpl, :ttype,
-                   :cron, :event, :enabled, cast(:ctx as jsonb), now())
+                   :cron, :event, :enabled, cast(:ctx as jsonb),
+                   cast(:fexpr as jsonb), now())
             """),
             {
                 "id": str(trigger_id),
@@ -135,6 +140,7 @@ class XioflowTriggerService:
                 "event": event_name,
                 "enabled": enabled,
                 "ctx": json.dumps(context_defaults or {}),
+                "fexpr": json.dumps(filter_expression) if filter_expression is not None else None,
             },
         )
         self._session.commit()
@@ -147,7 +153,7 @@ class XioflowTriggerService:
             text("""
                 SELECT id, organization_id, template_id, trigger_type,
                        cron_schedule, event_name, enabled, context_defaults,
-                       last_fired_at, created_at
+                       filter_expression, last_fired_at, created_at
                 FROM xioflow_triggers
                 WHERE id = :id AND organization_id = :org
             """),
@@ -182,7 +188,7 @@ class XioflowTriggerService:
             text(f"""
                 SELECT id, organization_id, template_id, trigger_type,
                        cron_schedule, event_name, enabled, context_defaults,
-                       last_fired_at, created_at
+                       filter_expression, last_fired_at, created_at
                 FROM xioflow_triggers
                 WHERE {" AND ".join(where)}
                 ORDER BY created_at DESC
