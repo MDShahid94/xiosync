@@ -398,7 +398,7 @@ def _schedule_trace_deploy(
                             action_type=node.get("action_type"),
                             action_params=node.get("action_params", {}),
                             previous_intent=node.get("previous_node_id"),
-                            recorded_by="auto_trace",
+                            recorded_by=None,  # auto-trace has no specific actor; provenance tracked via recording_method
                             recording_method="auto_trace",
                             context_hash=ctx_hash,
                             output_var=node.get("output_var"),

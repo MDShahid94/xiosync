@@ -301,6 +301,12 @@ class DAGExecutor:
         # contaminate sibling branches with resolved/injected values from this branch.
         # The local `action_params` copy is sufficient for the rest of this method.
 
+        # ── Volatility-aware execution ────────────────────────────────────────
+        # 'static'  → fail hard on error (default, current behavior)
+        # 'dynamic' → enhanced retry with locator cascade (current behavior for click/fill)
+        # 'bubble'  → skip silently if element not found (transient UI elements)
+        _volatility = node.get("volatility_type", "static")
+
         success = True
         if action_type == "trigger_sub_workflow":
             # Execute a nested sub-workflow by fetching its graph from memory and
@@ -819,8 +825,78 @@ class DAGExecutor:
                     logger.warning(f"AI Healer invocation failed: {heal_err}")
 
                 if not action_success:
-                    self.circuit_breaker.record_failure()
-                    return False
+                    # ── Fallback Plugin: invoke registered plugin as last resort ──────
+                    _fallback = node.get("fallback_plugin")
+                    if _fallback and not action_success:
+                        try:
+                            logger.info(
+                                f"AI Healer failed for {intent!r} — "
+                                f"invoking fallback plugin: {_fallback!r}"
+                            )
+                            from xiosync.subsystems.xioflow.compute.compute_runner import (  # noqa: PLC0415
+                                ComputeNodeRunner,
+                            )
+
+                            _fb_runner = ComputeNodeRunner()
+                            # Pass the current DOM HTML and failure context to the plugin
+                            _fb_html = ""
+                            try:
+                                _fb_html = await self.page.content()
+                            except Exception:
+                                pass
+                            _fb_result = await _fb_runner.execute(
+                                plugin_name=_fallback,
+                                runtime="python",
+                                source_code="",  # plugin resolves its own code by name
+                                page=self.page,
+                                action_params={
+                                    **action_params,
+                                    "_fallback_context": {
+                                        "intent": intent,
+                                        "action_type": _act,
+                                        "place_value": node.get("place_value"),
+                                        "face_value": node.get("face_value"),
+                                        "dom_html": _fb_html[:50_000],  # cap at 50KB
+                                    },
+                                },
+                                workflow_vars=self.workflow_vars,
+                                timeout=60,
+                            )
+                            if _fb_result.get("success"):
+                                action_success = True
+                                self.circuit_breaker.record_success()
+                                _emit_action(
+                                    self._org_id,
+                                    self._run_id,
+                                    "node.plugin_recovered",
+                                    node.get("id"),
+                                    intent,
+                                    action_type,
+                                    plugin=_fallback,
+                                )
+                                logger.info(
+                                    f"Fallback plugin {_fallback!r} recovered {intent!r}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"Fallback plugin {_fallback!r} failed: "
+                                    f"{_fb_result.get('error', 'unknown')}"
+                                )
+                        except Exception as _fb_err:
+                            logger.warning(
+                                f"Fallback plugin {_fallback!r} invocation error: {_fb_err}"
+                            )
+
+                if not action_success:
+                    if _volatility == "bubble":
+                        # Bubble elements (tooltips, banners, CAPTCHAs) are transient —
+                        # skip silently if not found instead of failing the workflow.
+                        logger.info(
+                            f"Bubble node {intent!r} not found — skipping (volatility=bubble)"
+                        )
+                    else:
+                        self.circuit_breaker.record_failure()
+                        return False
 
         next_nodes = node.get("next_nodes", [])
 

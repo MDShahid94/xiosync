@@ -44,6 +44,10 @@ _PUBLIC_AUTH_PATHS = frozenset(
         "/api/v1/workers/notebook-hash",
         # Self-enroll authenticates via worker_org_secret in body, not Bearer token.
         "/api/v1/workers/self-enroll",
+        # Public static worker assets — no secrets inside; workers fetch during boot.
+        "/api/v1/workers/google-signin.mjs",
+        "/api/v1/workers/hotpatch-agy.py",
+        "/api/v1/workers/browser-profile-manager.py",
         # Note: /api/v1/workers/bootstrap/{token} is path-param based — handled
         # by prefix check in the middleware (see _is_public_path below).
     }

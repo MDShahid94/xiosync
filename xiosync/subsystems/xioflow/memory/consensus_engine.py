@@ -96,8 +96,10 @@ class ConsensusEngine:
         if bayesian > self.settings["promote_threshold"] and new_weight > 5.0:
             if node.tier == "project_experimental":
                 node.tier = "project_ground_truth"
+                node.promotions = (node.promotions or 0) + 1
             elif node.tier == "project_ground_truth":
                 node.tier = "organization_shared"
+                node.promotions = (node.promotions or 0) + 1
         elif bayesian < self.settings["demote_threshold"]:
             if node.tier == "organization_shared":
                 node.tier = "project_ground_truth"

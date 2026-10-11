@@ -58,6 +58,7 @@ class ContextHashRouter:
             "intent = :intent",
             "organization_id = :org_id",
             "status = 'ACTIVE'",
+            "deleted_at IS NULL",
         ]
         params = {"domain": domain, "intent": intent, "org_id": org_id}
 

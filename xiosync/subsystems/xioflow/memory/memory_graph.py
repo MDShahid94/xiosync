@@ -83,7 +83,12 @@ class MemoryGraph:
 
     def get_node(self, node_id: uuid.UUID) -> dict | None:
         """Get a node by ID."""
-        node = self.session.query(XioflowMemoryNode).filter_by(id=node_id).first()
+        node = (
+            self.session.query(XioflowMemoryNode)
+            .filter_by(id=node_id)
+            .filter(XioflowMemoryNode.deleted_at.is_(None))
+            .first()
+        )
         if not node:
             return None
         return node.__dict__
@@ -122,6 +127,7 @@ class MemoryGraph:
                 organization_id=uuid.UUID(org_id) if isinstance(org_id, str) else org_id,
                 status="ACTIVE",
             )
+            .filter(XioflowMemoryNode.deleted_at.is_(None))
             .all()
         )
 
@@ -170,6 +176,8 @@ class MemoryGraph:
                 "place_value": node.get("place_value"),
                 "output_var": node.get("output_var"),
                 "execution_mode": node.get("execution_mode", "sequential"),
+                "volatility_type": node.get("volatility_type", "static"),
+                "fallback_plugin": node.get("fallback_plugin"),
                 "next_nodes": [],
             }
 

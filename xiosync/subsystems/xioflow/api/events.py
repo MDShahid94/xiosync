@@ -532,7 +532,7 @@ def get_memory_graph_internal(
             SELECT DISTINCT ON (intent)
                 intent, action_type, action_params, place_value, face_value, locator_priority
             FROM xioflow_memory_nodes
-            WHERE domain = :domain AND status = 'ACTIVE' AND action_type = 'script'
+            WHERE domain = :domain AND status = 'ACTIVE' AND deleted_at IS NULL AND action_type = 'script'
                   {_proj_filter}
             ORDER BY intent, tier DESC
         """),
@@ -573,7 +573,7 @@ def get_memory_graph_internal(
                 SELECT intent, action_type, action_params, place_value, face_value,
                        locator_priority, status
                 FROM xioflow_memory_nodes
-                WHERE domain = :domain AND intent = :intent AND status = 'ACTIVE'
+                WHERE domain = :domain AND intent = :intent AND status = 'ACTIVE' AND deleted_at IS NULL
                   AND action_type NOT IN ('done', 'extract_data', 'script')
                   {_proj_filter}
                 ORDER BY tier DESC LIMIT 1
