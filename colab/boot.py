@@ -890,7 +890,10 @@ if _PY_CACHE_PATH and os.path.exists(_PY_CACHE_PATH):
     _wheel_dir = "/tmp/xio-pkgs"
     os.makedirs(_wheel_dir, exist_ok=True)
     with _tf.open(_PY_CACHE_PATH, "r:gz") as _tar:
-        _tar.extractall(_wheel_dir)
+        try:
+            _tar.extractall(_wheel_dir, filter="data")
+        except TypeError:
+            _tar.extractall(_wheel_dir)
     _deps_str = " ".join(f'"{d}"' for d in _PYTHON_DEPS)
     _p(f"  Installing {len(_PYTHON_DEPS)} packages from local wheels…")
     rc = _run(
@@ -1013,7 +1016,10 @@ if os.path.isfile(_PATCHRIGHT_CACHE_TAR):
 
         _p("  📦 Restoring patchright cache from Drive...")
         with _pr_tf.open(_PATCHRIGHT_CACHE_TAR, "r:gz") as _pr_tar:
-            _pr_tar.extractall(path="/root/.cache")
+            try:
+                _pr_tar.extractall(path="/root/.cache", filter="data")
+            except TypeError:
+                _pr_tar.extractall(path="/root/.cache")
         _p(
             f"  ✅ Patchright cache restored from Drive ({os.path.getsize(_PATCHRIGHT_CACHE_TAR) // 1024 // 1024}MB)"
         )
@@ -1156,7 +1162,10 @@ try:
     _urq.urlretrieve(_AGENT_TAR_URL, _tar_path)
     os.makedirs(_AGENT_DIR, exist_ok=True)
     with _tf.open(_tar_path, "r:gz") as _t:
-        _t.extractall(_AGENT_DIR)
+        try:
+            _t.extractall(_AGENT_DIR, filter="data")  # Python 3.12+ security filter
+        except TypeError:
+            _t.extractall(_AGENT_DIR)  # Python <3.12 fallback
     # The entrypoint is at _AGENT_DIR/xiorun_agent.py
     _AGENT_PATH = os.path.join(_AGENT_DIR, "xiorun_agent.py")
     _fetched = True
@@ -1315,10 +1324,10 @@ _wd_thread = threading.Thread(target=_watchdog_loop, daemon=True, name="xiorun-w
 _wd_thread.start()
 
 # ════════════════════════════════════════════════════════════════════════════════
-# PHASE 6: Post-boot Antigravity setup
+# PHASE 7: Post-boot Antigravity setup
 # ════════════════════════════════════════════════════════════════════════════════
 _p("\n" + "═" * 60)
-_p("  Phase 6: Post-boot Antigravity setup")
+_p("  Phase 7: Post-boot Antigravity setup")
 _p("═" * 60)
 _agy_test = _run("agy --version 2>&1", capture=True, silent=True)
 if "authentication required" in str(_agy_test):
