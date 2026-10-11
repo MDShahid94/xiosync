@@ -24,6 +24,9 @@ from enum import StrEnum
 
 ENV_PREFIX = "XIOSYNC_"
 
+# Canonical Chrome version — update in ONE place
+CHROME_VERSION = "131.0.6778.204"
+
 _KEY_ENVIRONMENT = "XIOSYNC_ENVIRONMENT"
 _KEY_LOG_LEVEL = "XIOSYNC_LOG_LEVEL"
 _KEY_DATABASE_URL = "DATABASE_URL"

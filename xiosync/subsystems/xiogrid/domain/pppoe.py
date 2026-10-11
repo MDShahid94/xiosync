@@ -101,6 +101,9 @@ class FingerprintSpec:
     ua_template: str  # {cv} placeholder → Chrome version
     canvas_seed: int  # stable per-slot canvas noise seed
     audio_seed: int  # stable per-slot audio noise seed
+    timezone: str = "UTC"
+    battery_level: float = 1.0
+    connection_type: str = "wifi"
 
     def to_device_specs(self, chrome_version: str) -> dict[str, Any]:
         """Produce the --device-specs JSON consumed by xio-browser.mjs."""
@@ -121,4 +124,7 @@ class FingerprintSpec:
             "ua_template": self.ua_template.replace("{cv}", chrome_version),
             "canvas_seed": self.canvas_seed,
             "audio_seed": self.audio_seed,
+            "timezone": self.timezone,
+            "battery_level": self.battery_level,
+            "connection_type": self.connection_type,
         }

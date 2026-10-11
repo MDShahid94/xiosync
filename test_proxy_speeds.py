@@ -3,13 +3,13 @@ import os
 import subprocess
 from statistics import mean
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from xiosync.persistence.database import create_database_engine
 from xiosync.subsystems.xiogrid.models.exit_node import PPPoEExitNode
 
 url = os.environ.get(
-    "XIOSYNC_DATABASE_URL", "postgresql+psycopg://postgres:postgres@localhost:5432/xiosync"
+    "XIOSYNC_DATABASE_URL", "postgresql+psycopg://xiosync:xiosync@localhost:5432/xiosync"
 )
 engine = create_database_engine(url)
 
@@ -18,7 +18,9 @@ with Session(engine) as db:
         select(PPPoEExitNode).where(PPPoEExitNode.state.in_(["idle", "reconnecting"]))
     ).all()
     active_proxies = [
-        {"slot": n.ppp_slot, "ip": n.public_ip, "proxy": n.proxy_url} for n in nodes if n.proxy_url
+        {"slot": n.ppp_slot, "host_id": str(n.host_id), "ip": n.public_ip, "proxy": n.proxy_url}
+        for n in nodes
+        if n.proxy_url
     ]
 
 print(f"Found {len(active_proxies)} active proxies to test.")
@@ -33,10 +35,18 @@ with open("/tmp/dummy_upload.dat", "wb") as f:
 
 def test_speed(proxy_info):
     slot = proxy_info["slot"]
+    host_id = proxy_info.get("host_id")
     ip = proxy_info["ip"]
     proxy = proxy_info["proxy"]
 
-    result = {"slot": slot, "ip": ip, "dl_mbps": 0.0, "ul_mbps": 0.0, "error": None}
+    result = {
+        "slot": slot,
+        "host_id": host_id,
+        "ip": ip,
+        "dl_mbps": 0.0,
+        "ul_mbps": 0.0,
+        "error": None,
+    }
 
     try:
         # Replace socks5:// with socks5h:// to force remote DNS
@@ -102,6 +112,36 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
             print(
                 f"[{i + 1}/{len(active_proxies)}] Slot {r['slot']} ({r['ip']}): DL {r['dl_mbps']:.2f} Mbps | UL {r['ul_mbps']:.2f} Mbps"
             )
+
+        # Persist speed test measurement to database
+        try:
+            with Session(engine) as sess:
+                if r.get("host_id"):
+                    sess.execute(
+                        text(
+                            "UPDATE xiogrid_pppoe_exit_nodes SET last_speed_mbps = :speed "
+                            "WHERE slot_index = :slot AND host_id = :host_id"
+                        ),
+                        {"speed": r["dl_mbps"], "slot": r["slot"], "host_id": r["host_id"]},
+                    )
+                    sess.execute(
+                        text(
+                            "UPDATE xiogrid_pppoe_exit_nodes SET last_speed_mbps = :speed "
+                            "WHERE ppp_slot = :slot AND host_id = :host_id"
+                        ),
+                        {"speed": r["dl_mbps"], "slot": r["slot"], "host_id": r["host_id"]},
+                    )
+                else:
+                    sess.execute(
+                        text(
+                            "UPDATE xiogrid_pppoe_exit_nodes SET last_speed_mbps = :speed "
+                            "WHERE ppp_slot = :slot"
+                        ),
+                        {"speed": r["dl_mbps"], "slot": r["slot"]},
+                    )
+                sess.commit()
+        except Exception as db_err:
+            print(f"Failed to persist speed to database for slot {r['slot']}: {db_err}")
 
 # Summary
 successful = [r for r in results if not r["error"] and r["dl_mbps"] > 0]

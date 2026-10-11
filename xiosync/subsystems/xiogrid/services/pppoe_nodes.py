@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import case, select, update
+from sqlalchemy import case, or_, select, update
 from sqlalchemy.orm import Session
 
 from xiosync.domain.context import OrgContext
@@ -51,6 +51,7 @@ class PPPoESlotRecord:
     total_sessions_served: int
     reconnect_count: int
     fingerprint: dict[str, Any] | None = None
+    public_ipv6: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +74,9 @@ class FingerprintRecord:
     dpr: float
     cam_name: str
     is_mobile: bool
+    timezone: str = "UTC"
+    battery_level: float = 1.0
+    connection_type: str = "wifi"
 
 
 class PPPoENodeService:
@@ -312,6 +316,7 @@ class PPPoENodeService:
                     binding.last_used_at = now
                     binding.total_sessions += 1
                     binding.last_public_ip = node.public_ip
+                    binding.last_public_ipv6 = node.public_ipv6
                     self._db.flush()
                     return self.assign_to_worker(
                         binding.host_id,
@@ -333,6 +338,7 @@ class PPPoENodeService:
                             node.reconnect_count += 1
                             node.last_seen = datetime.now(UTC)
                             binding.last_public_ip = parts[1]
+                            binding.last_public_ipv6 = node.public_ipv6
                             binding.last_used_at = datetime.now(UTC)
                             binding.total_sessions += 1
                             self._db.flush()
@@ -345,6 +351,38 @@ class PPPoENodeService:
                             )
                     except Exception:
                         pass  # rotate failed — fall through to pick a fresh slot
+
+                # Dual-stack stickiness: if bound slot is unavailable, check if another idle slot matches last_public_ip or last_public_ipv6
+                if binding.last_public_ip or binding.last_public_ipv6:
+                    match_filters = []
+                    if binding.last_public_ip:
+                        match_filters.append(PPPoEExitNode.public_ip == binding.last_public_ip)
+                    if binding.last_public_ipv6:
+                        match_filters.append(PPPoEExitNode.public_ipv6 == binding.last_public_ipv6)
+                    if match_filters:
+                        matched_node = self._db.scalar(
+                            select(PPPoEExitNode)
+                            .where(
+                                PPPoEExitNode.state == PPPoESlotState.IDLE,
+                                or_(*match_filters),
+                            )
+                            .limit(1)
+                        )
+                        if matched_node is not None:
+                            binding.host_id = matched_node.host_id
+                            binding.ppp_slot = matched_node.ppp_slot
+                            binding.last_public_ip = matched_node.public_ip
+                            binding.last_public_ipv6 = matched_node.public_ipv6
+                            binding.last_used_at = datetime.now(UTC)
+                            binding.total_sessions += 1
+                            self._db.flush()
+                            return self.assign_to_worker(
+                                matched_node.host_id,
+                                matched_node.ppp_slot,
+                                worker_ts_ip,
+                                session_id,
+                                worker_ts_ipv6=worker_ts_ipv6,
+                            )
 
         # ── 2. Standard LRU idle slot pick ───────────────────────────────────
         node, host = self._pick_idle_node(preferred_host_id)
@@ -383,8 +421,17 @@ class PPPoENodeService:
                     last_used_at=datetime.now(UTC),
                     total_sessions=1,
                     last_public_ip=record.public_ip,
+                    last_public_ipv6=record.public_ipv6,
                 )
                 self._db.add(binding)
+                self._db.flush()
+            else:
+                existing.host_id = record.host_id
+                existing.ppp_slot = record.ppp_slot
+                existing.last_public_ip = record.public_ip
+                existing.last_public_ipv6 = record.public_ipv6
+                existing.last_used_at = datetime.now(UTC)
+                existing.total_sessions += 1
                 self._db.flush()
 
         return record
@@ -587,7 +634,9 @@ class PPPoENodeService:
     ) -> PPPoESlotRecord:
         fingerprint = None
         if profile:
-            chrome_version = "131.0.6778.108"
+            from xiosync.platform.config import CHROME_VERSION
+
+            chrome_version = CHROME_VERSION
             fingerprint = {
                 "os": profile.os,
                 "cores": profile.cores,
@@ -605,6 +654,9 @@ class PPPoENodeService:
                 "ua_template": profile.ua_template.replace("{cv}", chrome_version),
                 "canvas_seed": profile.canvas_seed,
                 "audio_seed": profile.audio_seed,
+                "timezone": getattr(profile, "timezone", "UTC"),
+                "battery_level": getattr(profile, "battery_level", 1.0),
+                "connection_type": getattr(profile, "connection_type", "wifi"),
             }
 
         return PPPoESlotRecord(
@@ -614,6 +666,7 @@ class PPPoENodeService:
             ppp_slot=node.ppp_slot,
             state=node.state,
             public_ip=node.public_ip,
+            public_ipv6=node.public_ipv6,
             cgnat_ip=node.cgnat_ip,
             proxy_url=node.proxy_url,
             proxy_port=node.proxy_port,
@@ -646,4 +699,7 @@ class PPPoENodeService:
             dpr=fp.dpr,
             cam_name=fp.cam_name,
             is_mobile=fp.is_mobile,
+            timezone=getattr(fp, "timezone", "UTC"),
+            battery_level=getattr(fp, "battery_level", 1.0),
+            connection_type=getattr(fp, "connection_type", "wifi"),
         )

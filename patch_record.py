@@ -16,7 +16,9 @@ replacement = """    def _to_record(
     ) -> PPPoESlotRecord:
         fingerprint = None
         if profile:
-            chrome_version = "131.0.6778.108"
+            from xiosync.platform.config import CHROME_VERSION
+
+            chrome_version = CHROME_VERSION
             fingerprint = {
                 "os":             profile.os,
                 "cores":          profile.cores,

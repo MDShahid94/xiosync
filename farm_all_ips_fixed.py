@@ -8,7 +8,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 from xiosync.domain.context import MembershipRole, OrgContext, PlatformRole
 from xiosync.persistence.database import create_database_engine
-from xiosync.subsystems.xiogrid.models.exit_node import PPPoEExitNode, PPPoEHost
+from xiosync.platform.ids import new_id
+from xiosync.subsystems.xiogrid.domain.pppoe import profile_name_for_slot
+from xiosync.subsystems.xiogrid.models.exit_node import (
+    FingerprintProfile,
+    PPPoEExitNode,
+    PPPoEHost,
+)
+from xiosync.subsystems.xiogrid.seed_pppoe import seed_fingerprint_profiles
 from xiosync.subsystems.xiogrid.services.pppoe_nodes import PPPoENodeService
 
 url = os.environ.get(
@@ -24,9 +31,49 @@ with SessionLocal() as db:
         sys.exit(1)
 
     host_id = host.id
-    print(f"Using host: {host.name} ({host.id})")
+    max_slots = host.max_slots if host.max_slots is not None else 981
+    print(f"Using host: {host.name} ({host.id}) with max_slots={max_slots}")
 
-    nodes = db.scalars(select(PPPoEExitNode).where(PPPoEExitNode.state == "destroyed")).all()
+    # 1. Query existing slot indices for this host
+    existing_nodes = db.scalars(
+        select(PPPoEExitNode).where(PPPoEExitNode.host_id == host_id)
+    ).all()
+    existing_slots = {n.ppp_slot for n in existing_nodes}
+
+    # 2. Compute uninitialized slot indices (0..max_slots - 1)
+    missing = sorted(set(range(max_slots)) - existing_slots)
+
+    # 3. For uninitialized indices, create new rows with state 'destroyed'
+    if missing:
+        print(f"Found {len(missing)} uninitialized slots. Seeding rows as 'destroyed'...")
+        # Ensure fingerprint profiles are seeded
+        profiles = {p.name: p.id for p in db.scalars(select(FingerprintProfile)).all()}
+        if not profiles:
+            seed_fingerprint_profiles(db)
+            profiles = {p.name: p.id for p in db.scalars(select(FingerprintProfile)).all()}
+        default_pid = next(iter(profiles.values())) if profiles else None
+
+        for slot in missing:
+            pname = profile_name_for_slot(slot)
+            pid = profiles.get(pname, default_pid)
+            node = PPPoEExitNode(
+                id=new_id(),
+                host_id=host_id,
+                fingerprint_profile_id=pid,
+                ppp_slot=slot,
+                state="destroyed",
+            )
+            db.add(node)
+        db.commit()
+        print(f"Successfully seeded {len(missing)} uninitialized slots as 'destroyed'.")
+
+    # 4. Proceed with provisioning destroyed slots
+    nodes = db.scalars(
+        select(PPPoEExitNode).where(
+            PPPoEExitNode.host_id == host_id,
+            PPPoEExitNode.state == "destroyed",
+        )
+    ).all()
     slots_to_provision = [n.ppp_slot for n in nodes]
 
 null_id = uuid.UUID("00000000-0000-0000-0000-000000000001")
