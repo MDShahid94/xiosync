@@ -155,6 +155,14 @@ class PPPoENodeService:
             )
             self._db.add(node)
 
+        # Parse IPv6 fields from create-slot.sh output (Phase 3)
+        pub_v6 = parts[4] if len(parts) > 4 and parts[4] != "none" else None
+        cgnat_v6 = parts[5] if len(parts) > 5 and parts[5] != "none" else None
+        node.public_ipv6 = pub_v6
+        if pub_v6:
+            # Derive /64 prefix from public IPv6
+            node.ipv6_prefix = pub_v6.rsplit(":", 1)[0] + "::/64" if ":" in pub_v6 else None
+
         self._db.flush()
         return self._to_record(node, host, profile)
 
@@ -453,6 +461,8 @@ class PPPoENodeService:
             )
         )
         if node:
+            pub_v6 = parts[3] if len(parts) > 3 and parts[3] != "none" else None
+            node.public_ipv6 = pub_v6
             now = datetime.now(UTC)
             node.last_health_check = now
             if state == "up":
@@ -469,15 +479,18 @@ class PPPoENodeService:
             else:
                 if node.state == PPPoESlotState.ASSIGNED:
                     if node.assigned_worker_ts_ip:
+                        args = [node.assigned_worker_ts_ip, node.ppp_slot]
+                        if node.assigned_worker_ts_ipv6:
+                            args.append(node.assigned_worker_ts_ipv6)
                         vm_script(
                             host,
                             "release-route.sh",
-                            node.assigned_worker_ts_ip,
-                            node.ppp_slot,
+                            *args,
                             timeout=8,
                         )
                     node.state = PPPoESlotState.RECONNECTING
                     node.assigned_worker_ts_ip = None
+                    node.assigned_worker_ts_ipv6 = None
                     node.assigned_session_id = None
                     node.assigned_at = None
                 elif node.state == PPPoESlotState.IDLE:

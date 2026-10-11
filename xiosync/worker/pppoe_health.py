@@ -63,6 +63,8 @@ def tick_pppoe_health(session: Session) -> int:
             parts = result.stdout.split() if result.ok else []
             is_up = parts and parts[0] == "up"
             pub_ip = parts[1] if len(parts) > 1 else None
+            pub_v6 = parts[3] if len(parts) > 3 and parts[3] != "none" else None
+            node.public_ipv6 = pub_v6
 
             node.last_health_check = now
             if is_up:
@@ -86,13 +88,10 @@ def tick_pppoe_health(session: Session) -> int:
                     # Session dropped while assigned — release routing rule to prevent blackhole routing
                     if node.assigned_worker_ts_ip:
                         try:
-                            vm_script(
-                                host,
-                                "release-route.sh",
-                                node.assigned_worker_ts_ip,
-                                node.ppp_slot,
-                                timeout=8,
-                            )
+                            args = [node.assigned_worker_ts_ip, node.ppp_slot]
+                            if node.assigned_worker_ts_ipv6:
+                                args.append(node.assigned_worker_ts_ipv6)
+                            vm_script(host, "release-route.sh", *args, timeout=8)
                         except Exception as _r_err:
                             logger.warning(
                                 "pppoe_release_route_error",
@@ -113,6 +112,7 @@ def tick_pppoe_health(session: Session) -> int:
                     )
                     node.state = PPPoESlotState.RECONNECTING
                     node.assigned_worker_ts_ip = None
+                    node.assigned_worker_ts_ipv6 = None
                     node.assigned_session_id = None
                     node.assigned_at = None
                     assigned_dropped += 1

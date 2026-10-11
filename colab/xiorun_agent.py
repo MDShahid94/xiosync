@@ -4393,7 +4393,7 @@ def _run_uc_login_sync(
                             {"brand": "Chromium", "version": "131"},
                             {"brand": "Not_A Brand", "version": "24"},
                         ],
-                        "fullVersion": "131.0.6778.264",
+                        "fullVersion": _CHROME_VERSION,
                         "platform": _ch_platform,
                         "platformVersion": "10.0.0",
                         "architecture": _ch_arch,
@@ -7842,7 +7842,7 @@ _PRFL_PRESETS: dict[int, dict] = {
         "ua_template": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/131.0.6778.108 Safari/537.36"
+            f"Chrome/{_CHROME_VERSION} Safari/537.36"
         ),
         "platform": "Win32",
         "ch_platform": "Windows",
