@@ -291,10 +291,15 @@ def claim_pending_dag_run(request: Request) -> dict:
     session.execute(
         text("""
             INSERT INTO xioflow_tasks
-              (id, run_id, node_intent, state, attempt_count, claimed_at)
-            VALUES (:id, :run_id, :intent, 'CLAIMED', 1, now())
+              (id, run_id, node_intent, state, attempt_count, claimed_at, organization_id)
+            VALUES (:id, :run_id, :intent, 'CLAIMED', 1, now(), :org_id)
         """),
-        {"id": task_id, "run_id": str(row.id), "intent": row.template_name or "dag_root"},
+        {
+            "id": task_id,
+            "run_id": str(row.id),
+            "intent": row.template_name or "dag_root",
+            "org_id": str(ctx.organization_id),
+        },
     )
     session.commit()
 
@@ -431,10 +436,15 @@ def claim_pending_dag_run_internal(request: Request) -> dict:
         sess.execute(
             text("""
             INSERT INTO xioflow_tasks
-              (id, run_id, node_intent, state, attempt_count, claimed_at)
-            VALUES (:id, :run_id, :intent, 'CLAIMED', 1, now())
+              (id, run_id, node_intent, state, attempt_count, claimed_at, organization_id)
+            VALUES (:id, :run_id, :intent, 'CLAIMED', 1, now(), :org_id)
         """),
-            {"id": task_id, "run_id": str(row.id), "intent": row.template_name or "dag_root"},
+            {
+                "id": task_id,
+                "run_id": str(row.id),
+                "intent": row.template_name or "dag_root",
+                "org_id": str(row.organization_id),
+            },
         )
         sess.commit()
 

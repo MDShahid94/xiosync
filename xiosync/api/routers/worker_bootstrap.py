@@ -441,20 +441,29 @@ def fetch_bootstrap_config(token: str, request: Request) -> dict:
         use_count = meta.get("use_count", 0)
 
         # ── Node suffix strategy ───────────────────────────────────────────────
-        # Single-instance roles (master, main, primary…) always get suffix -001
-        # so the node name stays stable across reboots.
-        # Multi-instance roles (worker, agent, runner…) increment per use so
-        # multiple simultaneous instances get unique names.
+        # Principle: a PHYSICAL machine that reboots should keep the same node
+        # identity. Only truly parallel machines running simultaneously need
+        # distinct suffixes.
         #
-        # Token metadata can also set max_instances=1 to force stable naming
-        # regardless of role name.
+        # Three modes (in priority order):
+        #   1. mesh_id in token meta (e.g. "MESH-003") → use as stable suffix.
+        #      Written by boot.py after Tailscale mesh resolution.
+        #   2. max_instances=1 or single-instance role → always "-001".
+        #   3. No mesh_id, multi-instance role → increment use_count (parallel workers).
         _SINGLE_INSTANCE_ROLES = {"master", "main", "primary", "solo", "single", "control"}
         max_instances = meta.get("max_instances", None)
+        _mesh_id = meta.get("mesh_id", "")  # e.g. "MESH-003" — set by boot.py after TS auth
         _is_single = max_instances == 1 or (
             max_instances is None and role.lower() in _SINGLE_INSTANCE_ROLES
         )
 
-        if reusable:
+        if _mesh_id:
+            # Stable physical identity: MESH-003 → -m003 suffix
+            # Converts "MESH-003" → "m003", "MESH-12" → "m012"
+            _mesh_num = "".join(filter(str.isdigit, _mesh_id))
+            _mesh_suffix = f"m{int(_mesh_num):03d}" if _mesh_num else _mesh_id.lower().replace("-", "")
+            node_name = f"{node_name}-{_mesh_suffix}"
+        elif reusable:
             if _is_single:
                 # Stable: always -001 — reboots don't change the node identity
                 node_name = f"{node_name}-001"
@@ -497,11 +506,67 @@ def fetch_bootstrap_config(token: str, request: Request) -> dict:
     return {"config": config, "node_name": node_name}
 
 
+
+class _SetMeshIdRequest(BaseModel):
+    mesh_id: str
+
+
+@router.post(
+    "/workers/bootstrap/set-mesh-id",
+    summary="[Colab] Write mesh_id into bootstrap token meta for stable node naming",
+    include_in_schema=True,
+)
+def set_bootstrap_mesh_id(payload: _SetMeshIdRequest, request: Request) -> dict:
+    """Called by boot.py after Tailscale mesh identity is resolved to lock stable node name."""
+    import json as _json  # noqa: PLC0415
+
+    from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415
+
+    from xiosync.platform.engine_ref import get_engine  # noqa: PLC0415
+    from xiosync.subsystems.vault.service import VaultService  # noqa: PLC0415
+
+    mesh_id = payload.mesh_id
+    if not mesh_id or not mesh_id.startswith("MESH-"):
+        raise HTTPException(status_code=400, detail="mesh_id must be 'MESH-NNN' format")
+
+    token = request.headers.get("X-Bootstrap-Token", "")
+    worker_secret = request.headers.get("X-Worker-Secret", "")
+    internal_secret = os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
+    worker_org_secret = os.environ.get("XIOSYNC_WORKER_ORG_SECRET", "")
+    authed = worker_secret and (worker_secret == worker_org_secret or worker_secret == internal_secret)
+
+    if not token and not authed:
+        raise HTTPException(status_code=401, detail="X-Bootstrap-Token or X-Worker-Secret required")
+    if not token:
+        return {"ok": True, "mesh_id": mesh_id, "note": "no token — vault not updated"}
+
+        token_hash = _hash_token(token)
+    vault_key = _token_vault_key(token_hash)
+    ctx = _make_ctx()
+
+    with OrmSession(get_engine()) as sess:
+        vault = VaultService(sess)
+        try:
+            raw = vault.get_secret(ctx, vault_key, allow_platform=True)
+        except Exception:
+            raise HTTPException(status_code=404, detail="Bootstrap token not found")
+
+        meta = _json.loads(raw)
+        if meta.get("mesh_id") != mesh_id:
+            meta["mesh_id"] = mesh_id
+            vault.put_secret(ctx, vault_key, _json.dumps(meta), secret_type="generic", platform_global=False)
+            sess.commit()
+
+    logger.info("worker_bootstrap.mesh_id_set", extra={"mesh_id": mesh_id, "vault_key": vault_key})
+    return {"ok": True, "mesh_id": mesh_id}
+
+
 @router.get(
     "/workers/bootstrap-tokens",
     summary="[Admin] List active bootstrap tokens",
 )
 def list_bootstrap_tokens(request: Request) -> dict:
+
     """List all active bootstrap tokens (without revealing the token itself)."""
     from sqlalchemy import text  # noqa: PLC0415
     from sqlalchemy.orm import Session as OrmSession  # noqa: PLC0415

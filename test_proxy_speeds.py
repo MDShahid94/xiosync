@@ -108,7 +108,7 @@ successful = [r for r in results if not r["error"] and r["dl_mbps"] > 0]
 failed = [r for r in results if r["error"] or r["dl_mbps"] == 0]
 
 with open(
-    "/Users/karmareturns/.gemini/antigravity/brain/02eaec7a-24b9-4a3b-a6ba-9b852cbd8265/speedtest_summary.md",
+    "/tmp/speedtest_summary.md",
     "w",
 ) as f:
     f.write("# Proxy Speedtest Summary\n\n")

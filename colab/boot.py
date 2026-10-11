@@ -783,6 +783,42 @@ else:
             except Exception as _se:
                 _p(f"  ℹ️  TS state save skipped ({_se.__class__.__name__}: {_se})")
 
+    # 7. Write mesh_id back to bootstrap token so next boot gets a stable node name.
+    #    Also update C['node_name'] right now so xiorun_agent uses the correct identity.
+    if _mesh_hostname and _BOOTSTRAP_TOKEN and _XIOSYNC_BASE_HINT:
+        try:
+            import urllib.request as _urq_m  # noqa: PLC0415
+
+            _mesh_num_b = "".join(filter(str.isdigit, _mesh_hostname))
+            _mesh_suffix = f"m{int(_mesh_num_b):03d}" if _mesh_num_b else _mesh_hostname.lower().replace("-", "")
+            _base_node = C.get("node_identity") or _re.sub(r"-\d{3,}$", "", NODE_NAME)
+            _stable_node = f"{_base_node}-{_mesh_suffix}"
+
+            # Update local config so xiorun_agent registers with the stable name
+            C["node_name"] = _stable_node
+            C["node_identity"] = _base_node
+            C["mesh_id"] = _mesh_hostname
+
+            # Persist mesh_id into the token vault via XIOSYNC API
+            _mesh_body = json.dumps({"mesh_id": _mesh_hostname}).encode()
+            _mesh_req = _urq_m.Request(
+                f"{_XIOSYNC_BASE_HINT}/api/v1/workers/bootstrap/set-mesh-id",
+                data=_mesh_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Bootstrap-Token": _BOOTSTRAP_TOKEN,
+                    "X-Worker-Secret": WORKER_SECRET or "",
+                },
+                method="POST",
+            )
+            try:
+                _urq_m.urlopen(_mesh_req, timeout=8)
+                _p(f"  ✅ Node identity locked: {_stable_node} (mesh={_mesh_hostname})")
+            except Exception:
+                _p(f"  ℹ️  mesh_id writeback skipped (non-fatal) — node={_stable_node}")
+        except Exception as _me:
+            _p(f"  ℹ️  mesh_id update skipped ({_me})")
+
 
 # ════════════════════════════════════════════════════════════════════════════════
 # PHASE 2: Python dependencies
