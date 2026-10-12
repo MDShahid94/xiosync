@@ -1083,20 +1083,18 @@ def list_pppoe_nodes_internal(
             SELECT
                 n.id,
                 n.host_id,
-                n.slot_index,
+                n.ppp_slot,
                 n.state,
                 n.proxy_state,
                 n.proxy_url,
-                n.proxy_url_v6,
                 n.public_ip,
-                n.public_ipv6,
                 n.last_speed_mbps,
                 h.tailscale_vm_ts_ip
             FROM xiogrid_pppoe_exit_nodes n
             JOIN xiogrid_pppoe_hosts h ON h.id = n.host_id
             WHERE (:state = 'all' OR n.state = :state)
               AND h.state = 'active'
-            ORDER BY n.last_speed_mbps DESC NULLS LAST, n.slot_index ASC
+            ORDER BY n.last_speed_mbps DESC NULLS LAST, n.ppp_slot ASC
             LIMIT 50
             """),
             {"state": _state_filter},
@@ -1106,16 +1104,15 @@ def list_pppoe_nodes_internal(
         {
             "id": str(r.id),
             "host_id": str(r.host_id),
-            "slot": r.slot_index,
+            "slot": r.ppp_slot,
             "state": r.state,
             "proxy_state": r.proxy_state,
             "proxy_url": r.proxy_url or "",
-            "proxy_url_v6": r.proxy_url_v6 or "",
             "public_ip": r.public_ip or "",
-            "public_ipv6": r.public_ipv6 or "",
             "last_speed_mbps": r.last_speed_mbps,
         }
         for r in rows
     ]
     return {"count": len(nodes), "nodes": nodes}
+
 
