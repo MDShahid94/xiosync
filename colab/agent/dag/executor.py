@@ -468,12 +468,31 @@ async def _execute_dag_run(
 
                         if _intent == "resolve_exit_proxy":
                             # ── Dynamic proxy resolution ────────────────────────
-                            # Priority: 1) PPPoE exit node → 2) SSH SOCKS5 tunnel
+                            # Priority: 0) Pre-set proxy_url in vars → 1) PPPoE → 2) SSH SOCKS5
                             import subprocess as _sp_proxy  # ensure always available
                             _resolved_proxy = None
                             _resolved_ip = None
                             _xio_base = os.environ.get("XIORUN_XIOSYNC_BASE", "")
                             _xio_secret = os.environ.get("XIORUN_INTERNAL_SECRET", "")
+
+                            # ── 0. Use pre-set proxy if already in workflow vars ─
+                            _preset_proxy = _vars.get("proxy_url", "")
+                            if _preset_proxy:
+                                try:
+                                    _t0 = _sp_proxy.run(
+                                        ["curl", "-s", "--max-time", "6", "--proxy",
+                                         _preset_proxy, "https://accounts.google.com",
+                                         "-o", "/dev/null", "-w", "%{http_code}"],
+                                        capture_output=True, text=True, timeout=10,
+                                    )
+                                    if _t0.stdout.strip() not in ("", "000"):
+                                        _resolved_proxy = _preset_proxy
+                                        logger.info(
+                                            f"resolve_exit_proxy: pre-set proxy OK "
+                                            f"{_preset_proxy} (http={_t0.stdout.strip()})"
+                                        )
+                                except Exception as _t0e:
+                                    logger.info(f"resolve_exit_proxy: pre-set proxy test failed: {_t0e}")
 
                             # ── 1. Try PPPoE exit nodes via XIOSYNC API ────────
                             if _xio_base and _xio_secret:
