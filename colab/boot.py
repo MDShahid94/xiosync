@@ -351,19 +351,30 @@ _CHROME_MAJOR = C.get("chrome_version", "131")
 _CHROME_FULL_VER = C.get("chrome_full_version", "131.0.6778.204")
 _CHROME_BIN_DIR = f"/opt/chrome{_CHROME_MAJOR}"
 _CHROME131_BIN = f"{_CHROME_BIN_DIR}/chrome"
-if not os.path.isfile(_CHROME131_BIN):
-    _p("  🔽 Chrome 131 not found — installing (UC 3.5.5 optimal version)…")
-    _CHROME131_DRIVE_TAR = (
-        f"{ASSET_BASE_DRIVE}/cache/chrome131.tar.gz" if "ASSET_BASE_DRIVE" in dir() else None
-    )
-    _chrome131_installed = False
+_CHROME131_DRIVE_PATH = "/content/drive/MyDrive/XIOSYNC-Shared/cache/chrome131.tar.gz"
+_chrome131_installed = os.path.isfile(_CHROME131_BIN)
 
-    # Try Drive cache first (fast, no bandwidth cost)
-    _chrome131_drive_path = "/content/drive/MyDrive/XIOSYNC-Shared/cache/chrome131.tar.gz"
-    if os.path.isfile(_chrome131_drive_path):
+
+def _ensure_chrome131(from_phase: str = "0") -> None:
+    """Install Chrome 131 — Drive cache first, dl.google.com fallback.
+
+    Safe to call multiple times: exits immediately if already installed.
+    Called early in Phase 0 (handles re-runs where Drive is already mounted),
+    and again right after Phase 0.5 (handles fresh boots where Drive wasn't
+    ready during Phase 0).
+    """
+    global _chrome131_installed
+    if _chrome131_installed:
+        return  # already done
+
+    _p(f"  🔽 Chrome {_CHROME_MAJOR} not found — installing (UC 3.5.5 optimal version, phase={from_phase})…")
+
+    # ── 1. Try Drive cache (fast, no bandwidth) ──────────────────────────────
+    if os.path.isfile(_CHROME131_DRIVE_PATH):
         _p("    ⚡ Chrome 131 Drive cache hit — extracting…")
         _run(
-            f"mkdir -p /opt/chrome131 && tar -xzf '{_chrome131_drive_path}' -C /opt/chrome131 "
+            f"mkdir -p {_CHROME_BIN_DIR} && "
+            f"tar -xzf '{_CHROME131_DRIVE_PATH}' -C {_CHROME_BIN_DIR} "
             f"--strip-components=1 2>&1 | tail -2",
             timeout=120,
         )
@@ -371,46 +382,56 @@ if not os.path.isfile(_CHROME131_BIN):
             os.chmod(_CHROME131_BIN, 0o755)
             _chrome131_installed = True
             _p("    ✅ Chrome 131 installed from Drive cache")
+            return
 
-    # Fallback: download from Google
-    if not _chrome131_installed:
-        _p("    ⬇️ Downloading Chrome 131 from dl.google.com…")
-        _CHROME131_URL = (
-            "https://storage.googleapis.com/chrome-for-testing-public"
-            f"/{_CHROME_FULL_VER}/linux64/chrome-linux64.zip"
+    # ── 2. Fallback: download from Google ────────────────────────────────────
+    _p("    ⬇️ Downloading Chrome 131 from dl.google.com…")
+    _CHROME131_URL = (
+        "https://storage.googleapis.com/chrome-for-testing-public"
+        f"/{_CHROME_FULL_VER}/linux64/chrome-linux64.zip"
+    )
+    _dl_rc = _run(
+        f"curl -L --retry 3 -o /tmp/chrome131.zip '{_CHROME131_URL}' 2>&1 | tail -2",
+        timeout=300,
+    )
+    if _dl_rc == 0 and os.path.exists("/tmp/chrome131.zip"):
+        _run(
+            f"mkdir -p {_CHROME_BIN_DIR} && "
+            "unzip -q /tmp/chrome131.zip -d /tmp/chrome131_src && "
+            f"mv /tmp/chrome131_src/chrome-linux64/* {_CHROME_BIN_DIR}/ 2>/dev/null || true && "
+            "rm -rf /tmp/chrome131.zip /tmp/chrome131_src",
+            timeout=120,
         )
-        _dl_rc = _run(
-            f"curl -L --retry 3 -o /tmp/chrome131.zip '{_CHROME131_URL}' 2>&1 | tail -2",
-            timeout=300,
-        )
-        if _dl_rc == 0 and os.path.exists("/tmp/chrome131.zip"):
+        if os.path.isfile(_CHROME131_BIN):
+            os.chmod(_CHROME131_BIN, 0o755)
+            _chrome131_installed = True
+            # Cache to Drive for future boots (background, non-blocking)
+            _drive_cache_dir = os.path.dirname(_CHROME131_DRIVE_PATH)
             _run(
-                "mkdir -p /opt/chrome131 && "
-                "unzip -q /tmp/chrome131.zip -d /tmp/chrome131_src && "
-                "mv /tmp/chrome131_src/chrome-linux64/* /opt/chrome131/ 2>/dev/null || true && "
-                "rm -rf /tmp/chrome131.zip /tmp/chrome131_src",
-                timeout=120,
+                f"mkdir -p '{_drive_cache_dir}' && "
+                f"tar -czf /tmp/chrome131.tar.gz -C {_CHROME_BIN_DIR} . && "
+                f"mv /tmp/chrome131.tar.gz '{_CHROME131_DRIVE_PATH}' 2>/dev/null || "
+                "rm -f /tmp/chrome131.tar.gz",
+                timeout=180,
             )
-            if os.path.isfile(_CHROME131_BIN):
-                os.chmod(_CHROME131_BIN, 0o755)
-                _chrome131_installed = True
-                # Cache to Drive for future boots
-                _run(
-                    "tar -czf /tmp/chrome131.tar.gz -C /opt/chrome131 . && "
-                    "cp /tmp/chrome131.tar.gz "
-                    "'/content/drive/MyDrive/XIOSYNC-Shared/cache/chrome131.tar.gz' 2>/dev/null && "
-                    "rm /tmp/chrome131.tar.gz",
-                    timeout=120,
-                )
-                _p("    ✅ Chrome 131 installed + cached to Drive")
-            else:
-                _p(
-                    "    ⚠️  Chrome 131 extract failed — will use patchright Chromium 153 (detection risk higher)"
-                )
+            _p("    ✅ Chrome 131 installed + cached to Drive")
         else:
-            _p("    ⚠️  Chrome 131 download failed — will use patchright Chromium 153")
+            _p(
+                "    ⚠️  Chrome 131 extract failed — will use patchright Chromium 153 (detection risk higher)"
+            )
+    else:
+        _p("    ⚠️  Chrome 131 download failed — will use patchright Chromium 153")
+
+
+# Phase 0 call — succeeds on re-runs where Drive is already mounted,
+# no-ops silently when binary already exists.
+if _chrome131_installed:
+    _p(f"  ✅ Chrome {_CHROME_MAJOR} already at {_CHROME131_BIN}")
 else:
-    _p(f"  ✅ Chrome 131 already at {_CHROME131_BIN}")
+    # Only attempt Drive cache here if Drive is already mounted (re-run scenario)
+    if os.path.isfile(_CHROME131_DRIVE_PATH):
+        _ensure_chrome131(from_phase="0")
+    # else: defer to post-Phase-0.5 call below (Drive not mounted yet on fresh boot)
 
 # Install matching chromedriver 131 (must match Chrome 131 version exactly)
 _CD131_BIN = "/usr/local/bin/chromedriver131"
@@ -485,10 +506,17 @@ try:
         if not os.path.exists(_drive_root):
             _drive_root = os.path.join(_DRIVE_MOUNT, "MyDrive")
     else:
+        # Suppress transient httplib2 timeout warnings emitted by google-auth during Drive mount
+        import logging as _logging_drive
+        _logging_drive.getLogger("google_auth_httplib2").setLevel(_logging_drive.ERROR)
+
         _drive_root = _xdf_mod.mount_drive_and_ensure_shortcut(
             folder_id=DRIVE_FOLDER_ID,
             shortcut_name=DRIVE_SHORTCUT_NAME,
         )
+
+        # Restore warning level after mount completes
+        _logging_drive.getLogger("google_auth_httplib2").setLevel(_logging_drive.WARNING)
 
     if _drive_root:
         # 4. Initialise XIODriveFS instance (used by Phase 1+ for all blob I/O)
@@ -504,6 +532,12 @@ try:
 
 except Exception as _drive_ex:
     _p(f"  ℹ️  Drive FUSE setup skipped ({type(_drive_ex).__name__}) — non-fatal")
+
+# ── Post-Phase-0.5: Chrome cache restore (fresh boot path) ───────────────────
+# On fresh boots Drive wasn't mounted during Phase 0, so the Drive cache check
+# was skipped. Now that Drive is ready we can restore from cache — or proceed
+# to download. This is a no-op if Chrome was already installed in Phase 0.
+_ensure_chrome131(from_phase="0.5")
 
 
 # ════════════════════════════════════════════════════════════════════════════════
