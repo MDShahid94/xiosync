@@ -1478,12 +1478,14 @@ async def _execute_dag_run(
                                 except Exception as _t0e:
                                     logger.info(f"resolve_exit_proxy: pre-set proxy test failed: {_t0e}")
 
-                            # ── 1. Try PPPoE exit nodes via XIOSYNC API ────────
+                            # ── 1. Try PPPoE exit nodes via XIOSYNC internal API ───
+                            # Uses /pppoe-nodes-internal (no JWT required) instead of
+                            # the RBAC-protected /pppoe/nodes which rejects worker auth.
                             if _xio_base and _xio_secret:
                                 try:
                                     import urllib.request as _urq_proxy
                                     _req = _urq_proxy.Request(
-                                        f"{_xio_base}/api/v1/pppoe/nodes",
+                                        f"{_xio_base}/api/v1/xioflow/events/pppoe-nodes-internal",
                                         headers={"X-XIOSYNC-Internal": _xio_secret},
                                     )
                                     _resp = _urq_proxy.urlopen(_req, timeout=10)

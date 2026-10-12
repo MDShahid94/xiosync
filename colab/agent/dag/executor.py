@@ -64,7 +64,12 @@ async def _execute_dag_run(
     _SECRET = os.environ.get(
         "XIORUN_INTERNAL_SECRET", os.environ.get("XIOSYNC_INTERNAL_SECRET", "")
     )
-    _HDRS = {"X-XIOSYNC-Internal": _SECRET, "Content-Type": "application/json"}
+    _WORKER_SECRET = os.environ.get("WORKER_SECRET", os.environ.get("XIORUN_XIOSYNC_TOKEN", ""))
+    _HDRS = {
+        "X-XIOSYNC-Internal": _SECRET,
+        "X-Worker-Secret": _WORKER_SECRET,
+        "Content-Type": "application/json",
+    }
     _trace = context.get("trace_mode", False)
     _trace_requested = _trace  # original flag — never overridden, drives trace_nodes collection
     _vars = dict(context.get("workflow_vars", {}))  # mutable copy
@@ -143,14 +148,21 @@ async def _execute_dag_run(
                 logger.info(f"dag_run.lock: advisory lock skipped ({_le})")
                 _lock_conn = None
 
-        _launch_args = [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--window-size=1920,1080",
-            "--disable-blink-features=AutomationControlled",
-            "--lang=en-US",
-        ]
+        # Pull Chromium args + Chrome executable from agent config (avoids
+        # hardcoding flags like --disable-setuid-sandbox that trigger bot detection).
+        try:
+            from agent.config import CHROMIUM_ARGS as _cfg_args, CHROME_EXECUTABLE as _cfg_chrome
+        except ImportError:
+            _cfg_args = [
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--window-size=1920,1080",
+                "--disable-blink-features=AutomationControlled",
+                "--lang=en-US",
+            ]
+            _cfg_chrome = None
+
+        _launch_args = list(_cfg_args)  # mutable copy
         if _proxy:
             _launch_args.append(f"--proxy-server={_proxy}")
 
@@ -168,18 +180,19 @@ async def _execute_dag_run(
         all_ok = True
 
         async with _pw() as pw:
-            # Use pinned /opt/chrome131/chrome if available — avoids patchright version
-            # mismatch when patchright updates its bundled chromium build number.
-            _chrome_bin = "/opt/chrome131/chrome"
+            # Use Chrome executable from agent.config (priority: real google-chrome-stable →
+            # patchright bundled chromium → auto-detect). Falls back to /opt/chrome131/chrome
+            # only if present and config yields nothing — avoids patchright version mismatch.
+            _chrome_bin = _cfg_chrome or "/opt/chrome131/chrome"
             _launch_kwargs: dict = {"headless": False, "args": _launch_args}
-            if os.path.isfile(_chrome_bin):
+            if _chrome_bin and os.path.isfile(_chrome_bin):
                 _launch_kwargs["executable_path"] = _chrome_bin
-                logger.info(f"dag_run: using pinned Chrome at {_chrome_bin}")
+                logger.info(f"dag_run: using Chrome at {_chrome_bin}")
             _brow = await pw.chromium.launch(**_launch_kwargs)
 
             # ── P0-1/P0-2: Identity-scoped profile restore (tarball + storage_state) ──
             # Key by PRFL-NNN, not domain slug, to avoid multi-account collisions.
-            _DRIVE_ROOT = "/content/drive/MyDrive/XIOSYNC-Shared"
+            _DRIVE_ROOT = os.environ.get("XIO_DRIVE_ROOT", "/content/drive/MyDrive/XIOSYNC-Shared")
             _node_slug = os.environ.get("WORKER_NODE", "worker")[:16]
             _profile_serial = 0  # resolved below
             _user_data_dir = None  # set if tarball was restored
@@ -494,13 +507,15 @@ async def _execute_dag_run(
                                 except Exception as _t0e:
                                     logger.info(f"resolve_exit_proxy: pre-set proxy test failed: {_t0e}")
 
-                            # ── 1. Try PPPoE exit nodes via XIOSYNC API ────────
+                            # ── 1. Try PPPoE exit nodes via XIOSYNC internal API ───
+                            # Uses /pppoe-nodes-internal (no JWT required) instead of
+                            # the RBAC-protected /pppoe/nodes which rejects worker auth.
                             if _xio_base and _xio_secret:
                                 try:
                                     import urllib.request as _urq_proxy
                                     import json as _json_proxy
                                     _req = _urq_proxy.Request(
-                                        f"{_xio_base}/api/v1/pppoe/nodes",
+                                        f"{_xio_base}/api/v1/xioflow/events/pppoe-nodes-internal",
                                         headers={"X-XIOSYNC-Internal": _xio_secret},
                                     )
                                     _resp = _urq_proxy.urlopen(_req, timeout=10)
@@ -624,7 +639,10 @@ async def _execute_dag_run(
                                     _s_val = _s_val.replace(f"{{{{{_k}}}}}", str(_v))
                                 _s_body[_spk] = _s_val
 
-                            _worker_port = os.environ.get("PORT", "9300")
+                            _worker_port = os.environ.get(
+                                "XIORUN_AGENT_PORT",
+                                os.environ.get("PORT", "9300"),
+                            )
                             _worker_url = f"http://127.0.0.1:{_worker_port}{_s_endpoint}"
                             try:
                                 # run-uc-login has HITL (up to 600s) + login (120s) = 900s
