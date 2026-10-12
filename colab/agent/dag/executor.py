@@ -469,6 +469,7 @@ async def _execute_dag_run(
                         if _intent == "resolve_exit_proxy":
                             # ── Dynamic proxy resolution ────────────────────────
                             # Priority: 1) PPPoE exit node → 2) SSH SOCKS5 tunnel
+                            import subprocess as _sp_proxy  # ensure always available
                             _resolved_proxy = None
                             _resolved_ip = None
                             _xio_base = os.environ.get("XIORUN_XIOSYNC_BASE", "")
@@ -478,12 +479,12 @@ async def _execute_dag_run(
                             if _xio_base and _xio_secret:
                                 try:
                                     import urllib.request as _urq_proxy
+                                    import json as _json_proxy
                                     _req = _urq_proxy.Request(
                                         f"{_xio_base}/api/v1/pppoe/nodes",
                                         headers={"X-XIOSYNC-Internal": _xio_secret},
                                     )
                                     _resp = _urq_proxy.urlopen(_req, timeout=10)
-                                    import json as _json_proxy
                                     _nodes = _json_proxy.loads(_resp.read()).get("nodes", [])
                                     _idle = [
                                         n for n in _nodes
@@ -494,7 +495,6 @@ async def _execute_dag_run(
                                         f"resolve_exit_proxy: {len(_idle)} idle PPPoE slots"
                                     )
                                     # Test up to 5 idle slots for Google reachability
-                                    import subprocess as _sp_proxy
                                     for _slot in _idle[:5]:
                                         _p_url = _slot.get("proxy_url", "")
                                         _p_ip = _slot.get("public_ip", "")
@@ -530,10 +530,16 @@ async def _execute_dag_run(
 
                             # ── 2. Fallback: SSH SOCKS5 tunnel ─────────────────
                             if not _resolved_proxy:
-                                from agent.network.ssh_tunnel import SSH_PROXY_URL
-                                _ssh_proxy = SSH_PROXY_URL or os.environ.get(
+                                try:
+                                    from agent.config import PROXY_LOCAL_PORT as _proxy_port
+                                except Exception:
+                                    _proxy_port = int(os.environ.get("XIORUN_PROXY_LOCAL_PORT", "19056"))
+                                _ssh_proxy = os.environ.get(
                                     "XIORUN_PROXY",
-                                    os.environ.get("PROXY_URL", "socks5://127.0.0.1:19055"),
+                                    os.environ.get(
+                                        "PROXY_URL",
+                                        f"socks5://127.0.0.1:{_proxy_port}",
+                                    ),
                                 )
                                 # Verify SSH proxy is alive
                                 try:

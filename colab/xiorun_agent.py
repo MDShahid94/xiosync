@@ -1449,6 +1449,7 @@ async def _execute_dag_run(
                         if _intent == "resolve_exit_proxy":
                             # ── Dynamic proxy resolution ────────────────────────
                             # Priority: 1) PPPoE exit node → 2) SSH SOCKS5 tunnel
+                            import subprocess as _sp_proxy  # ensure always available
                             _resolved_proxy = None
                             _resolved_ip = None
                             _xio_base = os.environ.get("XIORUN_XIOSYNC_BASE", "")
@@ -1474,7 +1475,6 @@ async def _execute_dag_run(
                                         f"resolve_exit_proxy: {len(_idle)} idle PPPoE slots"
                                     )
                                     # Test up to 5 idle slots for Google reachability
-                                    import subprocess as _sp_proxy
                                     for _slot in _idle[:5]:
                                         _p_url = _slot.get("proxy_url", "")
                                         _p_ip = _slot.get("public_ip", "")
